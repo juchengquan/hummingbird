@@ -58,7 +58,11 @@ Click your avatar or initial at the bottom of the left sidebar.
     so do the reasoning-effort setting, reference images and the
     workspace's local-mode MCP servers (their credentials go with each
     answer and the server never stores them; MCP App panels render as
-    on `ts`). The code interpreter is not available yet. Every
+    on `ts`). The code interpreter works too, where the agent-py
+    server can run its sandbox: charts, tables and downloadable files
+    appear as they do on `ts`; signed in, attached files it reads go by
+    reference, and a local-only file is sent with the message if it fits
+    (about 9 MB in all). Every
     other request (summaries, embeds, sharing, …) goes exactly where
     `python` sends it.
 - **Models per backend.** The agent services (`python` and `ts-service`

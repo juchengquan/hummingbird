@@ -100,6 +100,15 @@ export function resultIdsFor(userId: string, rootRunId: string): TaskResultIds {
   }
 }
 
+/** The `file` artifact of one file a task's code wrote (Q94): derived like
+ *  `resultIdsFor`, from the task and the file's id (`<toolCallId>-file-<i>`). */
+export function taskFileArtifactIdFor(userId: string, rootRunId: string, fileId: string): string {
+  return uuidV5(
+    TASK_RESULT_NAMESPACE,
+    `task-result:file:${userId.toLowerCase()}:${rootRunId.toLowerCase()}:${fileId}`,
+  )
+}
+
 /** A name-based UUID, version 5 (SHA-1): `uuid.uuid5(namespace, name)`. */
 export function uuidV5(namespace: string, name: string): string {
   if (!isUuid(namespace)) throw new Error(`not a UUID: ${namespace}`)

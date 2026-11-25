@@ -27,7 +27,7 @@ declares `run_execute`; other tools keep their plain `execute`."""
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -35,6 +35,8 @@ from ..events import ToolCallResult
 
 if TYPE_CHECKING:
     import asyncpg
+
+    from ..code_sandbox.mount_files import MountManifestEntry
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,10 @@ class ToolInvocationResult:
     """Files the tool produced (`{name, sizeBytes, mimeType, url,
     storagePath?}` each), emitted as one `tool_file` part with ids
     `<toolCallId>-file-<i>` when absent."""
+    code_result: dict[str, object] | None = None
+    """`runCode`'s output for the user — `{stdout, stderr, results}` (the
+    non-image cells) — emitted as one `code_result` part after the images
+    and files (`CodeResultEvent`, `hummingbird.code_result`)."""
     mcp_app: McpAppPayload | None = None
     """An MCP App the tool renders (its `ui://` resource, read), emitted
     as one `mcp_app` part after the tool result (`McpAppEvent`,
@@ -234,6 +240,7 @@ def default_tool_registry(
     *,
     context: ToolContext | None = None,
     skill_configs: SkillConfigs | None = None,
+    sandbox_files: Sequence[MountManifestEntry] = (),
 ) -> dict[str, ToolDescriptor]:
     """Process-wide default registry. The executor passes either the
     full list or a filtered subset (e.g. by checkpoint config) to the
@@ -289,6 +296,16 @@ def default_tool_registry(
         from .search_files import build_search_files_tool
 
         out["searchFiles"] = build_search_files_tool(context)
+
+    from .run_code import available_sandbox, build_run_code_tool
+
+    # `runCode` (wave 8) registers where the startup check passes;
+    # `sandbox_files` is the run's `sandboxFiles` manifest.
+    sandbox = available_sandbox()
+    if sandbox is not None:
+        out["runCode"] = build_run_code_tool(
+            sandbox=sandbox, manifest=tuple(sandbox_files), context=context
+        )
 
     from .image_gen import build_image_gen_tool, is_image_gen_configured
 

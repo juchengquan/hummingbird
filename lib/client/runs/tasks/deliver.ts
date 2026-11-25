@@ -34,7 +34,8 @@ import "client-only"
 import { formatResearchCitations } from "@/shared/agent/citation-formatter"
 import { deriveResearchReportTitle } from "@/shared/agent/research-report"
 import { withStepLimitNote } from "@/shared/agent/step-limit"
-import type { GeneratedImage } from "@/shared/types"
+import { taskFileArtifactIdFor } from "@/shared/runs/ids"
+import type { CodeResultPart, GeneratedFile, GeneratedImage } from "@/shared/types"
 import type { VerificationResult } from "@/shared/verify"
 import { parseVerificationFrame } from "@/shared/verify"
 
@@ -46,6 +47,9 @@ import type { TaskSummary } from "./types"
 export interface TaskOutput {
   verification: VerificationResult | null
   images: GeneratedImage[]
+  /** `runCode`'s files and output (Q94); `[]` for a result before 0.5.2. */
+  files: GeneratedFile[]
+  codeResults: CodeResultPart[]
 }
 
 export interface DeliveryConversation {
@@ -66,13 +70,17 @@ export interface DeliveryStore {
       content: string
       verification?: VerificationResult
       generatedImages?: GeneratedImage[]
+      generatedFiles?: GeneratedFile[]
+      codeResults?: CodeResultPart[]
     },
     conversationId: string,
   ): boolean
   createDocumentWithId(id: string, workspaceId: string, title: string, content: string): void
   createArtifactWithId(
     id: string,
-    input: { conversationId: string; messageId: string | null; kind: "markdown"; title: string; content: string },
+    input:
+      | { conversationId: string; messageId: string | null; kind: "markdown"; title: string; content: string }
+      | { conversationId: string; messageId: string; kind: "file"; title: string; content: ""; storagePath: string },
   ): void
   setActiveDocument(id: string): void
   /** The board card the task was launched from (`ProjectTask.taskId`). */
@@ -147,7 +155,7 @@ export function resultTextOf(task: TaskSummary): string | null {
 
 async function outputFor(task: TaskSummary, deps: DeliveryDeps): Promise<TaskOutput> {
   const fromResult = parseVerificationFrame((task.result as { verification?: unknown } | null)?.verification)
-  let streamed: TaskOutput = { verification: null, images: [] }
+  let streamed: TaskOutput = { verification: null, images: [], files: [], codeResults: [] }
   if (deps.outputOf) {
     try {
       streamed = await deps.outputOf(task)
@@ -155,7 +163,7 @@ async function outputFor(task: TaskSummary, deps: DeliveryDeps): Promise<TaskOut
       // The text alone, rather than nothing.
     }
   }
-  return { verification: fromResult ?? streamed.verification, images: streamed.images }
+  return { ...streamed, verification: fromResult ?? streamed.verification }
 }
 
 /**
@@ -181,7 +189,7 @@ async function writeResult(task: TaskSummary, deps: DeliveryDeps): Promise<boole
     )
     const exists = conv.messages.some((m) => m.id === ids.messageId)
     if (!legacy && !exists) {
-      const { verification, images } = await outputFor(task, deps)
+      const { verification, images, files, codeResults } = await outputFor(task, deps)
       wrote = store.addMessageWithId(
         ids.messageId,
         {
@@ -189,9 +197,25 @@ async function writeResult(task: TaskSummary, deps: DeliveryDeps): Promise<boole
           content: text,
           ...(verification ? { verification } : {}),
           ...(images.length > 0 ? { generatedImages: images } : {}),
+          ...(files.length > 0 ? { generatedFiles: files } : {}),
+          ...(codeResults.length > 0 ? { codeResults } : {}),
         },
         conv.id,
       )
+      // A code file is also a `file` artifact, as a chat turn saves it
+      // (`turn-writer.ts`) — under an id derived from the task and the file.
+      if (wrote) {
+        for (const f of files) {
+          store.createArtifactWithId(taskFileArtifactIdFor(deps.userId, task.rootRunId, f.id), {
+            conversationId: conv.id,
+            messageId: ids.messageId,
+            kind: "file",
+            title: f.name,
+            content: "",
+            storagePath: f.url,
+          })
+        }
+      }
       if (wrote && task.research) {
         const title = deriveResearchReportTitle(text, conv.id)
         store.createDocumentWithId(ids.documentId, conv.workspaceId, title, text)

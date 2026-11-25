@@ -238,9 +238,11 @@ def test_checkpoint_matches_fire_schedule() -> None:
 
 def test_a_schedule_without_a_skill_choice_keeps_every_skill_tool() -> None:
     # The schedule editor never sets `skills`, and the executor offers only
-    # `config.skills`: unset must not turn into "none".
+    # `config.skills`: unset must not turn into "none". It is the skills a
+    # schedule had before wave 8 — not `runCode`, which is opt-in (off by
+    # default on Next too).
     unset, _ = executor._skills_from(build_checkpoint(_row(skills=None), 25))
-    assert unset == executor._ALL_SKILL_TOOL_NAMES
+    assert unset == executor._ALL_SKILL_TOOL_NAMES - {"runCode"}
     none, _ = executor._skills_from(build_checkpoint(_row(skills=[]), 25))
     assert none == frozenset()
 

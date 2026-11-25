@@ -70,9 +70,12 @@ function streamOf(runId: string, items: readonly RunStreamItem[], after: RunCurs
 }
 
 /** The server side of `/v1/runs`, in memory. */
+/** A list row's result, as agent-py lists it: no `images`, `files` or
+ *  `codeResults` (Q87, Q94) — they can be megabytes. */
 function withoutImages(result: Run["result"]): Run["result"] {
-  if (!result || !("images" in result)) return result
-  const { images: _images, ...rest } = result as Record<string, unknown>
+  if (!result) return result
+  const rest: Record<string, unknown> = { ...result }
+  for (const key of ["images", "files", "codeResults"]) delete rest[key]
   return rest as Run["result"]
 }
 
@@ -197,7 +200,10 @@ export class FakeRunsServer {
 export class FakeStore implements DeliveryStore {
   conversations = new Map<string, DeliveryConversation & { messages: Array<{ id: string; role: string; content: string; verification?: unknown }> }>()
   documents = new Map<string, { id: string; workspaceId: string; title: string; content: string }>()
-  artifacts = new Map<string, { id: string; conversationId: string; messageId: string | null; title: string; content: string }>()
+  artifacts = new Map<
+    string,
+    { id: string; conversationId: string; messageId: string | null; kind?: string; title: string; content: string; storagePath?: string }
+  >()
   cards = new Map<string, { id: string; title: string; taskId?: string; artifactId?: string; status: string }>()
   active = "ws-1"
   activeDocument: string | null = null
@@ -215,7 +221,13 @@ export class FakeStore implements DeliveryStore {
   }
   addMessageWithId(
     id: string,
-    message: { role: "assistant"; content: string; generatedImages?: unknown[] },
+    message: {
+      role: "assistant"
+      content: string
+      generatedImages?: unknown[]
+      generatedFiles?: unknown[]
+      codeResults?: unknown[]
+    },
     conversationId: string,
   ): boolean {
     for (const c of this.conversations.values()) if (c.messages.some((m) => m.id === id)) return true
@@ -230,7 +242,7 @@ export class FakeStore implements DeliveryStore {
   }
   createArtifactWithId(
     id: string,
-    input: { conversationId: string; messageId: string | null; title: string; content: string },
+    input: { conversationId: string; messageId: string | null; kind?: string; title: string; content: string; storagePath?: string },
   ) {
     if (!this.artifacts.has(id)) this.artifacts.set(id, { id, ...input })
   }

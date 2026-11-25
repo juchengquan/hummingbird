@@ -21,6 +21,7 @@ from typing import Literal, Protocol
 
 from . import lease
 from .emitter import RunEmitter
+from .events import RunOutputs
 
 
 @dataclass(frozen=True)
@@ -152,9 +153,10 @@ FinalizeFn = Callable[[], Awaitable[dict[str, object] | None]]
 #: UI is unchanged while the fan-in (`store.load_child_results`, which
 #: reads `finalText` off the child's `result` row) finally sees a value.
 FinalTextFn = Callable[[], Awaitable[str | None]]
-FinalImagesFn = Callable[[], Awaitable[tuple[dict[str, object], ...] | None]]
-"""The images a settled run's result carries (Q87); () for none, None
-when they couldn't be read (the result then leaves them out)."""
+FinalOutputsFn = Callable[[], Awaitable[RunOutputs | None]]
+"""The images, files and code output a settled run's result carries (Q87,
+Q94); empty tuples for none, None when they couldn't be read (the result
+then leaves them out)."""
 
 STOPPED_AT_MAX_STEPS = "max_steps"
 """`RunResult.stoppedAt` of a run that ran out of steps (Q81)."""
@@ -177,7 +179,7 @@ async def run_agent_loop(
     should_yield: ShouldYieldFn | None = None,
     finalize: FinalizeFn | None = None,
     final_text: FinalTextFn | None = None,
-    final_images: FinalImagesFn | None = None,
+    final_outputs: FinalOutputsFn | None = None,
     resumed_from_seq: int | None = None,
     step_limit: int | None = None,
 ) -> AgentLoopResult:
@@ -265,14 +267,14 @@ async def run_agent_loop(
             return AgentLoopResult(kind="spawned", spawn=outcome.spawn)
 
         if outcome.done:
-            await _settle(emitter, finalize, final_text, final_images=final_images)
+            await _settle(emitter, finalize, final_text, final_outputs=final_outputs)
             return AgentLoopResult(kind="settled")
 
     # Hit the step cap without a final answer: deliver what it has, with
     # a visible note in the text and the flag on the result (Q81).
     await emitter.token(step_limit_note(step_limit if step_limit is not None else max_steps))
     await _settle(
-        emitter, finalize, final_text, stopped_at=STOPPED_AT_MAX_STEPS, final_images=final_images
+        emitter, finalize, final_text, stopped_at=STOPPED_AT_MAX_STEPS, final_outputs=final_outputs
     )
     return AgentLoopResult(kind="settled")
 
@@ -283,14 +285,20 @@ async def _settle(
     final_text: FinalTextFn | None,
     *,
     stopped_at: str | None = None,
-    final_images: FinalImagesFn | None = None,
+    final_outputs: FinalOutputsFn | None = None,
 ) -> None:
     """Run the optional finalize hook, resolve the final text, then emit
     the terminal `result: done`. The hooks' failures are the hooks'
     concern (they return None) — settling never blocks on them."""
     verification = await finalize() if finalize is not None else None
     text = await final_text() if final_text is not None else None
-    images = await final_images() if final_images is not None else None
+    outputs = await final_outputs() if final_outputs is not None else None
     await emitter.result(
-        "done", final_text=text, verification=verification, stopped_at=stopped_at, images=images
+        "done",
+        final_text=text,
+        verification=verification,
+        stopped_at=stopped_at,
+        images=outputs.images if outputs is not None else None,
+        files=outputs.files if outputs is not None else None,
+        code_results=outputs.code_results if outputs is not None else None,
     )

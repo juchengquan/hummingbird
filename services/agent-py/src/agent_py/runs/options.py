@@ -21,6 +21,7 @@ them yet — wave 5b does:
 | `referenceImage` | `reference_image` | C |
 | `localFilesOnly` | `local_files_only` | C |
 | `localMcpServers[]` | `local_mcp_servers` (`LocalMcpServer`) | D |
+| `sandboxFiles[]` (0.5.2) | `sandbox_files` (`MountManifestEntry`) | wave 8: `runCode`'s mounts |
 
 Local MCP **credentials** are not options: they ride in `state`
 (`runs.credentials`).
@@ -33,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from ..chat_loop import DEFAULT_MAX_STEPS
+from ..code_sandbox.mount_files import MountManifestEntry
 from ..model_allowlist import AUTO_MODEL_ID, get_model_allowlist, resolve_optional_model
 from ..reasoning_effort import ReasoningEffort, parse_reasoning_effort
 from ..tools import SkillConfigs
@@ -168,6 +170,21 @@ class RunOptions:
     reference_image: ReferenceImage | None = None
     local_files_only: bool = False
     local_mcp_servers: tuple[LocalMcpServer, ...] = ()
+    sandbox_files: tuple[MountManifestEntry, ...] = ()
+    """The files `runCode` may mount (wave 8): cloud ones by id, a
+    signed-out caller's with their bytes."""
+
+
+def _sandbox_file(raw: object) -> MountManifestEntry | None:
+    if not isinstance(raw, Mapping):
+        return None
+    name, file_id = _str(raw.get("name")), _str(raw.get("fileId"))
+    if name is None or file_id is None:
+        return None
+    data = raw.get("dataBase64")
+    return MountManifestEntry(
+        name=name, file_id=file_id, data_base64=data if isinstance(data, str) else None
+    )
 
 
 def _str(value: object, *, max_len: int | None = None) -> str | None:
@@ -343,6 +360,11 @@ def parse_run_options(options: Mapping[str, object]) -> RunOptions:
             s
             for s in (_local_server(r) for r in _list(options.get("localMcpServers")))
             if s is not None
+        ),
+        sandbox_files=tuple(
+            f
+            for f in (_sandbox_file(r) for r in _list(options.get("sandboxFiles")))
+            if f is not None
         ),
     )
 

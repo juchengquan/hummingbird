@@ -214,6 +214,10 @@ def background_checkpoint(
         # Q71: generated files stay out of Storage (the tool context's
         # `local_files_only`, `executor._build_run_tools`).
         config["localFilesOnly"] = True
+    if fp.sandboxFiles:
+        # Wave 8 (Q93): the cloud files `runCode` may mount, by id (inline
+        # data was refused at the API).
+        config["sandboxFiles"] = [{"name": f.name, "fileId": f.fileId} for f in fp.sandboxFiles]
     return {"messages": messages, "config": config}
 
 

@@ -45,6 +45,7 @@ import type {
   RunAttachment,
   RunForwardedProps,
   RunReferenceImage,
+  RunSandboxFile,
   SkillConfig,
   StartRunRequest,
 } from "./types"
@@ -98,6 +99,31 @@ export interface ChatRunInput {
   /** Their credentials, by server id — sent in `state` only, never kept
    *  anywhere but the in-flight request. 5b-D. */
   localMcpCredentials?: LocalMcpCredentials
+  /** The files `runCode` may mount (wave 8, contract 0.5.2): cloud ones by
+   *  id, local ones with their bytes — `fitSandboxFilesToRun` keeps the
+   *  bytes within the request limit. */
+  sandboxFiles?: readonly RunSandboxFile[]
+}
+
+/** Base64 characters of inline `sandboxFiles` a run request carries at
+ *  most: `/v1/runs` takes 16 MB (Q44), and the history and options need
+ *  room too. Next's `/v1/chat` takes 20 MB of files; on runs a large local
+ *  file goes as a cloud file, or not at all. */
+export const RUN_INLINE_SANDBOX_BUDGET = 12_000_000
+
+/** `sandboxFiles` within `RUN_INLINE_SANDBOX_BUDGET`: every cloud file,
+ *  and the inline ones, in order, while they fit (one that doesn't is left
+ *  out — the model is told it isn't available). Pure. */
+export function fitSandboxFilesToRun(files: readonly RunSandboxFile[]): RunSandboxFile[] {
+  let used = 0
+  const out: RunSandboxFile[] = []
+  for (const f of files) {
+    const size = f.dataBase64?.length ?? 0
+    if (size > 0 && used + size > RUN_INLINE_SANDBOX_BUDGET) continue
+    used += size
+    out.push(f)
+  }
+  return out
 }
 
 /** One attached file's extracted text (`UploadedFile.extractedText`). */
@@ -201,6 +227,9 @@ export function buildRunInput(input: ChatRunInput): StartRunRequest {
   if (input.localFilesOnly) forwardedProps.localFilesOnly = true
   if (input.localMcpServers && input.localMcpServers.length > 0) {
     forwardedProps.localMcpServers = [...input.localMcpServers]
+  }
+  if (input.sandboxFiles && input.sandboxFiles.length > 0) {
+    forwardedProps.sandboxFiles = [...input.sandboxFiles]
   }
   const creds = input.localMcpCredentials
   const state = creds && Object.keys(creds).length > 0 ? { [LOCAL_MCP_STATE_KEY]: { ...creds } } : undefined

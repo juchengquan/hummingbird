@@ -327,6 +327,13 @@ async def start_run(
     # background run refuses them rather than silently dropping them.
     if mode == "background" and fp.attachments:
         _raise(400, "invalid_request", "Background runs do not take attachments.")
+    # Q93: `runCode` mounts a background run's cloud files by id only.
+    if mode == "background" and any(f.dataBase64 is not None for f in fp.sandboxFiles or ()):
+        _raise(
+            400,
+            "invalid_request",
+            "Background runs mount cloud files only: send sandboxFiles by fileId, without dataBase64.",
+        )
 
     client_key = rate_limit_key(request)
     refusal = services.limits.check_start(

@@ -36,6 +36,7 @@ export interface RunsTarget {
 export type StartRunRequest = Schemas["StartRunRequest"]
 /** Hummingbird's options in `RunAgentInput.forwardedProps`. */
 export type RunForwardedProps = Schemas["RunForwardedProps"]
+export type RunSandboxFile = Schemas["RunSandboxFile"]
 /** The run resource (`GET /v1/runs/{id}`, `POST …/cancel`). Contract
  *  0.5.0 adds the task fields: `rootRunId`, `currentRunId`, `research`,
  *  `delivered`, `childrenAsking`, `answerPending` (RUN_EVENTS.md § 4.5). */

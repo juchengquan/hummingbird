@@ -1754,6 +1754,18 @@ export interface components {
              *     take only the citation checks, `verifyCitations`).
              */
             research?: boolean;
+            /**
+             * @description The files `runCode` may mount at `/mnt/files/<name>` (0.5.2,
+             *     Q92), when the `codeInterpreter` skill is on: the Next chat
+             *     body's `sandboxFiles`, the model naming them by `name`. A cloud
+             *     file goes by id — the backend reads it only if it is the
+             *     caller's (Q44); `dataBase64` only for a signed-out user's local
+             *     file, within the request size limit. A background run takes
+             *     cloud files only (Q93): one with `dataBase64` is
+             *     `400 invalid_request`. A file that can't be mounted is a note
+             *     to the model, never an error.
+             */
+            sandboxFiles?: components["schemas"]["RunSandboxFile"][];
             skills?: components["schemas"]["SkillConfig"][];
             /** @description Extra instructions (workspace / conversation system prompt), prepended to the backend's own. */
             systemPrompt?: string;
@@ -1862,6 +1874,43 @@ export interface components {
          */
         RunResult: {
             /**
+             * @description The code output the answer carries (0.5.2, Q94): every
+             *     `hummingbird.code_result` of the task's runs, in order, then
+             *     its sub-agents' results'. Charts are in `images` (mode `code`).
+             *     Like `images`: an empty list when there are none, absent on a
+             *     result written before 0.5.2, and left out of `listRuns` rows.
+             */
+            codeResults?: ({
+                /** @description The `runCode` tool call id. */
+                id: string;
+                results?: {
+                    [key: string]: unknown;
+                }[];
+                stderr?: string;
+                stdout?: string;
+            } & {
+                [key: string]: unknown;
+            })[];
+            /**
+             * @description The files the answer carries (0.5.2, Q94): every
+             *     `hummingbird.tool_file` file of the task's runs (`runCode`'s
+             *     `/tmp/outputs`), in order, then its sub-agents' results' files.
+             *     Each a Storage URL with its `storagePath`, or a data URL when
+             *     files are kept local. Like `images`: an empty list when there
+             *     are none, absent on a result written before 0.5.2, and left
+             *     out of `listRuns` rows.
+             */
+            files?: ({
+                id?: string;
+                mimeType?: string;
+                name?: string;
+                sizeBytes?: number;
+                storagePath?: string;
+                url: string;
+            } & {
+                [key: string]: unknown;
+            })[];
+            /**
              * @description The images the answer carries (0.5.1, Q87): every image the
              *     task's runs generated (`generateImage`, `runCode` charts), in
              *     order, then its sub-agents' results' images — so a parent's
@@ -1927,6 +1976,14 @@ export interface components {
          */
         RunRewindEventValue: {
             after: number;
+        };
+        /** @description A file `runCode` may mount (`RunForwardedProps.sandboxFiles`). */
+        RunSandboxFile: {
+            /** @description The bytes, base64 — a signed-out user's local file only. */
+            dataBase64?: string;
+            fileId: string;
+            /** @description The name the model passes to `runCode`'s `files`. */
+            name: string;
         };
         /** @description Opens a run. Run-scoped, so it carries no subagent attribution. */
         RunStartedEvent: {
@@ -2704,6 +2761,7 @@ export type RunMode = components['schemas']['RunMode'];
 export type RunReferenceImage = components['schemas']['RunReferenceImage'];
 export type RunResult = components['schemas']['RunResult'];
 export type RunRewindEventValue = components['schemas']['RunRewindEventValue'];
+export type RunSandboxFile = components['schemas']['RunSandboxFile'];
 export type RunStartedEvent = components['schemas']['RunStartedEvent'];
 export type RunStatus = components['schemas']['RunStatus'];
 export type RunToken = components['schemas']['RunToken'];

@@ -30,16 +30,21 @@ WORKDIR /app
 # changes to source code shouldn't bust the deps layer.
 COPY services/agent-py/pyproject.toml services/agent-py/uv.lock* ./
 
+# Optional extras: `--build-arg AGENT_PY_EXTRAS=sandbox` adds the code
+# interpreter's microsandbox SDK (~55 MB; needs a KVM host at run time —
+# README "Code interpreter"). Empty: no extras.
+ARG AGENT_PY_EXTRAS=""
+
 # Resolve + install into /app/.venv. `--no-install-project` keeps the project
 # itself out so the layer doesn't bust on every source change.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-dev
+    uv sync --frozen --no-install-project --no-dev ${AGENT_PY_EXTRAS:+--extra $AGENT_PY_EXTRAS}
 
 # Now copy the project source and install it. This second layer is the only
 # one that busts on a source change.
 COPY services/agent-py/src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev ${AGENT_PY_EXTRAS:+--extra $AGENT_PY_EXTRAS}
 
 
 # --- Stage 2: runtime -------------------------------------------------------

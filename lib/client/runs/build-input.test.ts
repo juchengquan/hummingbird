@@ -9,7 +9,9 @@ import type { Message } from "@/shared/types"
 
 import {
   buildRunInput,
+  fitSandboxFilesToRun,
   LOCAL_MCP_STATE_KEY,
+  RUN_INLINE_SANDBOX_BUDGET,
   localMcpCredentialsOf,
   toRunMessages,
   utf8ToBase64,
@@ -205,5 +207,28 @@ describe("buildRunInput — contract 0.4.0 options (wave 5a)", () => {
     expect(of([1])).toBeUndefined()
     expect(of({ other: 1 })).toBeUndefined()
     expect(of({ [LOCAL_MCP_STATE_KEY]: "x" })).toBeUndefined()
+  })
+})
+
+describe("buildRunInput — runCode's files (wave 8, Q92)", () => {
+  const CONV = "00000000-0000-4000-8000-0000000000c1"
+  const history: Message[] = [{ id: "u1", role: "user", content: "Plot it", timestamp: new Date(0) }]
+
+  test("sandboxFiles ride in forwardedProps; none → no key", () => {
+    const files = [{ name: "a.csv", fileId: "f1" }, { name: "b.csv", fileId: "f2", dataBase64: "YQ==" }]
+    const body = buildRunInput({ conversationId: CONV, history, sandboxFiles: files })
+    expect(body.forwardedProps?.sandboxFiles).toEqual(files)
+    expect(buildRunInput({ conversationId: CONV, history, sandboxFiles: [] }).forwardedProps).toBeUndefined()
+  })
+
+  test("inline files are kept only while they fit the request; cloud files always", () => {
+    const big = "A".repeat(RUN_INLINE_SANDBOX_BUDGET - 10)
+    const fitted = fitSandboxFilesToRun([
+      { name: "one", fileId: "1", dataBase64: big },
+      { name: "cloud", fileId: "2" },
+      { name: "two", fileId: "3", dataBase64: "A".repeat(20) },
+      { name: "tiny", fileId: "4", dataBase64: "AAAA" },
+    ])
+    expect(fitted.map((f) => f.name)).toEqual(["one", "cloud", "tiny"])
   })
 })

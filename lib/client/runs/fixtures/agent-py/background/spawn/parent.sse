@@ -1,10 +1,10 @@
-data: {"type":"RUN_STARTED","threadId":"54dba753-c99b-43ee-99d6-0d352bf66949","runId":"6f10a07f-7622-43a4-b652-fe641f03879e"}
+data: {"type":"RUN_STARTED","threadId":"4ef0b606-54dc-4062-ad23-8df66361e343","runId":"c71a77d4-f0b3-4e40-bb5e-3f1831bf62df"}
 
 id: 3
 data: {"type":"STEP_STARTED","stepName":"step-1"}
 
 id: 4.0
-data: {"type":"TOOL_CALL_START","toolCallId":"s","toolCallName":"spawnSubagent","parentMessageId":"6f10a07f-7622-43a4-b652-fe641f03879e:4"}
+data: {"type":"TOOL_CALL_START","toolCallId":"s","toolCallName":"spawnSubagent","parentMessageId":"c71a77d4-f0b3-4e40-bb5e-3f1831bf62df:4"}
 
 id: 4.1
 data: {"type":"TOOL_CALL_ARGS","toolCallId":"s","delta":"{\"tasks\":[{\"subgoal\":\"asks\",\"personaSlug\":\"helper\"},{\"subgoal\":\"works\",\"personaSlug\":\"helper\"}]}"}
@@ -16,34 +16,34 @@ id: 5
 data: {"type":"STEP_FINISHED","stepName":"step-1"}
 
 id: 6
-data: {"type":"SUBAGENT_STARTED","subagentRunId":"61d50e40-55eb-4b67-baa4-e7169d388cff","name":"helper","metadata":{"hummingbird":{"subgoal":"asks"}}}
+data: {"type":"SUBAGENT_STARTED","subagentRunId":"7d84f36f-078d-400f-b67e-0b22fe7904d2","name":"helper","metadata":{"hummingbird":{"subgoal":"asks"}}}
 
 id: 7
-data: {"type":"SUBAGENT_STARTED","subagentRunId":"749acd61-9b1f-418a-ae01-39621c9679e1","name":"helper","metadata":{"hummingbird":{"subgoal":"works"}}}
+data: {"type":"SUBAGENT_STARTED","subagentRunId":"168c5cb4-3f02-474f-86a4-dc35b831257f","name":"helper","metadata":{"hummingbird":{"subgoal":"works"}}}
 
 id: 8
-data: {"type":"TOOL_CALL_RESULT","messageId":"6f10a07f-7622-43a4-b652-fe641f03879e:8","toolCallId":"s","role":"tool","content":"{\"summary\":\"Started 2 sub-agents: asks; works\"}","metadata":{"hummingbird":{"toolName":"spawnSubagent"}}}
+data: {"type":"TOOL_CALL_RESULT","messageId":"c71a77d4-f0b3-4e40-bb5e-3f1831bf62df:8","toolCallId":"s","role":"tool","content":"{\"summary\":\"Started 2 sub-agents: asks; works\"}","metadata":{"hummingbird":{"toolName":"spawnSubagent"}}}
 
 id: 9
-data: {"type":"SUBAGENT_FINISHED","subagentRunId":"749acd61-9b1f-418a-ae01-39621c9679e1"}
+data: {"type":"SUBAGENT_FINISHED","subagentRunId":"168c5cb4-3f02-474f-86a4-dc35b831257f"}
 
 id: 10
-data: {"type":"SUBAGENT_FINISHED","subagentRunId":"61d50e40-55eb-4b67-baa4-e7169d388cff"}
+data: {"type":"SUBAGENT_FINISHED","subagentRunId":"7d84f36f-078d-400f-b67e-0b22fe7904d2"}
 
 id: 11
 data: {"type":"STEP_STARTED","stepName":"step-2"}
 
 id: 12.0
-data: {"type":"TEXT_MESSAGE_START","messageId":"6f10a07f-7622-43a4-b652-fe641f03879e:12","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"c71a77d4-f0b3-4e40-bb5e-3f1831bf62df:12","role":"assistant"}
 
 id: 12
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"6f10a07f-7622-43a4-b652-fe641f03879e:12","delta":"Both sub-agents are done."}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"c71a77d4-f0b3-4e40-bb5e-3f1831bf62df:12","delta":"Both sub-agents are done."}
 
 id: 13.0
-data: {"type":"TEXT_MESSAGE_END","messageId":"6f10a07f-7622-43a4-b652-fe641f03879e:12"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"c71a77d4-f0b3-4e40-bb5e-3f1831bf62df:12"}
 
 id: 13
 data: {"type":"STEP_FINISHED","stepName":"step-2"}
 
-data: {"type":"RUN_FINISHED","threadId":"54dba753-c99b-43ee-99d6-0d352bf66949","runId":"6f10a07f-7622-43a4-b652-fe641f03879e","outcome":{"type":"success"},"result":{"text":"Both sub-agents are done.","images":[]}}
+data: {"type":"RUN_FINISHED","threadId":"4ef0b606-54dc-4062-ad23-8df66361e343","runId":"c71a77d4-f0b3-4e40-bb5e-3f1831bf62df","outcome":{"type":"success"},"result":{"text":"Both sub-agents are done.","files":[],"images":[],"codeResults":[]}}
 

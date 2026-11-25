@@ -354,3 +354,26 @@ def test_resume_without_saved_state_is_409(client: TestClient, repo: FakePgRepo)
     repo._rows[previous].checkpoint = {"messages": [], "config": {}}
     r = client.post("/v1/runs", json=_resume_body(previous), headers=_auth())
     assert r.status_code == 409 and r.json()["code"] == "invalid_state"
+
+
+# --- Q93: runCode's files on a background run ------------------------------------------
+
+_CLOUD_FILE = {"name": "data.csv", "fileId": "8f14e45f-ceea-4e7a-9b1c-2d3e4f5a6b7c"}
+
+
+def test_background_start_keeps_cloud_sandbox_files(client: TestClient, repo: FakePgRepo) -> None:
+    body = _body({"skills": [{"id": "codeInterpreter"}], "sandboxFiles": [_CLOUD_FILE]})
+    assert client.post("/v1/runs", json=body, headers=_auth()).status_code == 202
+    cfg = repo.checkpoint_of(body["runId"])["config"]  # type: ignore[index]
+    assert cfg["sandboxFiles"] == [_CLOUD_FILE]
+    assert cfg["skills"] == [{"id": "codeInterpreter"}]
+
+
+def test_background_start_refuses_inline_sandbox_files(
+    client: TestClient, repo: FakePgRepo
+) -> None:
+    body = _body({"sandboxFiles": [{**_CLOUD_FILE, "dataBase64": "YQ=="}]})
+    r = client.post("/v1/runs", json=body, headers=_auth())
+    assert r.status_code == 400 and r.json()["code"] == "invalid_request"
+    assert "cloud files" in r.json()["message"]
+    assert repo.checkpoint_of(body["runId"]) is None and repo.enqueued == []

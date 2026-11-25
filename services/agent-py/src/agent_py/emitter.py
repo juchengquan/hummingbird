@@ -367,6 +367,8 @@ class RunEmitter:
         usage: tuple[TokenUsage, ...] = (),
         stopped_at: str | None = None,
         images: tuple[dict[str, object], ...] | None = None,
+        files: tuple[dict[str, object], ...] | None = None,
+        code_results: tuple[dict[str, object], ...] | None = None,
     ) -> None:
         """Emit the terminal `result` event. Latches the emitter so
         nothing further is sent — call exactly once at the end of a
@@ -389,6 +391,8 @@ class RunEmitter:
                 usage=usage,
                 stopped_at=stopped_at,
                 images=images,
+                files=files,
+                code_results=code_results,
             )
         )
         self._settled = True

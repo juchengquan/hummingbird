@@ -52,6 +52,7 @@ from .providers.anthropic_provider import (
     AsyncAnthropicClient,
     _coerce_content_blocks,
     _make_tool_result_block,
+    emit_code_result,
     sendable_messages,
 )
 from .tools import (
@@ -459,6 +460,7 @@ class ToolRun:
     images: tuple[dict[str, object], ...] = ()
     image_mode: ToolImageMode = "t2i"
     files: tuple[dict[str, object], ...] = ()
+    code_result: dict[str, object] | None = None
     mcp_app: McpAppPayload | None = None
 
 
@@ -496,6 +498,7 @@ async def execute_tool(
         images=result.images,
         image_mode=result.image_mode,
         files=result.files,
+        code_result=result.code_result,
         mcp_app=result.mcp_app,
     )
 
@@ -504,8 +507,8 @@ async def emit_tool_run(
     emitter: RunEmitter, *, tool_call_id: str, tool_name: str, run: ToolRun
 ) -> None:
     """`step_error` (on failure) + `tool_output` for a finished call,
-    then the images / files it produced as one `tool_image` /
-    `tool_file` part each (the Next route's `maybeEmitImageFrame`: after
+    then the images / files / code output it produced as one `tool_image`
+    / `tool_file` / `code_result` part each (the Next route's `maybeEmitImageFrame`: after
     the tool result, ids `<toolCallId>-<i>`), then its MCP App as one
     `mcp_app` part (the Next route's `data-mcp-app` after the result)."""
     if run.is_error:
@@ -536,6 +539,8 @@ async def emit_tool_run(
             tool_call_id=tool_call_id,
             files=tuple({"id": f"{tool_call_id}-file-{i}", **f} for i, f in enumerate(run.files)),
         )
+    if run.code_result is not None:
+        await emit_code_result(emitter, tool_call_id=tool_call_id, code_result=run.code_result)
     if run.mcp_app is not None:
         await emitter.emit(
             McpAppEvent,

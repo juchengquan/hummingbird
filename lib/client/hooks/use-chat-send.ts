@@ -71,7 +71,7 @@ import {
 } from "@/client/chat/context-sources"
 import { runAttachmentsFor } from "@/client/runs/attachments"
 import { latestTurnPersona, resolveTurnPersona } from "@/shared/agents/turn-persona"
-import { buildRunInput } from "@/client/runs/build-input"
+import { buildRunInput, fitSandboxFilesToRun } from "@/client/runs/build-input"
 import { localMcpForRun } from "@/client/runs/local-mcp"
 import { registerChatRunBridge } from "@/client/runs/chat-bridge"
 import { createChatRunner, type ChatRunner } from "@/client/runs/chat-runner"
@@ -116,6 +116,23 @@ export interface UseChatSendResult {
   isStreaming: (convId: string | null | undefined) => boolean
   streamingConvIds: ReadonlySet<string>
   liveToolCalls: Record<string, LiveToolCall[]>
+}
+
+/** The attached files `runCode` may mount (`buildSandboxFiles`): a cloud
+ *  file by id, a local one's bytes from IndexedDB (the attachment store). */
+function sandboxSourcesFor(
+  files: ReadonlyArray<{ id: string; name: string; storagePath?: string | null }>
+): SandboxFileSource[] {
+  return files.map((file) => ({
+    fileId: file.id,
+    name: file.name,
+    storagePath: file.storagePath ?? null,
+    readBytes: async () => {
+      const blob = await getBlob(file.id)
+      if (!blob) return new Uint8Array(0)
+      return new Uint8Array(await blob.arrayBuffer())
+    },
+  }))
 }
 
 export function useChatSend(): UseChatSendResult {
@@ -220,6 +237,12 @@ export function useChatSend(): UseChatSendResult {
         const workspaceId = conv?.workspaceId || st.activeWorkspaceId
         const workspace = st.workspaces.find((w) => w.id === workspaceId)
         const model = turn.model ?? st.chatModel
+        const skills = resolveEnabledSkills({ workspace, conversation: conv })
+        const resumeFiles = buildAttachments({
+          conversation: conv,
+          files: st.files,
+          conversationFiles: st.conversationFiles,
+        }).attachedFiles
         return {
           model,
           systemPrompt: withUserSkillInstructions(
@@ -233,9 +256,17 @@ export function useChatSend(): UseChatSendResult {
             st.userSkills,
             workspaceId
           ),
-          skills: resolveEnabledSkills({ workspace, conversation: conv }),
+          skills,
           workspaceId: workspaceId || undefined,
           allowedMcpServerIds: turn.allowedMcpServerIds,
+          // runCode's files (wave 8): this rebuild is synchronous, so the
+          // cloud ones only, by id — a local file's bytes aren't read here.
+          sandboxFiles: skills.some((s) => s.id === "codeInterpreter")
+            ? resumeFiles
+                .filter((f) => f.storagePath)
+                .slice(0, 10)
+                .map((f) => ({ name: f.name, fileId: f.id }))
+            : undefined,
           reasoningEffort: modelSupportsReasoningEffort(model)
             ? st.chatReasoningEffort ?? undefined
             : undefined,
@@ -246,11 +277,7 @@ export function useChatSend(): UseChatSendResult {
           // paused run's request across a reload) — what a send would
           // attach. Signed in → files by id, images included.
           attachments: runAttachmentsFor({
-            files: buildAttachments({
-              conversation: conv,
-              files: st.files,
-              conversationFiles: st.conversationFiles,
-            }).attachedFiles,
+            files: resumeFiles,
             retrievalModes: conv?.fileRetrievalModes,
             mcpResources: attachedMcpResources(conv, st),
             bookmarks: attachedUrlBookmarks(conv, st),
@@ -432,7 +459,19 @@ export function useChatSend(): UseChatSendResult {
         // its conversation's name under it.
         const goal = [...history].reverse().find((m) => m.role === "user")?.content ?? ""
         if (launchesOnRuns(tasksRef.current)) {
-          await launchTaskOnRuns(tasksRef.current, taskInput, { title: goal })
+          // runCode's files (Q93): a background run mounts cloud files only,
+          // by id — a local file can't reach the worker.
+          const sandboxFiles = enabledSkills.some((s) => s.id === "codeInterpreter")
+            ? attachedFiles
+                .filter((f) => f.storagePath)
+                .slice(0, 10)
+                .map((f) => ({ name: f.name, fileId: f.id }))
+            : []
+          await launchTaskOnRuns(
+            tasksRef.current,
+            sandboxFiles.length > 0 ? { ...taskInput, sandboxFiles } : taskInput,
+            { title: goal }
+          )
           return
         }
         // The old path drives one task at a time: a resend of a task turn
@@ -471,8 +510,9 @@ export function useChatSend(): UseChatSendResult {
       // `state`). Files, MCP resources and URL bookmarks go as
       // `attachments` (`runAttachmentsFor`): a signed-in run's files by
       // id — their images too, so no image data is sent for them (Q44) —
-      // and an anonymous run's by value. Not yet sent (Q32, see the plan's
-      // Phase 3 checklist): sandbox files.
+      // and an anonymous run's by value. With the code interpreter on, the
+      // attached files `runCode` may mount go as `sandboxFiles` (wave 8):
+      // cloud ones by id, local ones with their bytes while they fit.
       const runsTarget = RUNS_CHAT_ENABLED
         ? await (
             await import("@/client/api/backend-resolver")
@@ -511,6 +551,11 @@ export function useChatSend(): UseChatSendResult {
             localFilesOnly: useStore.getState().localFilesOnly || undefined,
             referenceImage: options?.referenceImage,
             allowedMcpServerIds,
+            sandboxFiles: enabledSkills.some((s) => s.id === "codeInterpreter")
+              ? fitSandboxFilesToRun(
+                  await buildSandboxFiles(sandboxSourcesFor(attachedFiles))
+                )
+              : undefined,
             // Local MCP servers (Q42/Q45) — the `/v1/chat` body's
             // `mcpServersForRequest` below; credentials go in `state`.
             ...localMcpForRun(
@@ -697,17 +742,7 @@ export function useChatSend(): UseChatSendResult {
       // field stays absent on the wire.
       let sandboxFiles: ChatRequestInput["sandboxFiles"]
       if (enabledSkills.some((s) => s.id === "codeInterpreter")) {
-        const sources: SandboxFileSource[] = attachedFiles.map((file) => ({
-          fileId: file.id,
-          name: file.name,
-          storagePath: file.storagePath ?? null,
-          readBytes: async () => {
-            const blob = await getBlob(file.id)
-            if (!blob) return new Uint8Array(0)
-            return new Uint8Array(await blob.arrayBuffer())
-          },
-        }))
-        const built = await buildSandboxFiles(sources)
+        const built = await buildSandboxFiles(sandboxSourcesFor(attachedFiles))
         if (built.length > 0) sandboxFiles = built
       }
 

@@ -312,7 +312,7 @@ describe("generated images (localFilesOnly)", () => {
     await deliverTask(
       summaryOf(server.list({})[0], { userId: USER }),
       deps(store, browser(), server, new Cloud(), {
-        outputOf: async () => ({ verification: null, images: [image] }),
+        outputOf: async () => ({ verification: null, images: [image], files: [], codeResults: [] }),
       }),
     )
     const message = store.conversations.get(CONV)!.messages[0] as { generatedImages?: unknown[] }

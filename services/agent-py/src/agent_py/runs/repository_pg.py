@@ -57,7 +57,7 @@ import asyncpg
 import structlog
 
 from .. import events, store
-from ..events import ApprovalEvent, ResultEvent
+from ..events import ApprovalEvent, ResultEvent, outputs_payload
 from .in_place import answer_problem, respond_job_payload
 from .model import (
     ContractStatus,
@@ -185,10 +185,13 @@ _RUN_COLUMNS = f"""
              WHERE e.task_id = t.id ORDER BY e.seq DESC LIMIT 1), 0) AS last_seq
 """
 
-# A list row's outcome without `result.images` (Q87): a data-URL image can
-# be megabytes and the list is polled; a client reads them from getRun.
+# A list row's outcome without `result.images` / `files` / `codeResults`
+# (Q87, Q94): a data-URL image or file can be megabytes and the list is
+# polled; a client reads them from getRun.
 _LIST_RUN_COLUMNS = _RUN_COLUMNS.replace(
-    "t.outcome::text AS outcome", "(t.outcome #- '{result,images}')::text AS outcome"
+    "t.outcome::text AS outcome",
+    "(t.outcome #- '{result,images}' #- '{result,files}' #- '{result,codeResults}')::text"
+    " AS outcome",
 )
 assert _LIST_RUN_COLUMNS != _RUN_COLUMNS
 
@@ -750,8 +753,11 @@ def _record(row: asyncpg.Record, fallback: _LogFallback | None) -> RunRecord:
                 result["text"] = fallback.result.final_text
             if fallback.result.memory_tainted:
                 result["memoryTainted"] = True
-            if fallback.result.images is not None:
-                result["images"] = [dict(i) for i in fallback.result.images]
+            result.update(
+                outputs_payload(
+                    fallback.result.images, fallback.result.files, fallback.result.code_results
+                )
+            )
     elif status == "failed":
         res_ev = fallback.result if fallback is not None else None
         if res_ev is not None and (res_ev.error is not None or res_ev.error_code is not None):

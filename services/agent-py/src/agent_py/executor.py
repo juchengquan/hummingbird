@@ -58,6 +58,7 @@ from . import (
 )
 from .aggregate import aggregate_child_results
 from .barrier import settle_task_terminal
+from .code_sandbox.mount_files import MountManifestEntry
 from .emitter import EventSink, RunEmitter, _now_iso
 from .events import (
     ApprovalEvent,
@@ -85,8 +86,8 @@ from .providers.anthropic_provider import (
 from .reasoning_effort import parse_reasoning_effort, thinking_params
 from .runner import (
     AgentLoopResult,
-    FinalImagesFn,
     FinalizeFn,
+    FinalOutputsFn,
     FinalTextFn,
     PendingInputDescriptor,
     RunStepContext,
@@ -533,12 +534,16 @@ class _RunTools:
     skill_tool_names: frozenset[str] = frozenset()
     """The skill tools the run chose (`config.skills`, see `_skills_from`)."""
     skill_configs: SkillConfigs | None = None
+    sandbox_files: tuple[MountManifestEntry, ...] = ()
+    """The cloud files `runCode` may mount (`config.sandboxFiles`, Q93)."""
 
     def registry(self) -> dict[str, ToolDescriptor]:
         out = {
             name: d
             for name, d in default_tool_registry(
-                context=self.context, skill_configs=self.skill_configs
+                context=self.context,
+                skill_configs=self.skill_configs,
+                sandbox_files=self.sandbox_files,
             ).items()
             if name not in _ALL_SKILL_TOOL_NAMES or name in self.skill_tool_names
         }
@@ -575,6 +580,22 @@ def _skills_from(checkpoint: dict[str, Any]) -> tuple[frozenset[str], SkillConfi
         web_fetch=configs.get("webFetchConfig"),
         image_gen=configs.get("imageGenConfig"),
     )
+
+
+def _sandbox_files_from(checkpoint: dict[str, Any]) -> tuple[MountManifestEntry, ...]:
+    """`config.sandboxFiles` → the cloud files `runCode` may mount, by id
+    only (Q93: a background run never mounts inline data, whatever the
+    checkpoint holds)."""
+    cfg = checkpoint.get("config")
+    raw = cfg.get("sandboxFiles") if isinstance(cfg, dict) else None
+    out: list[MountManifestEntry] = []
+    for entry in raw if isinstance(raw, list) else []:
+        if not isinstance(entry, dict) or "dataBase64" in entry:
+            continue
+        name, file_id = entry.get("name"), entry.get("fileId")
+        if isinstance(name, str) and name and isinstance(file_id, str) and file_id:
+            out.append(MountManifestEntry(name=name, file_id=file_id))
+    return tuple(out[:10])
 
 
 def _allowed_mcp_server_ids_from(checkpoint: dict[str, Any]) -> tuple[str, ...] | None:
@@ -630,6 +651,7 @@ async def _build_run_tools(
         mcp_gated=mcp_gated,
         skill_tool_names=skill_tool_names,
         skill_configs=skill_configs,
+        sandbox_files=_sandbox_files_from(checkpoint),
     )
 
 
@@ -1024,7 +1046,7 @@ async def _drive(
     def should_yield() -> bool:
         return deadline_s is not None and asyncio.get_event_loop().time() > deadline_s
 
-    finalize, final_text, final_images = _settle_hooks(run)
+    finalize, final_text, final_outputs = _settle_hooks(run)
 
     while True:
         if resolve:
@@ -1052,7 +1074,7 @@ async def _drive(
             should_yield=should_yield,
             finalize=finalize,
             final_text=final_text,
-            final_images=final_images,
+            final_outputs=final_outputs,
             resumed_from_seq=run.resumed_from_seq,
         )
         run.resumed_from_seq = None
@@ -1118,7 +1140,7 @@ async def _drive(
         return ExecutorOutcome(settled=True)
 
 
-def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn, FinalImagesFn]:
+def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn, FinalOutputsFn]:
     """The pre-settle hooks: citation verification (research runs only,
     advisory + non-blocking) and the final text.
 
@@ -1222,38 +1244,48 @@ def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn, FinalImagesFn]:
             return None
         return text or None
 
-    async def final_images() -> tuple[dict[str, object], ...] | None:
+    async def final_outputs() -> events.RunOutputs | None:
         try:
             line, logs = await earlier_runs()
             own = await own_events()
-            drawn = [
-                dict(image)
-                for log in [*logs, own]
-                for event in log
-                if isinstance(event, events.ToolImageEvent)
-                for image in event.images
-            ]
-            children = await store.load_child_images(
+            children = await store.load_child_outputs(
                 run.pool, parent_ids=[*line, run_id], user_id=user_id
             )
         except Exception as exc:
-            logger.warning("executor.final_images_failed", run_id=run_id, error=str(exc))
+            logger.warning("executor.final_outputs_failed", run_id=run_id, error=str(exc))
             return None
-        return _unique_images([*drawn, *children])
+        logged = [event for log in [*logs, own] for event in log]
+        images = [dict(i) for e in logged if isinstance(e, events.ToolImageEvent) for i in e.images]
+        files = [dict(f) for e in logged if isinstance(e, events.ToolFileEvent) for f in e.files]
+        code: list[dict[str, object]] = [
+            {
+                "id": e.tool_call_id,
+                "stdout": e.stdout,
+                "stderr": e.stderr,
+                "results": list(e.results),
+            }
+            for e in logged
+            if isinstance(e, events.CodeResultEvent)
+        ]
+        return events.RunOutputs(
+            images=_unique([*images, *children.images], "url"),
+            files=_unique([*files, *children.files], "url"),
+            code_results=_unique([*code, *children.code_results], None),
+        )
 
-    return finalize, final_text, final_images
+    return finalize, final_text, final_outputs
 
 
-def _unique_images(images: list[dict[str, object]]) -> tuple[dict[str, object], ...]:
-    """Each image once, first seen kept (by id, else url)."""
+def _unique(items: list[dict[str, object]], fallback: str | None) -> tuple[dict[str, object], ...]:
+    """Each item once, first seen kept (by id, else `fallback`)."""
     seen: set[object] = set()
     out: list[dict[str, object]] = []
-    for image in images:
-        key = image.get("id") or image.get("url")
-        if key in seen:
+    for item in items:
+        key = item.get("id") or (item.get(fallback) if fallback else None)
+        if key is not None and key in seen:
             continue
         seen.add(key)
-        out.append(image)
+        out.append(item)
     return tuple(out)
 
 
@@ -1700,6 +1732,7 @@ def _default_make_step_fn(
             mcp_gated=set(),
             skill_tool_names=skill_tool_names,
             skill_configs=skill_configs,
+            sandbox_files=_sandbox_files_from(checkpoint),
         )
     tools_dict = run_tools.registry()
     tools = list(tools_dict.values())

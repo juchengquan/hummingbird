@@ -168,3 +168,48 @@ test("runs: a sub-agent's image arrives with its parent's answer (Q87)", async (
   expect((await cloudMessage(uid, "FINAL drawkid"))!.generated_images![0].url).toMatch(/^data:image\/png;base64,/)
   expect(await modelSaw()).not.toContain("127.0.0.1:8172/img/")
 })
+
+/** The cloud message whose text contains `needle`, with its images and files. */
+async function cloudTurn(uid: string, needle: string) {
+  const rows = (await rest(`messages?select=content,generated_images,generated_files&user_id=eq.${uid}`)) as {
+    content: string
+    generated_images: { url: string }[] | null
+    generated_files: { name: string; url: string }[] | null
+  }[]
+  return rows.find((m) => m.content.includes(needle))
+}
+
+test("runs: a task runs code; its chart, file and output reach the chat (Q92–Q94)", async ({ page }) => {
+  const { uid } = await signedIn(page, { skillPrefs: { codeInterpreter: true } })
+  await sendAsTask(page, "SCENARIO:code/k1")
+  await expect(page.getByText("FINAL code").first()).toBeVisible({ timeout: 30000 })
+  // The model read the output and a count, never the bytes.
+  const saw = await modelSaw()
+  expect(saw).toContain("Returned to the user (shown above your reply): 1 chart, 1 file (answer.csv).")
+  expect(saw).not.toContain("iVBORw0KGgo")
+  await expect.poll(async () => (await cloudTurn(uid, "FINAL code"))?.generated_files?.length ?? 0, { timeout: 20000 }).toBe(1)
+  const turn = (await cloudTurn(uid, "FINAL code"))!
+  expect(turn.generated_files![0].name).toBe("answer.csv")
+  expect(turn.generated_images).toHaveLength(1)
+  // In the chat: the file's chip and the code output (stdout, the table).
+  await expect(page.getByText("answer.csv").first()).toBeVisible()
+  await expect(page.getByRole("cell", { name: "42" }).first()).toBeVisible()
+})
+
+test("runs: a sub-agent's code output arrives with its parent's answer (Q94)", async ({ page }) => {
+  const { uid } = await signedIn(page, { skillPrefs: { codeInterpreter: true } })
+  await sendAsTask(page, "SCENARIO:codekid/k2")
+  await expect(page.getByText("FINAL codekid").first()).toBeVisible({ timeout: 30000 })
+  await expect.poll(async () => (await cloudTurn(uid, "FINAL codekid"))?.generated_files?.length ?? 0, { timeout: 20000 }).toBe(1)
+  expect((await cloudTurn(uid, "FINAL codekid"))!.generated_images).toHaveLength(1)
+})
+
+test("runs: chat runs code on agent-py; the chart, file and output render (Q92)", async ({ page }) => {
+  const { uid } = await signedIn(page, { skillPrefs: { codeInterpreter: true } })
+  await composer(page).fill("SCENARIO:code/k3")
+  await composer(page).press("Enter")
+  await expect(page.getByText("FINAL code").first()).toBeVisible({ timeout: 30000 })
+  await expect(page.getByText("answer.csv").first()).toBeVisible()
+  await expect(page.getByRole("cell", { name: "42" }).first()).toBeVisible()
+  await expect.poll(async () => (await cloudTurn(uid, "FINAL code"))?.generated_files?.length ?? 0, { timeout: 20000 }).toBe(1)
+})

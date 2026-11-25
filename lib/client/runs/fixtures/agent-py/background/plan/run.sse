@@ -1,25 +1,25 @@
-data: {"type":"RUN_STARTED","threadId":"73a12fd5-7ff6-44af-86e8-35ffef9b1c4e","runId":"df1dcbea-027e-4c0c-bde3-535fd2fff6d7"}
+data: {"type":"RUN_STARTED","threadId":"b27b4399-b2c2-43c8-a881-f0fe6f915269","runId":"54dfb72a-7e90-4fd3-a55b-a679312e3e8d"}
 
 id: 3
 data: {"type":"STEP_STARTED","stepName":"step-1"}
 
 id: 4
-data: {"type":"ACTIVITY_SNAPSHOT","messageId":"df1dcbea-027e-4c0c-bde3-535fd2fff6d7:plan","activityType":"hummingbird.plan","content":{"items":[{"id":"1","text":"Search","status":"in_progress"},{"id":"2","text":"Write","status":"pending"}]},"replace":true}
+data: {"type":"ACTIVITY_SNAPSHOT","messageId":"54dfb72a-7e90-4fd3-a55b-a679312e3e8d:plan","activityType":"hummingbird.plan","content":{"items":[{"id":"1","text":"Search","status":"in_progress"},{"id":"2","text":"Write","status":"pending"}]},"replace":true}
 
 id: 5
-data: {"type":"ACTIVITY_SNAPSHOT","messageId":"df1dcbea-027e-4c0c-bde3-535fd2fff6d7:plan","activityType":"hummingbird.plan","content":{"items":[{"id":"1","text":"Search","status":"completed"},{"id":"2","text":"Write","status":"completed"}]},"replace":true}
+data: {"type":"ACTIVITY_SNAPSHOT","messageId":"54dfb72a-7e90-4fd3-a55b-a679312e3e8d:plan","activityType":"hummingbird.plan","content":{"items":[{"id":"1","text":"Search","status":"completed"},{"id":"2","text":"Write","status":"completed"}]},"replace":true}
 
 id: 6.0
-data: {"type":"TEXT_MESSAGE_START","messageId":"df1dcbea-027e-4c0c-bde3-535fd2fff6d7:6","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"54dfb72a-7e90-4fd3-a55b-a679312e3e8d:6","role":"assistant"}
 
 id: 6
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"df1dcbea-027e-4c0c-bde3-535fd2fff6d7:6","delta":"Written."}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"54dfb72a-7e90-4fd3-a55b-a679312e3e8d:6","delta":"Written."}
 
 id: 7.0
-data: {"type":"TEXT_MESSAGE_END","messageId":"df1dcbea-027e-4c0c-bde3-535fd2fff6d7:6"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"54dfb72a-7e90-4fd3-a55b-a679312e3e8d:6"}
 
 id: 7
 data: {"type":"STEP_FINISHED","stepName":"step-1"}
 
-data: {"type":"RUN_FINISHED","threadId":"73a12fd5-7ff6-44af-86e8-35ffef9b1c4e","runId":"df1dcbea-027e-4c0c-bde3-535fd2fff6d7","outcome":{"type":"success"},"result":{"text":"Written.","images":[]}}
+data: {"type":"RUN_FINISHED","threadId":"b27b4399-b2c2-43c8-a881-f0fe6f915269","runId":"54dfb72a-7e90-4fd3-a55b-a679312e3e8d","outcome":{"type":"success"},"result":{"text":"Written.","files":[],"images":[],"codeResults":[]}}
 

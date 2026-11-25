@@ -389,6 +389,8 @@ def _mime_to_ext(mime: str, *, fallback: str) -> str:
         return fallback or "png"
     if sub == "jpeg":
         return "jpg"
+    if sub == "svg+xml":  # a runCode chart (wave 8)
+        return "svg"
     return sub
 
 

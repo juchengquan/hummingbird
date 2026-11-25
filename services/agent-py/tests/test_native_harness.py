@@ -1207,6 +1207,44 @@ async def test_generated_images_and_files_follow_the_tool_result() -> None:
     assert isinstance(out, Succeeded) and not out.result.memory_tainted  # generateImage is trusted
 
 
+async def test_run_code_s_output_part_follows_its_charts_and_files() -> None:
+    """Wave 8: `runCode`'s `code_result` part after its `tool_image` (mode
+    `code`) and `tool_file` parts, as the Next route emits them; runCode
+    reads third-party content (mounted files), so the turn is tainted."""
+    from agent_py.events import CodeResultEvent
+
+    async def execute(_args: dict[str, Any]) -> ToolInvocationResult:
+        return ToolInvocationResult(
+            text="stdout: 42",
+            summary="Ran python (ok)",
+            images=({"url": "data:image/png;base64,UE5H", "format": "png", "prompt": ""},),
+            image_mode="code",
+            files=({"name": "r.csv", "sizeBytes": 2, "mimeType": "text/csv", "url": "data:x"},),
+            code_result={"stdout": "42\n", "stderr": "", "results": []},
+        )
+
+    tool = ToolDescriptor(
+        name="runCode", description="", input_schema={"type": "object"}, execute=execute
+    )
+    r = await _drive(
+        _Model(_Call(tools=[call("c-run", "runCode", code="print(42)")]), _Call([text("42.")])),
+        run_input(),
+        tools=toolset(tool),
+    )
+    assert r.kinds()[:6] == [
+        "step_start",
+        "tool_input",
+        "tool_output",
+        "tool_image",
+        "tool_file",
+        "code_result",
+    ]
+    code = next(e for e in r.events if isinstance(e, CodeResultEvent))
+    assert (code.tool_call_id, code.stdout) == ("c-run", "42\n")
+    out = r.result.outcome
+    assert isinstance(out, Succeeded) and out.result.memory_tainted
+
+
 async def test_a_failed_image_tool_emits_no_part() -> None:
     r = await _drive(
         _Model(_Call(tools=[call("c-img", "generateImage", prompt="x")]), _Call([text("Sorry.")])),

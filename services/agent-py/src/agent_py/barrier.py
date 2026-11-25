@@ -26,7 +26,7 @@ from dataclasses import dataclass
 import asyncpg
 
 from agent_py import store
-from agent_py.events import ResultEvent, TaskEvent, event_to_row_payload
+from agent_py.events import ResultEvent, TaskEvent, event_to_row_payload, outputs_payload
 from agent_py.fence import fenced_connection
 
 _TERMINAL = ("done", "failed", "cancelled")
@@ -72,9 +72,9 @@ def terminal_outcome(status: str, event: TaskEvent | None) -> dict[str, object]:
                 # The citation check (Q78), as the `hummingbird.verification`
                 # activity carries it, next to the text it checked.
                 body["verification"] = dict(result.verification)
-            if result.images is not None:
-                # Q87: the task's images, its sub-agents' included ([] none).
-                body["images"] = [dict(i) for i in result.images]
+            # Q87 / Q94: the task's images, files and code output, its
+            # sub-agents' included ([] none).
+            body.update(outputs_payload(result.images, result.files, result.code_results))
         return {"type": "success", "result": body}
     if status == "failed":
         return {

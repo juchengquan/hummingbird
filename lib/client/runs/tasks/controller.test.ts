@@ -10,7 +10,7 @@ import { describe, expect, test } from "bun:test"
 import { RunsError } from "../errors"
 import { loadBackgroundFixture, loadBackgroundScenario } from "../fixtures"
 import type { TaskRequestInput } from "@/shared/api-schemas"
-import { resultIdsFor } from "@/shared/runs/ids"
+import { TASK_RESULT_NAMESPACE, resultIdsFor, uuidV5 } from "@/shared/runs/ids"
 
 import { FakeRunsServer, USER, browser, makeRun, tab, until } from "./test-support"
 
@@ -134,6 +134,27 @@ describe("launch", () => {
     expect(res.ok).toBe(true)
     expect(tries).toBe(2)
     expect(drains).toBe(2)
+  })
+
+  test("runCode's files go by id only: a background run mounts cloud files (Q93)", async () => {
+    const server = new FakeRunsServer()
+    const t = tab({ server })
+    await t.controller.launch(
+      {
+        ...INPUT,
+        skills: [{ id: "codeInterpreter" }],
+        // A stray `dataBase64` (not in the schema) never goes.
+        sandboxFiles: [{ name: "cloud.csv", fileId: "f1", dataBase64: "YQ==" } as { name: string; fileId: string }],
+      },
+      { title: "Plot" },
+    )
+    const body = server.calls.find((c) => c.op === "start")!.arg as { forwardedProps: Record<string, unknown> }
+    expect(body.forwardedProps.sandboxFiles).toEqual([{ name: "cloud.csv", fileId: "f1" }])
+    // None to mount → no key.
+    await t.controller.launch(INPUT, { title: "Plain" })
+    const plain = server.calls.filter((c) => c.op === "start")[1].arg as { forwardedProps: Record<string, unknown> }
+    expect(plain.forwardedProps.sandboxFiles).toBeUndefined()
+    expect(body.forwardedProps.skills).toEqual([{ id: "codeInterpreter" }])
   })
 
   test("the body: background, images in the message, no attachments, the allow-list, research", async () => {
@@ -403,6 +424,37 @@ describe("delivery output", () => {
     expect(message.generatedImages).toEqual([image])
     expect(server.calls.filter((c) => c.op === "stream")).toEqual([])
     expect(server.calls.filter((c) => c.op === "get").map((c) => c.arg)).toEqual([root])
+  })
+
+  test("a 0.5.2 task's code output is delivered as a chat turn stores it (Q94)", async () => {
+    const server = new FakeRunsServer()
+    const root = "00000000-0000-4000-8000-0000000000fa"
+    const chart = { id: "c1-0", url: "data:image/png;base64,UE5H", width: 0, height: 0, format: "png", prompt: "", mode: "code" }
+    const file = { id: "c1-file-0", name: "out.csv", sizeBytes: 4, mimeType: "text/csv", url: "data:text/csv;base64,YQoxCg==" }
+    const code = { id: "c1", stdout: "42\n", stderr: "", results: [{ type: "table", columns: ["a"], rows: [["1"]] }] }
+    server.add(
+      makeRun({
+        id: root,
+        threadId: CONV,
+        status: "succeeded",
+        result: { text: "It is 42.", images: [chart], files: [file], codeResults: [code] },
+      }),
+    )
+    const t = tab({ server })
+    t.store.addConversation(CONV)
+    await t.controller.refreshNow()
+    await until(() => server.marks.size === 1)
+    const message = t.store.conversations.get(CONV)!.messages[0] as Record<string, unknown>
+    // A chart is a gallery image, as chat stores it (mode t2i, no prompt).
+    expect(message.generatedImages).toEqual([{ ...chart, mode: "t2i" }])
+    expect(message.generatedFiles).toEqual([{ ...file, storagePath: null }])
+    expect(message.codeResults).toEqual([code])
+    // The file is saved as a `file` artifact too, under a derived id.
+    const [artifact] = [...t.store.artifacts.values()]
+    expect(artifact).toMatchObject({ conversationId: CONV, messageId: message.id, kind: "file", title: "out.csv", content: "" })
+    expect(artifact.storagePath).toBe(file.url)
+    expect(artifact.id).toBe(uuidV5(TASK_RESULT_NAMESPACE, `task-result:file:${USER}:${root}:c1-file-0`))
+    expect(server.calls.filter((c) => c.op === "stream")).toEqual([])
   })
 
   test("a 0.5.1 task with no images reads no stream either", async () => {

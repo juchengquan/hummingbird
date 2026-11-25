@@ -61,10 +61,10 @@ import { RunsError } from "../errors"
 import { buildResume, type InterruptAnswer } from "../interrupts"
 import { cancelRun, getRun, rejoinRun, type RunStream } from "../transport"
 import type { ListRunsQuery, Run, RunCursor, RunList, RunsTarget, ResumeEntry, StartRunRequest } from "../types"
-import type { GeneratedImage } from "@/shared/types"
+import type { CodeResultPart, GeneratedFile, GeneratedImage } from "@/shared/types"
 import { parseVerificationFrame } from "@/shared/verify"
 
-import { ChainFold, generatedImageOf, generatedImagesOf, pendingInputOf } from "./chain"
+import { ChainFold, codeResultOf, generatedFileOf, generatedImageOf, generatedImagesOf, pendingInputOf } from "./chain"
 import { deliverTask, type DeliveryDeps, type DeliveryStore, type LockLike, type PullResult } from "./deliver"
 import { backgroundStartBody } from "./launch-input"
 import { browserNotifier, notificationEvents, notifyOnce, type NotifyDeps } from "./notify"
@@ -492,11 +492,26 @@ export class TasksController {
    *  watched one, else its runs read once). */
   private async outputOf(task: TaskSummary) {
     const current = await this.deps.api.get(task.currentRunId)
-    const result = current.result as { images?: unknown; verification?: unknown } | null
+    const result = current.result as {
+      images?: unknown
+      files?: unknown
+      codeResults?: unknown
+      verification?: unknown
+    } | null
+    // Q94 (0.5.2): `runCode`'s files and output ride the result; no result
+    // before 0.5.2 has any (runs had no `runCode`).
+    const files = Array.isArray(result?.files)
+      ? result.files.map(generatedFileOf).filter((f): f is GeneratedFile => f !== null)
+      : []
+    const codeResults = Array.isArray(result?.codeResults)
+      ? result.codeResults.map(codeResultOf).filter((c): c is CodeResultPart => c !== null)
+      : []
     if (Array.isArray(result?.images)) {
       return {
         verification: parseVerificationFrame(result.verification),
         images: result.images.map(generatedImageOf).filter((i): i is GeneratedImage => i !== null),
+        files,
+        codeResults,
       }
     }
     let fold = this.watches.get(task.rootRunId)?.watch.fold
@@ -511,7 +526,7 @@ export class TasksController {
         for await (const item of stream) fold.push(runId, item)
       }
     }
-    return { verification: fold.view.verification, images: generatedImagesOf(fold.logs()) }
+    return { verification: fold.view.verification, images: generatedImagesOf(fold.logs()), files, codeResults }
   }
 
   private async deliverAll(tasks: readonly TaskSummary[]): Promise<void> {

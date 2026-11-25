@@ -31,7 +31,7 @@ import structlog
 from .. import lease, tool_ledger, tool_turn
 from ..coalescer import make_token_coalescer
 from ..emitter import RunEmitter
-from ..events import ToolImageEvent
+from ..events import CodeResultEvent, ToolFileEvent, ToolImageEvent
 from ..reasoning_effort import ThinkingParams
 from ..runner import (
     PendingInputDescriptor,
@@ -286,6 +286,23 @@ def make_anthropic_step_fn(config: AnthropicStepConfig) -> RunStepFn:
 # --- tool execution ------------------------------------------------------
 
 
+async def emit_code_result(
+    emitter: RunEmitter, *, tool_call_id: str, code_result: dict[str, object]
+) -> None:
+    """`runCode`'s output as one `code_result` part (the Next route's
+    `data-code-result`, after the charts and files)."""
+    results = code_result.get("results")
+    await emitter.emit(
+        CodeResultEvent,
+        tool_call_id=tool_call_id,
+        stdout=str(code_result.get("stdout") or ""),
+        stderr=str(code_result.get("stderr") or ""),
+        results=tuple(r for r in results if isinstance(r, dict))
+        if isinstance(results, list | tuple)
+        else (),
+    )
+
+
 async def execute_tool_call(
     emitter: RunEmitter,
     descriptor: ToolDescriptor | None,
@@ -364,6 +381,19 @@ async def execute_tool_call(
                     {"id": f"{tool_call_id}-{i}", **img, "mode": result.image_mode}
                     for i, img in enumerate(result.images)
                 ),
+            )
+        if result.files:
+            # Wave 8: `runCode`'s files (they were dropped here before).
+            await emitter.emit(
+                ToolFileEvent,
+                tool_call_id=tool_call_id,
+                files=tuple(
+                    {"id": f"{tool_call_id}-file-{i}", **f} for i, f in enumerate(result.files)
+                ),
+            )
+        if result.code_result is not None:
+            await emit_code_result(
+                emitter, tool_call_id=tool_call_id, code_result=result.code_result
             )
         results.append(_make_tool_result_block(tool_call_id, result.text, is_error=False))
 
