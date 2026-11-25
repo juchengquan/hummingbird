@@ -8,6 +8,7 @@ import { serializeMd, stripMarkdown } from '@platejs/markdown';
 import { apiUrls } from '@/client/api-client';
 import { resolveEditorAiTarget } from '@/client/api/backend-resolver';
 import { agentPyInit } from '@/components/editor/ai/agent-py-body';
+import { asPlateCompletion } from '@/components/editor/ai/plate-completion';
 import { notifyAuthRequired } from '@/client/auth/auth-required';
 import { useStore } from '@/client/hooks/use-store';
 import { isAuthRequiredError } from '@/shared/api-errors';
@@ -116,12 +117,16 @@ export const CopilotKit = [
                 return fetch(
                   `${target.baseUrl}/v1/ai/complete`,
                   agentPyInit(init, target.authToken, payload)
-                ).then(noticeAuthRequired);
+                )
+                  .then(noticeAuthRequired)
+                  .then(asPlateCompletion);
               }
               return fetch(input, {
                 ...init,
                 body: JSON.stringify(payload),
-              }).then(noticeAuthRequired);
+              })
+                .then(noticeAuthRequired)
+                .then(asPlateCompletion);
             }
           } catch {
             // Fall through to the unmodified POST — the route will

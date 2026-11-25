@@ -3,6 +3,7 @@
 import asyncio
 import collections
 import json
+import re
 import threading
 
 import uvicorn
@@ -16,6 +17,7 @@ requests = []
 invalid = []
 odd = collections.Counter()
 images_made = []
+editor_calls = []
 # A 1x1 PNG: what the fake image endpoint's URLs serve.
 PNG = bytes.fromhex(
     "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
@@ -143,6 +145,99 @@ def script(body):
     return 0, done
 
 
+_CONTEXT = re.compile(
+    r"Here is the context you should reference when answering the user:\s*<context>\n(.*?)\n</context>",
+    re.S,
+)
+
+
+def editor_reply(body):
+    """The editor's AI (wave 9): the tool choice, comment / cell elements,
+    generate / edit text and the completion, recognisable in the page.
+    None for any other request."""
+    first = " ".join(b.get("text", "") for b in blocks(body["messages"][0]))
+    if (body.get("tool_choice") or {}).get("name") == "json":
+        props = body["tools"][0]["input_schema"]["properties"]
+        if "result" in props:
+            options = props["result"]["enum"]
+            pick = "comment" if "EDITOR:comment" in first else "edit" if "EDITOR:edit" in first else "generate"
+            return "choose", pick if pick in options else "generate"
+        found = _CONTEXT.search(first)
+        context = found.group(1) if found else ""
+        cells = re.findall(r'<Cell id="([^"]+)">', context)
+        if cells:
+            return "elements", {"elements": [{"content": f"CELL-{i}", "id": c} for i, c in enumerate(cells)]}
+        block = re.search(r'<block id="([^"]+)">\s*(.*?)\s*</block>', context, re.S)
+        if not block:
+            return "elements", {"elements": []}
+        words = " ".join(block.group(2).split()[:2])
+        return "elements", {"elements": [{"blockId": block.group(1), "comment": "EDITOR-COMMENT", "content": words}]}
+    if first.startswith("You are an inline writing assistant"):
+        return "text", " jumped."
+    if first.startswith("<task>") and "content generation assistant" in first:
+        return "text", "GENERATED-TEXT"
+    if first.startswith("<task>") and "<Selection>" in first:
+        return "text", "IMPROVED-TEXT"
+    if first.startswith("<task>") and "seamless replacement" in first:
+        return "text", "IMPROVED-TEXT"
+    return None
+
+
+def ev(t, **d):
+    return f"event: {t}\ndata: {json.dumps({'type': t, **d})}\n\n"
+
+
+def _start(model):
+    return ev(
+        "message_start",
+        message={
+            "id": "m",
+            "type": "message",
+            "role": "assistant",
+            "model": model,
+            "content": [],
+            "stop_reason": None,
+            "stop_sequence": None,
+            "usage": {"input_tokens": 1, "output_tokens": 0},
+        },
+    )
+
+
+def editor_response(body, kind, payload):
+    editor_calls.append(kind)
+    if kind == "choose":
+        return JSONResponse(
+            {
+                "id": "m",
+                "type": "message",
+                "role": "assistant",
+                "model": body["model"],
+                "content": [{"type": "tool_use", "id": "toolu_e", "name": "json", "input": {"result": payload}}],
+                "stop_reason": "tool_use",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+        )
+
+    async def stream():
+        yield _start(body["model"])
+        if kind == "elements":
+            raw = json.dumps(payload)
+            yield ev("content_block_start", index=0, content_block={"type": "tool_use", "id": "toolu_e", "name": "json", "input": {}})
+            for part in (raw[: len(raw) // 2], raw[len(raw) // 2 :]):
+                yield ev("content_block_delta", index=0, delta={"type": "input_json_delta", "partial_json": part})
+        else:
+            yield ev("content_block_start", index=0, content_block={"type": "text", "text": ""})
+            for part in (payload[:4], payload[4:]):
+                yield ev("content_block_delta", index=0, delta={"type": "text_delta", "text": part})
+        yield ev("content_block_stop", index=0)
+        stop = "tool_use" if kind == "elements" else "end_turn"
+        yield ev("message_delta", delta={"stop_reason": stop, "stop_sequence": None}, usage={"output_tokens": 1})
+        yield ev("message_stop")
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
 async def messages(request):
     body = await request.json()
     problem = validate(body)
@@ -153,6 +248,9 @@ async def messages(request):
             {"type": "error", "error": {"type": "invalid_request_error", "message": problem}},
             status_code=400,
         )
+    editor = editor_reply(body)
+    if editor is not None:
+        return editor_response(body, *editor)
     delay, out = script(body)
     if out is None:
         return JSONResponse(
@@ -163,23 +261,8 @@ async def messages(request):
             status_code=400,
         )
 
-    def ev(t, **d):
-        return f"event: {t}\ndata: {json.dumps({'type': t, **d})}\n\n"
-
     async def stream():
-        yield ev(
-            "message_start",
-            message={
-                "id": "m",
-                "type": "message",
-                "role": "assistant",
-                "model": body["model"],
-                "content": [],
-                "stop_reason": None,
-                "stop_sequence": None,
-                "usage": {"input_tokens": 1, "output_tokens": 0},
-            },
-        )
+        yield _start(body["model"])
         if delay:
             await asyncio.sleep(delay)
         for i, b in enumerate(out):
@@ -233,6 +316,7 @@ async def state(_request):
             "last": requests[-1] if requests else None,
             "all_text": json.dumps(requests),
             "images": images_made,
+            "editor": editor_calls,
         }
     )
 
