@@ -31,8 +31,17 @@ dependencies = [
     "jsonschema>=4.23",
 ]
 
+[project.optional-dependencies]
+# `runCode` (wave 8, Q92/Q95): the microsandbox SDK, embedded. Pinned
+# exactly: 0.8 replaced 0.7's APIs. ~55 MB with its runtime and kernel, so
+# the default image leaves it out (`uv sync --extra sandbox` / the
+# Dockerfile's `AGENT_PY_EXTRAS=sandbox`); without it `runCode` is absent.
+sandbox = ["microsandbox==0.8.2"]
+
 [dependency-groups]
 dev = [
+    # The tests and mypy see the real SDK (a fake sandbox runs the tests).
+    "microsandbox==0.8.2",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "httpx>=0.27.0",

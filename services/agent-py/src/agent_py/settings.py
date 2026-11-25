@@ -209,6 +209,35 @@ class Settings(BaseSettings):
     international endpoint `https://api.minimaxi.com/v1/image_generation`.
     Same env var the TS side reads."""
 
+    # --- Code interpreter (`runCode`, wave 8) --------------------------------
+    # The same names and defaults as Next's `lib/server/code-sandbox/config.ts`,
+    # so one `.env` covers both. `runCode` registers only when enabled AND the
+    # startup check passes (`code_sandbox.select`): the `sandbox` extra is
+    # installed and the host can run a microVM (`/dev/kvm`, macOS arm64) or
+    # `MSB_BACKEND=remote` with `MSB_API_KEY`. The SDK reads `MSB_HOME`
+    # itself; give agent-py its own, short (Unix socket paths derive from it).
+    CODE_SANDBOX_ENABLED: str = ""
+    """`1` / `true` / `yes` / `on` (as Next) turns the code interpreter on."""
+    CODE_SANDBOX_BASE_URL: str = ""
+    """Also turns it on, as on Next (reserved there for a remote backend)."""
+    CODE_SANDBOX_TIMEOUT_MS: int = 30_000
+    CODE_SANDBOX_STDOUT_CAP: int = 256_000
+    CODE_SANDBOX_RESULT_CAP: int = 10_000_000
+    CODE_SANDBOX_RESULT_FILE_MAX: int = 20
+    CODE_SANDBOX_MEM_MIB: int = 512
+    CODE_SANDBOX_CPUS: int = 1
+    CODE_SANDBOX_MAX_CONCURRENT: int = 2
+    """microVMs booting / running at once in this process (each holds
+    `MEM_MIB`); more calls wait for a slot."""
+    CODE_SANDBOX_PYTHON_IMAGE: str = "jupyter/scipy-notebook"
+    CODE_SANDBOX_JS_IMAGE: str = "node"
+    CODE_SANDBOX_MOUNT_FILE_MAX: int = 10_000_000
+    CODE_SANDBOX_MOUNT_TOTAL_MAX: int = 20_000_000
+    CODE_SANDBOX_MOUNT_COUNT_MAX: int = 10
+    CODE_SANDBOX_TABLE_MAX_COLS: int = 50
+    CODE_SANDBOX_TABLE_MAX_ROWS: int = 1000
+    CODE_SANDBOX_TABLE_CELL_MAX: int = 500
+
     # --- Citation verification --------------------------------------------
     VERIFY_MODEL: str = ""
     """Anthropic model id for the post-run citation verifier on research
