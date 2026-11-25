@@ -43,6 +43,7 @@ from ..events import (
     ToolOutputEvent,
     UiPartEvent,
     VerificationEvent,
+    outputs_payload,
     resume_discard_range,
 )
 from .encoder import AgUiEvent
@@ -495,8 +496,7 @@ class AgUiRunEncoder:
                 out["text"] = res.final_text
             if res.memory_tainted:
                 out["memoryTainted"] = True
-            if res.images is not None:
-                out["images"] = [dict(i) for i in res.images]
+            out.update(outputs_payload(res.images, res.files, res.code_results))
         return out
 
     def _error(self, run: RunRecord) -> tuple[str, str]:

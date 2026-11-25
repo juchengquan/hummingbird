@@ -1,10 +1,10 @@
-data: {"type":"RUN_STARTED","threadId":"fe33c7c2-ed1e-42e8-a92b-a72522aff56d","runId":"df645315-bf77-4a40-8172-1a7a7c184285"}
+data: {"type":"RUN_STARTED","threadId":"4adb7b3b-ae5a-486c-9600-7834087315c6","runId":"cd2d6692-24d3-4cf9-9b7d-45b1bed9507e"}
 
 id: 3
 data: {"type":"STEP_STARTED","stepName":"step-1"}
 
 id: 4.0
-data: {"type":"TOOL_CALL_START","toolCallId":"w","toolCallName":"mcp__s1__write","parentMessageId":"df645315-bf77-4a40-8172-1a7a7c184285:4"}
+data: {"type":"TOOL_CALL_START","toolCallId":"w","toolCallName":"mcp__s1__write","parentMessageId":"cd2d6692-24d3-4cf9-9b7d-45b1bed9507e:4"}
 
 id: 4.1
 data: {"type":"TOOL_CALL_ARGS","toolCallId":"w","delta":"{\"n\":1}"}
@@ -19,7 +19,7 @@ id: 6
 data: {"type":"CUSTOM","name":"hummingbird.step_error","value":{"message":"\"mcp__s1__write\" was interrupted while running and its outcome is unknown; it was not run again.","willRetry":false}}
 
 id: 7
-data: {"type":"TOOL_CALL_RESULT","messageId":"df645315-bf77-4a40-8172-1a7a7c184285:7","toolCallId":"w","role":"tool","content":"{\"summary\":\"Interrupted — outcome unknown\"}","metadata":{"hummingbird":{"toolName":"mcp__s1__write"}}}
+data: {"type":"TOOL_CALL_RESULT","messageId":"cd2d6692-24d3-4cf9-9b7d-45b1bed9507e:7","toolCallId":"w","role":"tool","content":"{\"summary\":\"Interrupted — outcome unknown\"}","metadata":{"hummingbird":{"toolName":"mcp__s1__write"}}}
 
 id: 8
 data: {"type":"STEP_FINISHED","stepName":"step-1"}
@@ -28,16 +28,16 @@ id: 9
 data: {"type":"STEP_STARTED","stepName":"step-2"}
 
 id: 10.0
-data: {"type":"TEXT_MESSAGE_START","messageId":"df645315-bf77-4a40-8172-1a7a7c184285:10","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"cd2d6692-24d3-4cf9-9b7d-45b1bed9507e:10","role":"assistant"}
 
 id: 10
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"df645315-bf77-4a40-8172-1a7a7c184285:10","delta":"Done, carefully."}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"cd2d6692-24d3-4cf9-9b7d-45b1bed9507e:10","delta":"Done, carefully."}
 
 id: 11.0
-data: {"type":"TEXT_MESSAGE_END","messageId":"df645315-bf77-4a40-8172-1a7a7c184285:10"}
+data: {"type":"TEXT_MESSAGE_END","messageId":"cd2d6692-24d3-4cf9-9b7d-45b1bed9507e:10"}
 
 id: 11
 data: {"type":"STEP_FINISHED","stepName":"step-2"}
 
-data: {"type":"RUN_FINISHED","threadId":"fe33c7c2-ed1e-42e8-a92b-a72522aff56d","runId":"df645315-bf77-4a40-8172-1a7a7c184285","outcome":{"type":"success"},"result":{"text":"Done, carefully.","images":[]}}
+data: {"type":"RUN_FINISHED","threadId":"4adb7b3b-ae5a-486c-9600-7834087315c6","runId":"cd2d6692-24d3-4cf9-9b7d-45b1bed9507e","outcome":{"type":"success"},"result":{"text":"Done, carefully.","files":[],"images":[],"codeResults":[]}}
 

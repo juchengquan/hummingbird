@@ -111,6 +111,13 @@ def _opt_str(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _recorded_dicts(value: object) -> tuple[dict[str, object], ...] | None:
+    """A result's recorded list of objects; None when it wasn't recorded."""
+    if not isinstance(value, list):
+        return None
+    return tuple(cast("dict[str, object]", v) for v in value if isinstance(v, dict))
+
+
 def _dict_tuple(value: object) -> tuple[dict[str, object], ...]:
     """A list of JSON objects read back from a payload; non-objects dropped."""
     if not isinstance(value, list):
@@ -225,13 +232,9 @@ def event_from_row_payload(
             if isinstance(merged.get("usage"), list)
             else (),
             stopped_at=_opt_str(merged.get("stoppedAt")),
-            images=tuple(
-                cast("dict[str, object]", i)
-                for i in cast("list[object]", merged.get("images") or [])
-                if isinstance(i, dict)
-            )
-            if isinstance(merged.get("images"), list)
-            else None,
+            images=_recorded_dicts(merged.get("images")),
+            files=_recorded_dicts(merged.get("files")),
+            code_results=_recorded_dicts(merged.get("codeResults")),
         )
     if kind == "step_start":
         return events.StepStartEvent(run_id="", seq=seq, step=step, created_at=created_at)
@@ -487,8 +490,10 @@ async def load_task_line(pool: asyncpg.Pool, *, run_id: str, user_id: str) -> li
     return [str(r["id"]) for r in rows]
 
 
-_CHILD_IMAGES_SQL = """
-SELECT t.outcome -> 'result' -> 'images' AS images
+_CHILD_OUTPUTS_SQL = """
+SELECT t.outcome -> 'result' -> 'images' AS images,
+       t.outcome -> 'result' -> 'files' AS files,
+       t.outcome -> 'result' -> 'codeResults' AS code_results
   FROM public.tasks t
  WHERE t.parent_task_id = ANY($1::uuid[])
    AND t.user_id = $2
@@ -497,23 +502,28 @@ SELECT t.outcome -> 'result' -> 'images' AS images
 """
 
 
-async def load_child_images(
+async def load_child_outputs(
     pool: asyncpg.Pool, *, parent_ids: list[str], user_id: str
-) -> list[dict[str, object]]:
-    """The images of the succeeded sub-agent runs of `parent_ids`, in the
-    order they were spawned (Q87): each child's `outcome.result.images`,
-    which already gathers its own sub-agents'."""
+) -> events.RunOutputs:
+    """The images, files and code output of the succeeded sub-agent runs of
+    `parent_ids`, in the order they were spawned (Q87, Q94): each child's
+    `outcome.result`, which already gathers its own sub-agents'."""
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            _CHILD_IMAGES_SQL, [_coerce_uuid(p) for p in parent_ids], _coerce_uuid(user_id)
+            _CHILD_OUTPUTS_SQL, [_coerce_uuid(p) for p in parent_ids], _coerce_uuid(user_id)
         )
-    out: list[dict[str, object]] = []
+    gathered: dict[str, list[dict[str, object]]] = {"images": [], "files": [], "code_results": []}
     for row in rows:
-        raw = row["images"]
-        images = json.loads(raw) if isinstance(raw, str) else raw
-        if isinstance(images, list):
-            out.extend(i for i in images if isinstance(i, dict))
-    return out
+        for key, out in gathered.items():
+            raw = row[key]
+            value = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(value, list):
+                out.extend(v for v in value if isinstance(v, dict))
+    return events.RunOutputs(
+        images=tuple(gathered["images"]),
+        files=tuple(gathered["files"]),
+        code_results=tuple(gathered["code_results"]),
+    )
 
 
 async def load_run_events(

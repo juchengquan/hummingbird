@@ -1,10 +1,10 @@
-data: {"type":"RUN_STARTED","threadId":"54dba753-c99b-43ee-99d6-0d352bf66949","runId":"61d50e40-55eb-4b67-baa4-e7169d388cff","parentRunId":"6f10a07f-7622-43a4-b652-fe641f03879e"}
+data: {"type":"RUN_STARTED","threadId":"4ef0b606-54dc-4062-ad23-8df66361e343","runId":"7d84f36f-078d-400f-b67e-0b22fe7904d2","parentRunId":"c71a77d4-f0b3-4e40-bb5e-3f1831bf62df"}
 
 id: 2
 data: {"type":"STEP_STARTED","stepName":"step-1"}
 
 id: 3.0
-data: {"type":"TOOL_CALL_START","toolCallId":"q","toolCallName":"askUser","parentMessageId":"61d50e40-55eb-4b67-baa4-e7169d388cff:3"}
+data: {"type":"TOOL_CALL_START","toolCallId":"q","toolCallName":"askUser","parentMessageId":"7d84f36f-078d-400f-b67e-0b22fe7904d2:3"}
 
 id: 3.1
 data: {"type":"TOOL_CALL_ARGS","toolCallId":"q","delta":"{\"prompt\":\"Which colour?\"}"}
@@ -18,5 +18,5 @@ data: {"type":"STEP_FINISHED","stepName":"step-1"}
 id: 5
 data: {"type":"CUSTOM","name":"hummingbird.interrupt_pending","value":{"id":"q","reason":"input","responseSchema":{"type":"object","required":["value"],"properties":{"value":{"type":"string"}}},"message":"Which colour?","toolCallId":"q","metadata":{"hummingbird":{"tool":"askUser","args":{"prompt":"Which colour?"}}}}}
 
-data: {"type":"RUN_FINISHED","threadId":"54dba753-c99b-43ee-99d6-0d352bf66949","runId":"61d50e40-55eb-4b67-baa4-e7169d388cff","outcome":{"type":"interrupt","interrupts":[{"id":"q","reason":"input","message":"Which colour?","metadata":{"hummingbird":{"args":{"prompt":"Which colour?"},"tool":"askUser"}},"toolCallId":"q","responseSchema":{"type":"object","required":["value"],"properties":{"value":{"type":"string"}}}}]}}
+data: {"type":"RUN_FINISHED","threadId":"4ef0b606-54dc-4062-ad23-8df66361e343","runId":"7d84f36f-078d-400f-b67e-0b22fe7904d2","outcome":{"type":"interrupt","interrupts":[{"id":"q","reason":"input","message":"Which colour?","metadata":{"hummingbird":{"args":{"prompt":"Which colour?"},"tool":"askUser"}},"toolCallId":"q","responseSchema":{"type":"object","required":["value"],"properties":{"value":{"type":"string"}}}}]}}
 

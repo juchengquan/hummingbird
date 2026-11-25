@@ -86,8 +86,8 @@ from .providers.anthropic_provider import (
 from .reasoning_effort import parse_reasoning_effort, thinking_params
 from .runner import (
     AgentLoopResult,
-    FinalImagesFn,
     FinalizeFn,
+    FinalOutputsFn,
     FinalTextFn,
     PendingInputDescriptor,
     RunStepContext,
@@ -1046,7 +1046,7 @@ async def _drive(
     def should_yield() -> bool:
         return deadline_s is not None and asyncio.get_event_loop().time() > deadline_s
 
-    finalize, final_text, final_images = _settle_hooks(run)
+    finalize, final_text, final_outputs = _settle_hooks(run)
 
     while True:
         if resolve:
@@ -1074,7 +1074,7 @@ async def _drive(
             should_yield=should_yield,
             finalize=finalize,
             final_text=final_text,
-            final_images=final_images,
+            final_outputs=final_outputs,
             resumed_from_seq=run.resumed_from_seq,
         )
         run.resumed_from_seq = None
@@ -1140,7 +1140,7 @@ async def _drive(
         return ExecutorOutcome(settled=True)
 
 
-def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn, FinalImagesFn]:
+def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn, FinalOutputsFn]:
     """The pre-settle hooks: citation verification (research runs only,
     advisory + non-blocking) and the final text.
 
@@ -1244,38 +1244,48 @@ def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn, FinalImagesFn]:
             return None
         return text or None
 
-    async def final_images() -> tuple[dict[str, object], ...] | None:
+    async def final_outputs() -> events.RunOutputs | None:
         try:
             line, logs = await earlier_runs()
             own = await own_events()
-            drawn = [
-                dict(image)
-                for log in [*logs, own]
-                for event in log
-                if isinstance(event, events.ToolImageEvent)
-                for image in event.images
-            ]
-            children = await store.load_child_images(
+            children = await store.load_child_outputs(
                 run.pool, parent_ids=[*line, run_id], user_id=user_id
             )
         except Exception as exc:
-            logger.warning("executor.final_images_failed", run_id=run_id, error=str(exc))
+            logger.warning("executor.final_outputs_failed", run_id=run_id, error=str(exc))
             return None
-        return _unique_images([*drawn, *children])
+        logged = [event for log in [*logs, own] for event in log]
+        images = [dict(i) for e in logged if isinstance(e, events.ToolImageEvent) for i in e.images]
+        files = [dict(f) for e in logged if isinstance(e, events.ToolFileEvent) for f in e.files]
+        code: list[dict[str, object]] = [
+            {
+                "id": e.tool_call_id,
+                "stdout": e.stdout,
+                "stderr": e.stderr,
+                "results": list(e.results),
+            }
+            for e in logged
+            if isinstance(e, events.CodeResultEvent)
+        ]
+        return events.RunOutputs(
+            images=_unique([*images, *children.images], "url"),
+            files=_unique([*files, *children.files], "url"),
+            code_results=_unique([*code, *children.code_results], None),
+        )
 
-    return finalize, final_text, final_images
+    return finalize, final_text, final_outputs
 
 
-def _unique_images(images: list[dict[str, object]]) -> tuple[dict[str, object], ...]:
-    """Each image once, first seen kept (by id, else url)."""
+def _unique(items: list[dict[str, object]], fallback: str | None) -> tuple[dict[str, object], ...]:
+    """Each item once, first seen kept (by id, else `fallback`)."""
     seen: set[object] = set()
     out: list[dict[str, object]] = []
-    for image in images:
-        key = image.get("id") or image.get("url")
-        if key in seen:
+    for item in items:
+        key = item.get("id") or (item.get(fallback) if fallback else None)
+        if key is not None and key in seen:
             continue
         seen.add(key)
-        out.append(image)
+        out.append(item)
     return tuple(out)
 
 

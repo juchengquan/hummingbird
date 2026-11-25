@@ -60,8 +60,16 @@ async def test_a_done_task_writes_its_result_into_the_outcome(world: World) -> N
 
     row = await world.task(task)
     assert row["status"] == "done"
-    assert row["outcome"] == {"type": "success", "result": {"text": "It is blue.", "images": []}}
-    assert (await world.run(task))["result"] == {"text": "It is blue.", "images": []}
+    assert row["outcome"] == {
+        "type": "success",
+        "result": {"text": "It is blue.", "images": [], "files": [], "codeResults": []},
+    }
+    assert (await world.run(task))["result"] == {
+        "text": "It is blue.",
+        "images": [],
+        "files": [],
+        "codeResults": [],
+    }
 
 
 async def test_a_failed_task_writes_its_error_into_the_outcome(world: World) -> None:
@@ -96,7 +104,7 @@ async def test_a_sub_agent_run_settled_by_the_worker_has_its_outcome(world: Worl
     [child] = await world.children(parent)
     assert (await world.task(child))["outcome"] == {
         "type": "success",
-        "result": {"text": "child answer", "images": []},
+        "result": {"text": "child answer", "images": [], "files": [], "codeResults": []},
     }
 
 
@@ -253,6 +261,8 @@ async def test_a_reply_cut_at_max_tokens_is_continued_not_settled(world: World) 
     assert (await world.task(task))["outcome"]["result"] == {
         "text": "The long report, part one, cut mid-sentence. Part two.",
         "images": [],
+        "files": [],
+        "codeResults": [],
     }
     first, second = world.model.calls
     assert first["max_tokens"] >= 16_000
@@ -342,7 +352,7 @@ async def test_answer_resume_done_gives_the_whole_text_once(world: World) -> Non
     whole = "Let me check the colour first.\n\nPainted it blue."
     assert (await world.task(r1))["outcome"] == {
         "type": "success",
-        "result": {"text": whole, "images": []},
+        "result": {"text": whole, "images": [], "files": [], "codeResults": []},
     }
     assert (await world.run(r1))["result"]["text"] == whole
     [entry] = await world.events(r1, "result")

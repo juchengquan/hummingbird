@@ -235,6 +235,35 @@ class ResultEvent(TaskEventBase):
     # `()` none; None not recorded (a result written before 0.5.1, or the
     # images couldn't be read) — a client then reads the stream.
     images: tuple[dict[str, object], ...] | None = None
+    # Wave 8 (Q94): the same for the task's `tool_file` files and its
+    # `code_result` parts (`{id, stdout, stderr, results}`, `id` the tool
+    # call) — `RunResult.files` / `RunResult.codeResults`.
+    files: tuple[dict[str, object], ...] | None = None
+    code_results: tuple[dict[str, object], ...] | None = None
+
+
+@dataclass(frozen=True)
+class RunOutputs:
+    """What a settled run's answer carries for the user (Q87, Q94): its
+    images, files and code output, each once, in order."""
+
+    images: tuple[dict[str, object], ...] = ()
+    files: tuple[dict[str, object], ...] = ()
+    code_results: tuple[dict[str, object], ...] = ()
+
+
+def outputs_payload(
+    images: tuple[dict[str, object], ...] | None,
+    files: tuple[dict[str, object], ...] | None,
+    code_results: tuple[dict[str, object], ...] | None,
+) -> dict[str, object]:
+    """The `images` / `files` / `codeResults` keys of a result body, each
+    only when recorded (None = written before it existed)."""
+    out: dict[str, object] = {}
+    for key, value in (("images", images), ("files", files), ("codeResults", code_results)):
+        if value is not None:
+            out[key] = [dict(v) for v in value]
+    return out
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -612,8 +641,7 @@ def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
             result_payload["usage"] = [u.to_payload() for u in event.usage]
         if event.stopped_at is not None:
             result_payload["stoppedAt"] = event.stopped_at
-        if event.images is not None:
-            result_payload["images"] = [dict(i) for i in event.images]
+        result_payload.update(outputs_payload(event.images, event.files, event.code_results))
         return result_payload
     if isinstance(event, ToolInputEvent):
         return {
