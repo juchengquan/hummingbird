@@ -18,6 +18,12 @@ agent-py has or will get (e.g. `/v1/extract-table`,
 Q11 also required agent-ts to stop importing the Next app's `lib/`. It
 now builds and runs on its own (see [Vendored code](#vendored-code)).
 
+**Known issues (not fixed here, by decision).**
+- `generateImage` gives the model Minimax's image URL, which expires
+  within hours, so an answer can name a dead link (Q98). Next and
+  agent-py give it a stored link or "shown to the user" (Q86). agent-ts
+  goes in Phase 5.
+
 ---
 
 TypeScript twin of `services/agent-py`, on Bun + Hono, serving the

@@ -150,7 +150,7 @@ three times. The goals:
 | **Wave 8 (2026-11-25)** | |
 | Q92 | The code interpreter moves onto runs in agent-py as the Q43 trial lays out (embedded SDK, `code_sandbox/`, `runCode`, `sandboxFiles` by id, charts / files / `code_result` out), registered only where a startup check passes (KVM, macOS arm64, or a remote microsandbox key). The production host is decided separately |
 | Q93 | `runCode` runs in interactive and background runs alike; a background run mounts cloud files only, by id (no inline data, as Q49); a signed-out interactive run may send inline files within the 16 MB body |
-| Q94 | A run's result lists its code output (`RunResult.codeResults`, `RunResult.files`, contract 0.5.2, additive); delivery writes them into the message as `codeResults` / `generatedFiles`, as a chat turn stores them. Charts stay out of `generatedImages` |
+| Q94 | A run's result lists its code output (`RunResult.codeResults`, `RunResult.files`, contract 0.5.2, additive); delivery writes them into the message as `codeResults` / `generatedFiles`, each file also a `file` artifact, as a chat turn stores them. **Corrected while building:** a chat turn keeps a chart in `generatedImages` (mode `t2i`), so delivery does too — the chart is in `RunResult.images` (mode `code`) |
 | Q95 | agent-py pins `microsandbox==0.8.2` exactly (chosen over the two-week age rule; 0.8 replaces 0.7's APIs) with its own `MSB_HOME`; Next stays on the Node SDK 0.5.7, its upgrade a separate item |
 | Q96 | The wave ends with the Q65 real-model smoke (`.env` key, a few Haiku calls) and the trial's manual sandbox check on the dev Mac (agent-py on the host): print, chart, mounted CSV, `/tmp/outputs` file, timeout, cancel mid-run |
 | Q97 | `e2e-live` becomes a required check after two green weeks (from 8 Dec), confirmed with the owner before the branch protection changes; outside the wave's PR |
@@ -228,8 +228,9 @@ has shipped behind the existing per-account backend switch.
    - [x] local MCP servers (browser-held credentials) — wave 5b-D:
      `runs/local_mcp.py` (interactive runs; background refused, Q42),
      `MCP_ALLOW_PRIVATE_HOSTS` in agent-py
-   - [ ] code interpreter — `runCode`, `sandboxFiles`, `code_result`
-     parts (generated files have no producer on runs until then)
+   - [x] code interpreter — `runCode`, `sandboxFiles`, `code_result`
+     parts (wave 8: `code_sandbox/`, `tools/run_code.py`; registered
+     where the startup check passes, Q92)
    - [x] reference image for image generation
    - [x] `localFilesOnly` for generated images
    - [x] citation checks

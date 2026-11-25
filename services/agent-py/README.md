@@ -329,6 +329,56 @@ service is deployed, with no older agent-py still running):
 (`tests/test_task_*_pg.py`; the fault sweeps in
 `tests/test_task_sweeps_pg.py`).
 
+## Code interpreter (`runCode`, wave 8)
+
+`runCode` runs model-written Python (or Node) in a microVM with no
+network, through [microsandbox](https://github.com/superradcompany/microsandbox)'s
+Python SDK embedded in this process — the port of Next's
+`lib/server/code-sandbox/`, decided in
+[`docs/TRIAL-code-interpreter-on-agent-py.md`](../../docs/TRIAL-code-interpreter-on-agent-py.md).
+A run offers it when the `codeInterpreter` skill is on; its charts, tables,
+stdout and `/tmp/outputs` files reach the user as `tool_image` (mode
+`code`), `code_result` and `tool_file` parts, and a task's result lists
+them (`RunResult.images` / `codeResults` / `files`). The model reads the
+output and a count, never the bytes.
+
+**It registers only where a startup check passes** (`code_sandbox/select.py`):
+`CODE_SANDBOX_ENABLED` (or `CODE_SANDBOX_BASE_URL`) set, the SDK installed,
+and either a host that boots microVMs — Linux with read/write `/dev/kvm`,
+or macOS on arm64 — or `MSB_BACKEND=remote` with `MSB_API_KEY`. Anywhere
+else the tool is simply absent (no mock), and the reason is logged once.
+
+- **Install:** the SDK is an optional extra pinned to `microsandbox==0.8.2`
+  (Q95): `uv sync --extra sandbox`, or build the image with
+  `--build-arg AGENT_PY_EXTRAS=sandbox`. The dev group includes it.
+- **`MSB_HOME`:** give agent-py its own (Next's Node SDK is 0.5.7 and keeps
+  its own), and keep it **short** — the runtime's Unix socket paths derive
+  from it and must stay under 104 bytes (`~/.msb-py` works; a deep temp
+  directory doesn't). The first run pulls the image
+  (`CODE_SANDBOX_PYTHON_IMAGE`, default `jupyter/scipy-notebook`, several
+  GB; `docker/runcode-python.Dockerfile` builds a ~550 MB one).
+- **Docker on a KVM host:** pass the device through and let the `agent`
+  user use it —
+  ```yaml
+  agent-py:
+    build: { args: { AGENT_PY_EXTRAS: sandbox } }
+    devices: ["/dev/kvm:/dev/kvm"]
+    group_add: ["${KVM_GID}"]   # stat -c %g /dev/kvm
+    environment: { CODE_SANDBOX_ENABLED: "1", MSB_HOME: /msb }
+    volumes: ["msb-data:/msb"]
+  ```
+  Docker Desktop on a Mac has no `/dev/kvm`: run agent-py on the host
+  (`uv run uvicorn …`) to use the sandbox there.
+- **Files:** `forwardedProps.sandboxFiles` names what the model may mount at
+  `/mnt/files/<name>`. A cloud file goes by id and is read only if it is
+  the caller's (`file_storage.download_user_file`: the row under RLS, its
+  `user_id`, a Storage path in the caller's folder). Inline bytes are for
+  local files on interactive runs; a background run refuses them (Q93).
+- **Limits:** the `CODE_SANDBOX_*` settings, with Next's names and
+  defaults (timeout 30 s, 512 MiB, 1 CPU, 2 VMs at once per process, 10
+  files / 20 MB mounted, 20 files / 10 MB read back). Interactive calls
+  take one unit of the per-IP web-tool budget, as on Next.
+
 ## Configuration
 
 | Env var | Required? | What it does |
