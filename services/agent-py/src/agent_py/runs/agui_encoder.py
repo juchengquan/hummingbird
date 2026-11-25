@@ -495,6 +495,8 @@ class AgUiRunEncoder:
                 out["text"] = res.final_text
             if res.memory_tainted:
                 out["memoryTainted"] = True
+            if res.images is not None:
+                out["images"] = [dict(i) for i in res.images]
         return out
 
     def _error(self, run: RunRecord) -> tuple[str, str]:

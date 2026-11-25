@@ -60,8 +60,8 @@ async def test_a_done_task_writes_its_result_into_the_outcome(world: World) -> N
 
     row = await world.task(task)
     assert row["status"] == "done"
-    assert row["outcome"] == {"type": "success", "result": {"text": "It is blue."}}
-    assert (await world.run(task))["result"] == {"text": "It is blue."}
+    assert row["outcome"] == {"type": "success", "result": {"text": "It is blue.", "images": []}}
+    assert (await world.run(task))["result"] == {"text": "It is blue.", "images": []}
 
 
 async def test_a_failed_task_writes_its_error_into_the_outcome(world: World) -> None:
@@ -96,7 +96,7 @@ async def test_a_sub_agent_run_settled_by_the_worker_has_its_outcome(world: Worl
     [child] = await world.children(parent)
     assert (await world.task(child))["outcome"] == {
         "type": "success",
-        "result": {"text": "child answer"},
+        "result": {"text": "child answer", "images": []},
     }
 
 
@@ -195,7 +195,6 @@ def images(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, list[Any]]]:
     monkeypatch.setattr(image_gen_module, "minimax_generate_image", generate)
     monkeypatch.setattr(image_storage, "download_image", download)
     monkeypatch.setattr(image_storage, "_upload_and_sign", upload)
-    monkeypatch.setattr(image_gen_module, "persist_generated_image", upload)
     yield calls
     monkeypatch.undo()
     settings_module.get_settings.cache_clear()
@@ -252,7 +251,8 @@ async def test_a_reply_cut_at_max_tokens_is_continued_not_settled(world: World) 
 
     assert await world.status(task) == "done"
     assert (await world.task(task))["outcome"]["result"] == {
-        "text": "The long report, part one, cut mid-sentence. Part two."
+        "text": "The long report, part one, cut mid-sentence. Part two.",
+        "images": [],
     }
     first, second = world.model.calls
     assert first["max_tokens"] >= 16_000
@@ -340,7 +340,10 @@ async def test_answer_resume_done_gives_the_whole_text_once(world: World) -> Non
     await world.work()
 
     whole = "Let me check the colour first.\n\nPainted it blue."
-    assert (await world.task(r1))["outcome"] == {"type": "success", "result": {"text": whole}}
+    assert (await world.task(r1))["outcome"] == {
+        "type": "success",
+        "result": {"text": whole, "images": []},
+    }
     assert (await world.run(r1))["result"]["text"] == whole
     [entry] = await world.events(r1, "result")
     assert entry["finalText"] == whole
@@ -654,3 +657,69 @@ async def test_a_schedule_whose_workspace_has_an_approval_server_pauses_for_it(
     await world.work()
     assert world.count(SEND) == 1
     assert await world.status(task) == "done"
+
+
+# --- Q87 (wave 7): a run's result lists its images --------------------------------------------
+
+
+async def test_a_task_result_lists_the_images_of_every_run_on_its_line(
+    world: World, images: dict[str, list[Any]]
+) -> None:
+    world.model.script(
+        "Draw a cat",
+        [use("g1", "generateImage", prompt="a cat")],
+        [ask("q1")],
+        [say("Done.")],
+    )
+    response, run = await world.post_run(
+        _background(world, skills=[{"id": "imageGen"}]),
+        messages=[{"id": "m", "role": "user", "content": "Draw a cat"}],
+    )
+    assert response.status_code == 202, response.text
+    await world.work()
+    assert await world.status(run) == "paused"
+    _, resumed = await world.resume(run, {"q1": {"value": "x"}})
+    await world.work()
+
+    assert await world.status(resumed) == "done"
+    result = (await world.run(resumed))["result"]
+    # The image came from the run before the question: the result is the
+    # whole task's (Q78), images included.
+    assert [i["url"] for i in result["images"]] == ["https://signed.test/cat.png"]
+    assert result["images"][0]["storagePath"] == "p"
+    outcome = (await world.task(resumed))["outcome"]
+    assert outcome["result"]["images"] == result["images"]
+    # A list row leaves the images out (a data URL can be megabytes, and the
+    # list is polled): a client reads them once, from getRun.
+    listed = await world.http.get("/v1/runs?mode=background", headers=world.headers())
+    [row] = [r for r in listed.json()["runs"] if r["id"] == resumed]
+    assert row["result"] == {"text": result["text"]}
+
+
+async def test_a_parents_result_gathers_its_sub_agents_images(
+    world: World, images: dict[str, list[Any]]
+) -> None:
+    world.model.script("Do it", [spawn("s", "child-draw")], [say("Parent done.")])
+    world.model.script(
+        "child-draw", [use("g1", "generateImage", prompt="a cat")], [say("Drew it.")]
+    )
+    response, run = await world.post_run(_background(world, skills=[{"id": "imageGen"}]))
+    assert response.status_code == 202, response.text
+    await world.work()
+
+    assert await world.status(run) == "done"
+    [child] = await world.children(run)
+    child_images = (await world.run(child))["result"]["images"]
+    assert [i["url"] for i in child_images] == ["https://signed.test/cat.png"]
+    # The parent never generated one itself: it carries its sub-agent's.
+    assert (await world.run(run))["result"]["images"] == child_images
+
+
+async def test_a_result_without_images_says_so(world: World) -> None:
+    """`[]`, not absent: absent means a result written before 0.5.1, which
+    a client has to read the stream for."""
+    world.model.script("Do it", [say("Plain.")])
+    run = await world.start()
+    await world.work()
+    assert (await world.run(run))["result"]["images"] == []
+    assert (await world.task(run))["outcome"]["result"]["images"] == []

@@ -399,6 +399,23 @@ function isImage(value: unknown): value is GeneratedImage {
   )
 }
 
+/** One image as a message keeps it (`Message.generatedImages`), from the
+ *  `tool_image` shape a stream or a result (`RunResult.images`) carries;
+ *  null when it isn't one. Pure. */
+export function generatedImageOf(value: unknown): GeneratedImage | null {
+  if (!isImage(value)) return null
+  return {
+    id: value.id,
+    url: value.url,
+    ...(typeof value.storagePath === "string" ? { storagePath: value.storagePath } : {}),
+    width: value.width,
+    height: value.height,
+    format: value.format,
+    prompt: value.prompt,
+    mode: value.mode,
+  }
+}
+
 /**
  * The images a task generated (`ACTIVITY_SNAPSHOT hummingbird.tool_image`,
  * RUN_EVENTS.md § 3.3), across its runs, once each, as chat stores them on
@@ -416,17 +433,8 @@ export function generatedImagesOf(runs: readonly ChainRunLog[]): GeneratedImage[
       const images = rec(e.content)?.images
       if (!Array.isArray(images)) continue
       for (const img of images) {
-        if (!isImage(img)) continue
-        out.set(img.id, {
-          id: img.id,
-          url: img.url,
-          ...(typeof img.storagePath === "string" ? { storagePath: img.storagePath } : {}),
-          width: img.width,
-          height: img.height,
-          format: img.format,
-          prompt: img.prompt,
-          mode: img.mode,
-        })
+        const image = generatedImageOf(img)
+        if (image) out.set(image.id, image)
       }
     }
   }

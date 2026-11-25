@@ -29,14 +29,31 @@ type DB = SupabaseClient<Database>
 
 export type TaskJobAction = "start" | "respond" | "continue"
 
-/** A failed task-table RPC, keeping the SQLSTATE the function raised. */
+/** The 5-task cap's answer (Q72, Q79; hint `task_cap`, 0050). Word for word
+ *  agent-py's `TASK_CAP_MESSAGE` (task-writes.test.ts checks). */
+export const TASK_CAP_MESSAGE = "5 tasks are already active. Finish or cancel one, then start this one again."
+
+/** A full job queue's answer (20 queued jobs; hint `job_queue`, 0050).
+ *  Word for word agent-py's `JOB_QUEUE_FULL_MESSAGE`. */
+export const JOB_QUEUE_FULL_MESSAGE = "Too many queued jobs (20 per user). Wait for some to start, then try again."
+
+/** 54000's hint (0050, Q88) → the sentence a user reads. */
+const LIMIT_MESSAGES: Record<string, string> = {
+  task_cap: TASK_CAP_MESSAGE,
+  job_queue: JOB_QUEUE_FULL_MESSAGE,
+}
+
+/** A failed task-table RPC, keeping the SQLSTATE the function raised and
+ *  its hint (0050 tags which limit a 54000 met). */
 export class TaskWriteError extends Error {
   readonly sqlState: string | undefined
+  readonly hint: string | undefined
 
-  constructor(message: string, sqlState?: string) {
+  constructor(message: string, sqlState?: string, hint?: string) {
     super(message)
     this.name = "TaskWriteError"
     this.sqlState = sqlState
+    this.hint = hint || undefined
   }
 }
 
@@ -67,10 +84,12 @@ export function taskWriteErrorResponse(
   if (!sqlState) return null
   const mapped = SQLSTATE_RESPONSES[sqlState]
   if (!mapped) return null
+  const hint = typeof (error as { hint?: unknown }).hint === "string" ? (error as { hint: string }).hint : undefined
   const message =
-    typeof (error as { message?: unknown }).message === "string"
+    (sqlState === "54000" && hint ? LIMIT_MESSAGES[hint] : undefined) ??
+    (typeof (error as { message?: unknown }).message === "string"
       ? (error as { message: string }).message
-      : "Request rejected."
+      : "Request rejected.")
   return { ...mapped, message }
 }
 
@@ -96,7 +115,7 @@ export async function createTaskRun(db: DB, input: CreateTaskRunInput): Promise<
     p_checkpoint: input.checkpoint as unknown as Json,
   })
   if (error) {
-    throw new TaskWriteError(`createTaskRun: ${error.message}`, error.code)
+    throw new TaskWriteError(`createTaskRun: ${error.message}`, error.code, error.hint)
   }
 }
 
@@ -106,7 +125,7 @@ export async function createTaskRun(db: DB, input: CreateTaskRunInput): Promise<
 export async function cancelTask(db: DB, taskId: string): Promise<void> {
   const { error } = await db.rpc("cancel_task", { p_task_id: taskId })
   if (error) {
-    throw new TaskWriteError(`cancel task: ${error.message}`, error.code)
+    throw new TaskWriteError(`cancel task: ${error.message}`, error.code, error.hint)
   }
 }
 
@@ -128,7 +147,7 @@ export async function enqueueTaskJob(
     ...(input.scheduledAt ? { p_scheduled_at: input.scheduledAt.toISOString() } : {}),
   })
   if (error) {
-    throw new TaskWriteError(`enqueue ${input.action}: ${error.message}`, error.code)
+    throw new TaskWriteError(`enqueue ${input.action}: ${error.message}`, error.code, error.hint)
   }
   return data as string
 }

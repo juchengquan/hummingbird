@@ -40,6 +40,12 @@ export interface SkillRuntimeContext {
   resolveMountFiles?: (
     names: string[]
   ) => Promise<import("@/server/code-sandbox/mount-files").ResolvedMounts>
+  /** Store generated images (the chat route's `persistGeneratedImages`,
+   *  bound to the request's session and `localFilesOnly`) — given to the
+   *  imageGen skill so it stores before the model reads the result (Q86). */
+  persistImages?: (
+    images: import("@/server/image-storage").ImageToPersist[]
+  ) => Promise<import("@/server/image-storage").PersistImagesResult>
 }
 
 /** A single entry on `ChatRequestInput["skills"]` — the per-skill

@@ -104,11 +104,10 @@ export interface DeliveryDeps {
   whenDrained(): Promise<void>
   /** `POST /v1/runs/{root}/delivered`. */
   markDelivered(rootRunId: string): Promise<void>
-  /** What the task's streams hold that its result doesn't: the citation
-   *  checks (`hummingbird.verification`, when `RunResult.verification`
-   *  is absent) and the images it generated (`hummingbird.tool_image` —
-   *  stored, or data URLs with `localFilesOnly`; the text only quotes the
-   *  provider's temporary URL). */
+  /** What a list row doesn't carry: the images the task generated (a
+   *  0.5.1 result lists them, read from getRun — Q87; an older one, from
+   *  its `hummingbird.tool_image` activities) and, for an older result,
+   *  the citation checks (`hummingbird.verification`). */
   outputOf?(task: TaskSummary): Promise<TaskOutput>
   /** "Report opened in the editor". */
   onReportOpened?(): void

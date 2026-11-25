@@ -366,6 +366,7 @@ class RunEmitter:
         memory_tainted: bool = False,
         usage: tuple[TokenUsage, ...] = (),
         stopped_at: str | None = None,
+        images: tuple[dict[str, object], ...] | None = None,
     ) -> None:
         """Emit the terminal `result` event. Latches the emitter so
         nothing further is sent — call exactly once at the end of a
@@ -387,6 +388,7 @@ class RunEmitter:
                 memory_tainted=memory_tainted,
                 usage=usage,
                 stopped_at=stopped_at,
+                images=images,
             )
         )
         self._settled = True

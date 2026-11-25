@@ -25,13 +25,13 @@ const effects = async (tag: string) => {
   return Object.fromEntries(Object.entries(all).filter(([k]) => k.startsWith(tag + ":")).map(([k, v]) => [k.split(":")[1], v]))
 }
 
-async function signedIn(page: Page) {
+async function signedIn(page: Page, workspaceExtra: Record<string, unknown> = {}) {
   const r = await fetch(`${SUPA}/auth/v1/signup`, { method: "POST", headers: { apikey: ANON, "content-type": "application/json" }, body: JSON.stringify({ email: `${crypto.randomUUID()}@example.test`, password: crypto.randomUUID() }) })
   const s = await r.json()
   const raw = "base64-" + Buffer.from(JSON.stringify(s)).toString("base64url")
   await page.context().addCookies([{ name: "sb-127-auth-token", value: raw, domain: "127.0.0.1", path: "/" }])
   const id = crypto.randomUUID(), now = new Date().toISOString()
-  const seed = { chatBackend: "python-runs", chatModel: HAIKU, workspaces: [{ id, name: "Runs", createdAt: now, updatedAt: now }], activeWorkspaceId: id, conversations: [] }
+  const seed = { chatBackend: "python-runs", chatModel: HAIKU, workspaces: [{ id, name: "Runs", createdAt: now, updatedAt: now, ...workspaceExtra }], activeWorkspaceId: id, conversations: [] }
   await page.addInitScript(({ seed, version }) => {
     if (localStorage.getItem("e2e-seeded")) return
     localStorage.setItem("hummingbird-storage", JSON.stringify({ state: seed, version }))
@@ -134,4 +134,37 @@ test("runs: cancel on the list while paused; the gated tool never runs, nothing 
   await page.waitForTimeout(4000)
   expect(await effects("r3")).toEqual({})
   expect(await cloudMessages(uid, "FINAL seq")).toBe(0)
+})
+
+/** The scripted model's requests, as text (what the model was told). */
+const modelSaw = async () => (await (await fetch(`${FAKE}/state`)).json()).all_text as string
+/** The cloud message whose text contains `needle`, with its images. */
+async function cloudMessage(uid: string, needle: string) {
+  const rows = (await rest(`messages?select=content,generated_images&user_id=eq.${uid}`)) as {
+    content: string
+    generated_images: { url: string }[] | null
+  }[]
+  return rows.find((m) => m.content.includes(needle))
+}
+
+test("runs: a task draws; the model never gets the unstored image's link; the image is delivered (Q86, Q87)", async ({ page }) => {
+  const { uid } = await signedIn(page, { skillPrefs: { imageGen: true } })
+  await sendAsTask(page, "SCENARIO:draw/i1")
+  await expect(page.getByText("FINAL draw").first()).toBeVisible({ timeout: 30000 })
+  // This stack has no Storage: the image is a data URL, so the model is
+  // told it is shown, never the provider's temporary URL.
+  const saw = await modelSaw()
+  expect(saw).toContain("Shown to the user above your reply.")
+  expect(saw).not.toContain("127.0.0.1:8172/img/")
+  await expect.poll(async () => (await cloudMessage(uid, "FINAL draw"))?.generated_images?.length ?? 0, { timeout: 20000 }).toBe(1)
+  expect((await cloudMessage(uid, "FINAL draw"))!.generated_images![0].url).toMatch(/^data:image\/png;base64,/)
+})
+
+test("runs: a sub-agent's image arrives with its parent's answer (Q87)", async ({ page }) => {
+  const { uid } = await signedIn(page, { skillPrefs: { imageGen: true } })
+  await sendAsTask(page, "SCENARIO:drawkid/i2")
+  await expect(page.getByText("FINAL drawkid").first()).toBeVisible({ timeout: 30000 })
+  await expect.poll(async () => (await cloudMessage(uid, "FINAL drawkid"))?.generated_images?.length ?? 0, { timeout: 20000 }).toBe(1)
+  expect((await cloudMessage(uid, "FINAL drawkid"))!.generated_images![0].url).toMatch(/^data:image\/png;base64,/)
+  expect(await modelSaw()).not.toContain("127.0.0.1:8172/img/")
 })

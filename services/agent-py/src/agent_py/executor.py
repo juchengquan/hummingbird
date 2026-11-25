@@ -45,7 +45,17 @@ from urllib.parse import unquote_to_bytes
 import asyncpg
 import structlog
 
-from . import jobs, lease, resume_answers, store, tool_ledger, tool_turn, verify, verify_client
+from . import (
+    events,
+    jobs,
+    lease,
+    resume_answers,
+    store,
+    tool_ledger,
+    tool_turn,
+    verify,
+    verify_client,
+)
 from .aggregate import aggregate_child_results
 from .barrier import settle_task_terminal
 from .emitter import EventSink, RunEmitter, _now_iso
@@ -75,6 +85,7 @@ from .providers.anthropic_provider import (
 from .reasoning_effort import parse_reasoning_effort, thinking_params
 from .runner import (
     AgentLoopResult,
+    FinalImagesFn,
     FinalizeFn,
     FinalTextFn,
     PendingInputDescriptor,
@@ -1013,7 +1024,7 @@ async def _drive(
     def should_yield() -> bool:
         return deadline_s is not None and asyncio.get_event_loop().time() > deadline_s
 
-    finalize, final_text = _settle_hooks(run)
+    finalize, final_text, final_images = _settle_hooks(run)
 
     while True:
         if resolve:
@@ -1041,6 +1052,7 @@ async def _drive(
             should_yield=should_yield,
             finalize=finalize,
             final_text=final_text,
+            final_images=final_images,
             resumed_from_seq=run.resumed_from_seq,
         )
         run.resumed_from_seq = None
@@ -1106,7 +1118,7 @@ async def _drive(
         return ExecutorOutcome(settled=True)
 
 
-def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn]:
+def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn, FinalImagesFn]:
     """The pre-settle hooks: citation verification (research runs only,
     advisory + non-blocking) and the final text.
 
@@ -1123,8 +1135,22 @@ def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn]:
     A resumed run (`continue`, respond) re-aggregates its own text +
     sources from the full `task_events` log: the per-chunk in-memory
     accumulators only hold THIS chunk's slice. The DB is the source of
-    truth for a multi-chunk run; one read of it per settle, shared."""
+    truth for a multi-chunk run; one read of it per settle, shared.
+
+    The images (Q87) are every `tool_image` image of the same runs, then
+    their sub-agents' results' — so a parent's answer carries what its
+    sub-agents drew."""
     cache: verify.AggregatedInputs | None = None
+    line_cache: tuple[list[str], list[list[events.TaskEvent]]] | None = None
+    own_cache: list[events.TaskEvent] | None = None
+
+    async def own_events() -> list[events.TaskEvent]:
+        """This run's whole log, read once per settle."""
+        nonlocal own_cache
+        if own_cache is None:
+            own_cache = await store.load_run_events(run.pool, run_id=run_id, user_id=user_id)
+        return own_cache
+
     cfg = run.checkpoint.get("config")
     run_mode = _str_or_none(cfg.get("mode")) if isinstance(cfg, dict) else None
     # Answerer provider is "anthropic" for every agent-py run today
@@ -1145,19 +1171,25 @@ def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn]:
                     for i, (t, u, sn) in enumerate(run.sink.sources)
                 ],
             )
-        events = await store.load_run_events(run.pool, run_id=run_id, user_id=user_id)
-        return verify.aggregate_from_events(events)
+        return verify.aggregate_from_events(await own_events())
+
+    async def earlier_runs() -> tuple[list[str], list[list[events.TaskEvent]]]:
+        """The runs before this one on the task's line, and their logs."""
+        nonlocal line_cache
+        if line_cache is None:
+            line = await store.load_task_line(run.pool, run_id=run_id, user_id=user_id)
+            logs = [
+                await store.load_run_events(run.pool, run_id=earlier, user_id=user_id)
+                for earlier in line
+            ]
+            line_cache = (line, logs)
+        return line_cache
 
     async def whole() -> verify.AggregatedInputs:
         nonlocal cache
         if cache is None:
-            line = await store.load_task_line(run.pool, run_id=run_id, user_id=user_id)
-            parts = [
-                verify.aggregate_from_events(
-                    await store.load_run_events(run.pool, run_id=earlier, user_id=user_id)
-                )
-                for earlier in line
-            ]
+            _, logs = await earlier_runs()
+            parts = [verify.aggregate_from_events(log) for log in logs]
             cache = _join_inputs([*parts, await own_inputs()])
         return cache
 
@@ -1190,7 +1222,39 @@ def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn]:
             return None
         return text or None
 
-    return finalize, final_text
+    async def final_images() -> tuple[dict[str, object], ...] | None:
+        try:
+            line, logs = await earlier_runs()
+            own = await own_events()
+            drawn = [
+                dict(image)
+                for log in [*logs, own]
+                for event in log
+                if isinstance(event, events.ToolImageEvent)
+                for image in event.images
+            ]
+            children = await store.load_child_images(
+                run.pool, parent_ids=[*line, run_id], user_id=user_id
+            )
+        except Exception as exc:
+            logger.warning("executor.final_images_failed", run_id=run_id, error=str(exc))
+            return None
+        return _unique_images([*drawn, *children])
+
+    return finalize, final_text, final_images
+
+
+def _unique_images(images: list[dict[str, object]]) -> tuple[dict[str, object], ...]:
+    """Each image once, first seen kept (by id, else url)."""
+    seen: set[object] = set()
+    out: list[dict[str, object]] = []
+    for image in images:
+        key = image.get("id") or image.get("url")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(image)
+    return tuple(out)
 
 
 def _join_inputs(parts: list[verify.AggregatedInputs]) -> verify.AggregatedInputs:

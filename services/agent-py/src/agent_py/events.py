@@ -230,6 +230,11 @@ class ResultEvent(TaskEventBase):
     # `"max_steps"` when a background task stopped at its step limit
     # (`RunResult.stoppedAt`). None for a run that finished on its own.
     stopped_at: str | None = None
+    # Wave 7 (Q87): the images the answer carries (`RunResult.images`):
+    # every `tool_image` image of the task's line, then its sub-agents'.
+    # `()` none; None not recorded (a result written before 0.5.1, or the
+    # images couldn't be read) — a client then reads the stream.
+    images: tuple[dict[str, object], ...] | None = None
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -607,6 +612,8 @@ def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
             result_payload["usage"] = [u.to_payload() for u in event.usage]
         if event.stopped_at is not None:
             result_payload["stoppedAt"] = event.stopped_at
+        if event.images is not None:
+            result_payload["images"] = [dict(i) for i in event.images]
         return result_payload
     if isinstance(event, ToolInputEvent):
         return {

@@ -31,6 +31,7 @@ import {
   resolveImageGenConfig,
   type ResolvedImageGenConfig,
 } from "@/shared/skills/image-gen-config"
+import type { ImageToPersist, PersistImagesResult } from "@/server/image-storage"
 import type { ServerSkill } from "@/server/skills/registry"
 
 import { minimaxGenerateImage } from "@/server/skills/minimax-image-client"
@@ -53,6 +54,13 @@ interface BuildOpts {
    *  bucket (separate from `chatWebToolLimit`) because image gen
    *  costs an order of magnitude more per call. */
   consumeBudget?: () => { allowed: boolean; retryAfterSec: number }
+  /** Store the images before the model reads the result (the chat route's
+   *  `persistGeneratedImages`, bound to the request's session and
+   *  `localFilesOnly`). Absent → the images keep Minimax's URLs and the
+   *  route stores them when it sees the result. */
+  persistImages?: (images: ImageToPersist[]) => Promise<PersistImagesResult>
+  /** The Minimax call (a seam for tests). */
+  generate?: typeof minimaxGenerateImage
 }
 
 interface ImageGenSuccess {
@@ -62,10 +70,15 @@ interface ImageGenSuccess {
   images: Array<{
     id: string
     url: string
+    /** Set when the image is in Storage: its `url` is long-lived. */
+    storagePath?: string
     width: number
     height: number
     format: string
   }>
+  /** The tool stored the images itself (`persistImages`): the route emits
+   *  them as they are. */
+  persisted?: true
 }
 
 interface ImageGenFailure {
@@ -95,8 +108,9 @@ export function buildImageGenTool(log: ImageGenLog, opts: BuildOpts) {
   return tool({
     description:
       "Generate one or more images via Minimax (text-to-image, or " +
-      "image-to-image when you provide `referenceImageUrl`). Returns " +
-      "image URLs the user will see inline. " +
+      "image-to-image when you provide `referenceImageUrl`). The images " +
+      "render inline for the user; a stored image also comes with a link " +
+      "you can pass back as `referenceImageUrl`. " +
       `HARD LIMIT: ${cap} call${cap === 1 ? "" : "s"} per turn. ` +
       `Each call can render up to ${MAX_IMAGES_PER_CALL} images. ` +
       "Use only when the user explicitly asks for an image; do not " +
@@ -141,12 +155,10 @@ export function buildImageGenTool(log: ImageGenLog, opts: BuildOpts) {
             "private addresses are rejected."
         ),
     }),
-    execute: async ({
-      prompt,
-      aspectRatio,
-      count,
-      referenceImageUrl,
-    }): Promise<ImageGenResult> => {
+    execute: async (
+      { prompt, aspectRatio, count, referenceImageUrl },
+      { toolCallId }
+    ): Promise<ImageGenResult> => {
       const mode: "t2i" | "i2i" = referenceImageUrl ? "i2i" : "t2i"
 
       // Per-IP cross-turn gate first. Image gen is the most expensive
@@ -191,7 +203,7 @@ export function buildImageGenTool(log: ImageGenLog, opts: BuildOpts) {
         }
       }
 
-      const result = await minimaxGenerateImage({
+      const result = await (opts.generate ?? minimaxGenerateImage)({
         prompt,
         aspectRatio: aspectRatio ?? opts.config.aspectRatio,
         count: count ?? 1,
@@ -209,19 +221,48 @@ export function buildImageGenTool(log: ImageGenLog, opts: BuildOpts) {
       }
 
       log.push({ prompt, mode, imageCount: result.images.length, ok: true })
-      return {
-        ok: true,
-        mode,
-        prompt,
-        images: result.images.map((img, i) => ({
-          // Stable per-result id so the UI can key on it. URL alone
-          // works too but is unwieldy in React keys.
-          id: `${Date.now()}-${i}`,
-          ...img,
-        })),
+      // Stable per-image id: the React key and the Storage object name
+      // (`user-files/{user}/generated/{id}.{ext}`), as the route used.
+      const images = result.images.map((img, i) => ({ id: `${toolCallId || "img"}-${i}`, ...img }))
+      if (opts.persistImages) {
+        // Stored before the model reads the result, so it can be given a
+        // stored image's long-lived link (Q86). A failed store keeps
+        // Minimax's URLs for the user (the model is never told them).
+        const stored = await opts.persistImages(images)
+        if (stored.ok) return { ok: true, mode, prompt, images: stored.images, persisted: true }
       }
+      return { ok: true, mode, prompt, images }
     },
+    // What the model reads (Q86): a stored image's link; any other image
+    // is "shown to the user", never a URL that expires in hours.
+    toModelOutput: (output: ImageGenResult) =>
+      output.ok
+        ? { type: "text" as const, value: modelText(output) }
+        : { type: "json" as const, value: { ok: false, code: output.code, error: output.error } },
   })
+}
+
+function modelText(output: ImageGenSuccess): string {
+  const n = output.images.length
+  const lines = [`Generated ${n} image${n === 1 ? "" : "s"} (${output.mode}) for ${JSON.stringify(output.prompt)}:`, ""]
+  output.images.forEach((img, i) =>
+    lines.push(img.storagePath ? `[${i + 1}] ${img.url}` : `[${i + 1}] Shown to the user above your reply.`)
+  )
+  if (output.images.some((img) => !img.storagePath)) {
+    lines.push(
+      "",
+      "An image without a link isn't stored: refer to it by its number, and don't write a link or a markdown image for it."
+    )
+  }
+  return lines.join("\n")
+}
+
+/** The images to emit as they are, when the tool already stored them;
+ *  null when the route still has to store them. */
+export function persistedImageFrame(output: unknown): { mode: "t2i" | "i2i"; prompt: string; images: ImageGenSuccess["images"] } | null {
+  const o = output as Partial<ImageGenSuccess> | undefined
+  if (!o?.ok || o.persisted !== true || !Array.isArray(o.images) || o.images.length === 0) return null
+  return { mode: o.mode === "i2i" ? "i2i" : "t2i", prompt: typeof o.prompt === "string" ? o.prompt : "", images: o.images }
 }
 
 // --- ServerSkill entry -----------------------------------------------------
@@ -243,6 +284,7 @@ export const imageGenSkill: ServerSkill = {
       config,
       signal: ctx.signal,
       consumeBudget: ctx.consumeBudget,
+      ...(ctx.persistImages ? { persistImages: ctx.persistImages } : {}),
     })
   },
   promptFragment(requestEntry) {

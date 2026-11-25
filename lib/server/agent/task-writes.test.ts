@@ -6,6 +6,8 @@ import type { Database } from "@/shared/supabase/types"
 import type { RunCheckpoint } from "./checkpoint"
 import { enqueueRespondJob, enqueueStartJob } from "./jobs"
 import {
+  JOB_QUEUE_FULL_MESSAGE,
+  TASK_CAP_MESSAGE,
   TaskWriteError,
   cancelTask,
   createTaskRun,
@@ -13,7 +15,7 @@ import {
   taskWriteErrorResponse,
 } from "./task-writes"
 
-type RpcResult = { data: unknown; error: { message: string; code?: string } | null }
+type RpcResult = { data: unknown; error: { message: string; code?: string; hint?: string } | null }
 
 /** A client whose only surface is `rpc`, recording every call. Any
  *  direct table write would throw (`from` is absent) — the point of
@@ -166,5 +168,34 @@ describe("taskWriteErrorResponse", () => {
     expect(taskWriteErrorResponse(new TaskWriteError("x"))).toBeNull()
     expect(taskWriteErrorResponse(new Error("plain"))).toBeNull()
     expect(taskWriteErrorResponse(null)).toBeNull()
+  })
+})
+
+describe("the two 54000 refusals (Q88, 0050's hints)", () => {
+  test("the task cap reads the cap's sentence, from create_task_run's hint", async () => {
+    const { db } = fakeDb({
+      data: null,
+      error: { message: "too many active tasks (at most 5 per user)", code: "54000", hint: "task_cap" },
+    })
+    const err = await createTaskRun(db, { id: "r", conversationId: "c", goal: "g", maxSteps: 12, checkpoint }).catch(
+      (e: unknown) => e,
+    )
+    expect(taskWriteErrorResponse(err)).toEqual({ status: 409, code: "limit_reached", message: TASK_CAP_MESSAGE })
+  })
+
+  test("a full job queue reads the queue's sentence, from enqueue_task_job's hint", async () => {
+    const { db } = fakeDb({ data: null, error: { message: "too many queued jobs", code: "54000", hint: "job_queue" } })
+    const err = await enqueueTaskJob(db, { taskId: "t", action: "start" }).catch((e: unknown) => e)
+    expect(taskWriteErrorResponse(err)).toEqual({ status: 409, code: "limit_reached", message: JOB_QUEUE_FULL_MESSAGE })
+  })
+
+  test("a raw PostgREST error with the hint maps the same way", () => {
+    expect(taskWriteErrorResponse({ code: "54000", message: "x", hint: "task_cap" })?.message).toBe(TASK_CAP_MESSAGE)
+  })
+
+  test("the sentences are agent-py's, word for word", async () => {
+    const py = await Bun.file(`${import.meta.dir}/../../../services/agent-py/src/agent_py/runs/repository_pg.py`).text()
+    expect(py).toContain(`TASK_CAP_MESSAGE = "${TASK_CAP_MESSAGE}"`)
+    expect(py.replace(/\(\s*\n\s*/g, "").replace(/\n\)/g, "")).toContain(`JOB_QUEUE_FULL_MESSAGE = "${JOB_QUEUE_FULL_MESSAGE}"`)
   })
 })

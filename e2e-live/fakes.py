@@ -8,13 +8,20 @@ import threading
 import uvicorn
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
-from starlette.responses import JSONResponse, StreamingResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 effects = collections.Counter()
 requests = []
 invalid = []
 odd = collections.Counter()
+images_made = []
+# A 1x1 PNG: what the fake image endpoint's URLs serve.
+PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000d49444154789c63f8cfc0f01f0005000201ff5a5f"
+    "9f0b0000000049454e44ae426082"
+)
 mcp = FastMCP("fake", stateless_http=True, json_response=True, log_level="WARNING", port=8173)
 
 
@@ -112,6 +119,11 @@ def script(body):
             use(0, free, {"label": f"{tag}:beside"}),
             use(1, "spawnSubagent", {"tasks": kids}),
         ]
+    if name == "draw":
+        return 0, done if n else [use(0, "generateImage", {"prompt": f"{tag} cat"})]
+    if name == "drawkid":
+        kid = [{"personaSlug": "helper", "subgoal": f"SCENARIO:draw/{tag}k"}]
+        return 0, done if n else [use(0, "spawnSubagent", {"tasks": kid})]
     if name == "respawn":
         if n == 0:
             return 0, [ask]
@@ -192,6 +204,21 @@ async def messages(request):
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+async def image_generation(request):
+    """Minimax's `/v1/image_generation`, scripted: one image per call, at a
+    URL this server serves (as Minimax's temporary CDN would)."""
+    body = await request.json()
+    url = f"http://127.0.0.1:8172/img/{len(images_made)}.png"
+    images_made.append({"prompt": body.get("prompt"), "url": url})
+    return JSONResponse(
+        {"data": {"image_urls": [url]}, "base_resp": {"status_code": 0, "status_msg": "success"}}
+    )
+
+
+async def image(_request):
+    return Response(PNG, media_type="image/png")
+
+
 async def state(_request):
     return JSONResponse(
         {
@@ -200,11 +227,19 @@ async def state(_request):
             "requests": len(requests),
             "last": requests[-1] if requests else None,
             "all_text": json.dumps(requests),
+            "images": images_made,
         }
     )
 
 
-app = Starlette(routes=[Route("/v1/messages", messages, methods=["POST"]), Route("/state", state)])
+app = Starlette(
+    routes=[
+        Route("/v1/messages", messages, methods=["POST"]),
+        Route("/v1/image_generation", image_generation, methods=["POST"]),
+        Route("/img/{name}", image),
+        Route("/state", state),
+    ]
+)
 threading.Thread(
     target=lambda: uvicorn.run(
         mcp.streamable_http_app(), host="127.0.0.1", port=8173, log_level="error"

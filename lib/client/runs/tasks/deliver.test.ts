@@ -319,3 +319,4 @@ describe("generated images (localFilesOnly)", () => {
     expect(message.generatedImages).toEqual([image])
   })
 })
+

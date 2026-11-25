@@ -1862,6 +1862,31 @@ export interface components {
          */
         RunResult: {
             /**
+             * @description The images the answer carries (0.5.1, Q87): every image the
+             *     task's runs generated (`generateImage`, `runCode` charts), in
+             *     order, then its sub-agents' results' images — so a parent's
+             *     answer carries what its sub-agents drew. Each is the
+             *     `hummingbird.tool_image` image shape: a Storage URL with its
+             *     `storagePath`, or a data URL when files are kept local.
+             *     An empty list when there are none; absent only on a result
+             *     written before 0.5.1 (a client then reads them from the
+             *     run's `hummingbird.tool_image` activities). `listRuns` rows
+             *     leave `images` out (a data-URL image can be megabytes and
+             *     the list is polled): read them from `getRun`.
+             */
+            images?: ({
+                format?: string;
+                height?: number;
+                id?: string;
+                mode?: string;
+                prompt?: string;
+                storagePath?: string;
+                url: string;
+                width?: number;
+            } & {
+                [key: string]: unknown;
+            })[];
+            /**
              * @description The run read third-party content (web, file, MCP or sandbox
              *     tools), so post-turn memory extraction must skip it. Absent
              *     means false.

@@ -185,6 +185,13 @@ _RUN_COLUMNS = f"""
              WHERE e.task_id = t.id ORDER BY e.seq DESC LIMIT 1), 0) AS last_seq
 """
 
+# A list row's outcome without `result.images` (Q87): a data-URL image can
+# be megabytes and the list is polled; a client reads them from getRun.
+_LIST_RUN_COLUMNS = _RUN_COLUMNS.replace(
+    "t.outcome::text AS outcome", "(t.outcome #- '{result,images}')::text AS outcome"
+)
+assert _LIST_RUN_COLUMNS != _RUN_COLUMNS
+
 _LIVE = ("queued", "running")
 
 # 0045's `question_held_by_respond`, for any of these questions.
@@ -241,16 +248,21 @@ def _sqlstate(exc: BaseException) -> str | None:
     return state if isinstance(state, str) else None
 
 
+_LIMIT_MESSAGES = {"task_cap": TASK_CAP_MESSAGE, "job_queue": JOB_QUEUE_FULL_MESSAGE}
+"""54000's hint (0050, Q88) → the sentence a user reads."""
+
+
 def _raise_write_error(exc: asyncpg.PostgresError, *, limit_message: str | None = None) -> NoReturn:
-    """Map a deliberate refusal; `limit_message` replaces the database's
-    text for 54000 (which cap it was depends on the call)."""
+    """Map a deliberate refusal. A 54000 reads the sentence its hint names
+    (0050); `limit_message`, the call's guess, covers a database before it."""
     state = _sqlstate(exc)
     mapped = _SQLSTATE_RESPONSES.get(state or "")
     if mapped is None:
         raise exc
     message = str(getattr(exc, "message", "") or exc) or "Request rejected."
-    if state == "54000" and limit_message is not None:
-        message = limit_message
+    if state == "54000":
+        hinted = _LIMIT_MESSAGES.get(str(getattr(exc, "hint", None) or ""))
+        message = hinted or limit_message or message
     raise RunWriteError(state, mapped[0], mapped[1], message) from None
 
 
@@ -489,7 +501,7 @@ class PgRunRepository:
             where.append(f"(t.created_at, t.id) < ({created_p}::timestamptz, {id_p}::uuid)")
         limit_p = param(page_size + 1)
         sql = (
-            f"SELECT {_RUN_COLUMNS} FROM public.tasks t WHERE {' AND '.join(where)} "
+            f"SELECT {_LIST_RUN_COLUMNS} FROM public.tasks t WHERE {' AND '.join(where)} "
             f"ORDER BY t.created_at DESC, t.id DESC LIMIT {limit_p}"
         )
         async with self._as_user(owner.user_id) as conn:
@@ -738,6 +750,8 @@ def _record(row: asyncpg.Record, fallback: _LogFallback | None) -> RunRecord:
                 result["text"] = fallback.result.final_text
             if fallback.result.memory_tainted:
                 result["memoryTainted"] = True
+            if fallback.result.images is not None:
+                result["images"] = [dict(i) for i in fallback.result.images]
     elif status == "failed":
         res_ev = fallback.result if fallback is not None else None
         if res_ev is not None and (res_ev.error is not None or res_ev.error_code is not None):
