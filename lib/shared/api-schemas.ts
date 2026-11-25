@@ -622,6 +622,13 @@ export const TaskRequestSchema = z.object({
    *  images) stay out of cloud Storage. Runs only (`forwardedProps.
    *  localFilesOnly`); the old `/api/tasks` path ignores it. */
   localFilesOnly: z.boolean().optional(),
+  /** The cloud files `runCode` may mount (wave 8, Q93): by id only — a
+   *  background run never takes a local file's bytes. Runs only
+   *  (`forwardedProps.sandboxFiles`); the old `/api/tasks` path ignores it. */
+  sandboxFiles: z
+    .array(z.object({ name: z.string().min(1).max(500), fileId: z.string().min(1).max(64) }))
+    .max(SANDBOX_FILES_COUNT_MAX)
+    .optional(),
 })
 
 // --- /api/tasks/:id/respond -------------------------------------------------

@@ -12,8 +12,9 @@ import "client-only"
  *   one the worker runs, Q55), the composed system prompt, skills,
  *   workspace, step budget, `requireApprovalFor`, `research` (the
  *   `/research` mode), the persona's MCP allow-list (absent = no
- *   restriction, `[]` = none), `localFilesOnly`, and the task's title as
- *   its `goal`.
+ *   restriction, `[]` = none), `localFilesOnly`, the cloud files
+ *   `runCode` may mount (`sandboxFiles`, by id: Q93 — a local file's
+ *   bytes never go), and the task's title as its `goal`.
  * - Never: `attachments`, local MCP servers or their credentials (a
  *   background run refuses both, Q42/Q49), a reasoning tier.
  */
@@ -97,6 +98,9 @@ export function backgroundStartBody(input: TaskRequestInput, opts: BackgroundSta
   const localFilesOnly =
     (input as TaskRequestInput & { localFilesOnly?: boolean }).localFilesOnly ?? opts.localFilesOnly
   if (localFilesOnly) fp.localFilesOnly = true
+  // By id only, whatever a caller passes (the schema has no bytes; Q93).
+  const sandboxFiles = (input.sandboxFiles ?? []).map((f) => ({ name: f.name, fileId: f.fileId }))
+  if (sandboxFiles.length > 0) fp.sandboxFiles = sandboxFiles
   return {
     threadId: threadIdFor(input.conversationId),
     runId: opts.runId,

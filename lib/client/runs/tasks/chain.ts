@@ -37,7 +37,7 @@ import "client-only"
 import { EMPTY_RUN_VIEW, type PendingInput, type TaskRunView, type ToolCallView } from "@/shared/agent/project"
 import type { PlanItem } from "@/shared/agent/events"
 import { compareCursors, cursorSeq, START_CURSOR } from "@/shared/runs/cursor"
-import type { GeneratedImage, ToolCallResult } from "@/shared/types"
+import type { CodeResultCell, CodeResultPart, GeneratedFile, GeneratedImage, ToolCallResult } from "@/shared/types"
 import { parseVerificationFrame } from "@/shared/verify"
 
 import { toPendingInterrupt, type PendingInterrupt } from "../interrupts"
@@ -385,7 +385,7 @@ function normaliseLog(items: readonly ChainItem[]): ChainItem[] {
   return out
 }
 
-function isImage(value: unknown): value is GeneratedImage {
+function isImage(value: unknown): value is Omit<GeneratedImage, "mode"> & { mode: "t2i" | "i2i" | "code" } {
   const img = rec(value)
   return (
     !!img &&
@@ -395,13 +395,14 @@ function isImage(value: unknown): value is GeneratedImage {
     typeof img.height === "number" &&
     typeof img.format === "string" &&
     typeof img.prompt === "string" &&
-    (img.mode === "t2i" || img.mode === "i2i")
+    (img.mode === "t2i" || img.mode === "i2i" || img.mode === "code")
   )
 }
 
 /** One image as a message keeps it (`Message.generatedImages`), from the
  *  `tool_image` shape a stream or a result (`RunResult.images`) carries;
- *  null when it isn't one. Pure. */
+ *  null when it isn't one. A `runCode` chart (mode `code`) is kept as chat
+ *  keeps it (`turn-writer.ts`): mode `t2i`. Pure. */
 export function generatedImageOf(value: unknown): GeneratedImage | null {
   if (!isImage(value)) return null
   return {
@@ -412,7 +413,49 @@ export function generatedImageOf(value: unknown): GeneratedImage | null {
     height: value.height,
     format: value.format,
     prompt: value.prompt,
-    mode: value.mode,
+    mode: value.mode === "i2i" ? "i2i" : "t2i",
+  }
+}
+
+/** One file as a message keeps it (`Message.generatedFiles`), from the
+ *  `tool_file` shape a result (`RunResult.files`, Q94) carries; null when
+ *  it isn't one. Pure. */
+export function generatedFileOf(value: unknown): GeneratedFile | null {
+  const f = rec(value)
+  if (
+    !f ||
+    typeof f.id !== "string" ||
+    typeof f.name !== "string" ||
+    typeof f.sizeBytes !== "number" ||
+    typeof f.mimeType !== "string" ||
+    typeof f.url !== "string"
+  ) {
+    return null
+  }
+  return {
+    id: f.id,
+    name: f.name,
+    sizeBytes: f.sizeBytes,
+    mimeType: f.mimeType,
+    url: f.url,
+    storagePath: typeof f.storagePath === "string" ? f.storagePath : null,
+  }
+}
+
+/** One `runCode` output as a message keeps it (`Message.codeResults`),
+ *  from a result's `codeResults` (Q94); null when it isn't one. Pure. */
+export function codeResultOf(value: unknown): CodeResultPart | null {
+  const c = rec(value)
+  if (!c || typeof c.id !== "string") return null
+  const cells = Array.isArray(c.results) ? c.results : []
+  return {
+    id: c.id,
+    stdout: typeof c.stdout === "string" ? c.stdout : "",
+    stderr: typeof c.stderr === "string" ? c.stderr : "",
+    results: cells.filter((cell): cell is CodeResultCell => {
+      const r = rec(cell)
+      return !!r && (r.type === "text" || r.type === "table")
+    }),
   }
 }
 
