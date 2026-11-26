@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Hummingbird backend contract
-  version: 0.6.0
+  version: 0.7.0
   summary: The frontend <-> backend HTTP contract (spec-first, PLAN-frontend-backend-split.md Q19).
   description: |
     Hand-written source of truth for the HTTP surface every Hummingbird
@@ -48,6 +48,10 @@ tags:
     description: Cross-conversation memory upkeep.
   - name: security
     description: Browser security telemetry (CSP violation reports). Public.
+  - name: models
+    description: |
+      Which chat models this backend can run (wave 10, Q119): the
+      `config/models.json` ids it has a provider for. Public.
   - name: editor
     description: |
       The rich-text editor's AI (Phase 4, Q23): Plate's AI menu and its
@@ -100,6 +104,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReadinessResponse"
+
+  /v1/models:
+    get:
+      operationId: listModels
+      tags: [models]
+      summary: The models this backend can run
+      description: |
+        **Public — no bearer token.** The `config/models.json` ids a
+        provider is configured for on this backend, in catalog order, each
+        with whether background tasks can run on it (a model that can't call
+        tools can't, Q117). Every catalog id is a valid model on the other
+        endpoints; one missing here answers `503` (no provider) instead of
+        running. The browser's model picker offers these (Q119). Reveals
+        which providers the deploy has keys for, nothing else.
+      security: []
+      responses:
+        "200":
+          description: The served models.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelList"
 
   /v1/images/refresh-url:
     post:
@@ -1406,6 +1432,37 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
+    ModelList:
+      type: object
+      additionalProperties: false
+      required: [models, defaultModel, auto]
+      properties:
+        models:
+          type: array
+          description: The catalog ids with a provider here, in catalog order.
+          items:
+            $ref: "#/components/schemas/ServedModel"
+        defaultModel:
+          type: string
+          description: |
+            The backend's default (`AGENT_DEFAULT_MODEL`): what a request
+            without a model runs on, and the model of the follow-up chips and
+            of structured-output calls a model without it hands over.
+        auto:
+          type: boolean
+          description: Whether `auto` (smart routing) runs here — both models of the catalog's routing pair are served.
+    ServedModel:
+      type: object
+      additionalProperties: false
+      required: [id, tasks]
+      properties:
+        id:
+          type: string
+          description: The `config/models.json` id.
+          examples: ["minimax/minimax-m3.1-flash"]
+        tasks:
+          type: boolean
+          description: Whether background tasks run on it here (it can call tools, Q117).
     ApiError:
       type: object
       description: |
