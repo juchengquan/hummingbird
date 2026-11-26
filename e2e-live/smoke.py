@@ -1,4 +1,6 @@
-"""Q65: a few real Anthropic calls through the real worker and agent-py chat. No output of the key."""
+"""Q65: a few real Anthropic calls through the real worker and agent-py chat; with
+LIVE_MINIMAX_KEY / LIVE_MINIMAX_URL, MiniMax M3.1 Flash too (wave 10, Q112). No
+output of a key."""
 
 import asyncio
 import base64
@@ -12,6 +14,7 @@ import httpx
 
 NEXT, PYAPI, SUPA = "http://127.0.0.1:3171", "http://127.0.0.1:8171", "http://127.0.0.1:54871"
 HAIKU = "anthropic/claude-haiku-4.5"
+MINIMAX = "minimax/minimax-m3.1-flash"
 
 
 async def main():
@@ -126,63 +129,107 @@ async def main():
         res = await result(t)
         print("3 approved, second model call:", r.status_code, row["status"], (res or "")[:200])
         ok &= row["status"] == "done"
-    rid = str(uuid.uuid4())
-    async with http.stream(
-        "POST",
-        f"{PYAPI}/v1/runs",
-        headers=api,
-        json={
-            "threadId": str(conv),
-            "runId": rid,
-            "messages": [
-                {
-                    "id": "m1",
-                    "role": "user",
-                    "content": "Call the mcp tool once with label 'smoke-chat', then reply: done",
-                }
-            ],
-            "forwardedProps": {"model": HAIKU, "workspaceId": str(ws), "requireApprovalFor": []},
-        },
-    ) as r:
-        "".join([chunk async for chunk in r.aiter_text()])
-    status = (await http.get(f"{PYAPI}/v1/runs/{rid}", headers=api)).json()
-    print(
-        "4 chat run with a tool:",
-        r.status_code,
-        status.get("status"),
-        json.dumps(status.get("error") or status.get("openInterrupts") or "")[:200],
-    )
-    if status.get("status") == "interrupted":
-        it = status["openInterrupts"][0]["id"]
-        rid2 = str(uuid.uuid4())
+
+    async def chat_with_tool(model, label, step):
+        """A chat run that calls the MCP tool (approval), then its resume."""
+        thread = str(conv) if model == HAIKU else str(uuid.uuid4())
+        content = f"Call the mcp tool once with label '{label}', then reply: done"
+        rid = str(uuid.uuid4())
         async with http.stream(
             "POST",
             f"{PYAPI}/v1/runs",
             headers=api,
             json={
+                "threadId": thread,
+                "runId": rid,
+                "messages": [{"id": "m1", "role": "user", "content": content}],
+                "forwardedProps": {
+                    "model": model,
+                    "workspaceId": str(ws),
+                    "requireApprovalFor": [],
+                },
+            },
+        ) as r:
+            "".join([chunk async for chunk in r.aiter_text()])
+        status = (await http.get(f"{PYAPI}/v1/runs/{rid}", headers=api)).json()
+        print(
+            f"{step} chat run with a tool ({model}):",
+            r.status_code,
+            status.get("status"),
+            json.dumps(status.get("error") or status.get("openInterrupts") or "")[:200],
+        )
+        if status.get("status") == "interrupted":
+            it = status["openInterrupts"][0]["id"]
+            rid2 = str(uuid.uuid4())
+            async with http.stream(
+                "POST",
+                f"{PYAPI}/v1/runs",
+                headers=api,
+                json={
+                    "threadId": thread,
+                    "runId": rid2,
+                    "messages": [{"id": "m1", "role": "user", "content": content}],
+                    "resume": [
+                        {"interruptId": it, "status": "resolved", "payload": {"approved": True}}
+                    ],
+                    "forwardedProps": {
+                        "model": model,
+                        "workspaceId": str(ws),
+                        "previousRunId": rid,
+                    },
+                },
+            ) as r2:
+                "".join([chunk async for chunk in r2.aiter_text()])
+            status = (await http.get(f"{PYAPI}/v1/runs/{rid2}", headers=api)).json()
+            print(
+                f"{step + 1} chat resume, second model call ({model}):",
+                status.get("status"),
+                json.dumps(status.get("error") or "")[:200],
+            )
+        return status.get("status") == "succeeded"
+
+    ok &= await chat_with_tool(HAIKU, "smoke-chat", 4)
+
+    if os.environ.get("LIVE_MINIMAX_KEY"):
+        # Wave 10 (Q112): one provider besides Anthropic, through its own route.
+        served = (await http.get(f"{PYAPI}/v1/models")).json()
+        listed = MINIMAX in [m["id"] for m in served["models"]]
+        print("6 /v1/models lists", MINIMAX, listed)
+        ok &= listed
+        ok &= await chat_with_tool(MINIMAX, "smoke-minimax", 7)
+        rid = str(uuid.uuid4())
+        r = await http.post(
+            f"{PYAPI}/v1/runs",
+            headers=api,
+            json={
                 "threadId": str(conv),
-                "runId": rid2,
+                "runId": rid,
                 "messages": [
                     {
                         "id": "m1",
                         "role": "user",
-                        "content": "Call the mcp tool once with label 'smoke-chat', then reply: done",
+                        "content": "Without calling any tool, reply with the single word: ok",
                     }
                 ],
-                "resume": [
-                    {"interruptId": it, "status": "resolved", "payload": {"approved": True}}
-                ],
-                "forwardedProps": {"model": HAIKU, "workspaceId": str(ws), "previousRunId": rid},
+                "forwardedProps": {
+                    "model": MINIMAX,
+                    "mode": "background",
+                    "goal": "smoke on minimax",
+                    "workspaceId": str(ws),
+                    "maxSteps": 2,
+                },
             },
-        ) as r2:
-            "".join([chunk async for chunk in r2.aiter_text()])
-        status = (await http.get(f"{PYAPI}/v1/runs/{rid2}", headers=api)).json()
-        print(
-            "5 chat resume, second model call:",
-            status.get("status"),
-            json.dumps(status.get("error") or "")[:200],
         )
-    ok &= status.get("status") == "succeeded"
+        row = (
+            await settle(rid, ("done", "failed", "paused"))
+            if r.status_code == 202
+            else {"status": r.text, "o": None}
+        )
+        if row["status"] == "paused":
+            print("  paused on:", (row["o"] or "")[:400])
+        res = await result(rid) if r.status_code == 202 else None
+        print("9 background task on", MINIMAX, r.status_code, row["status"], (res or "")[:200])
+        ok &= row["status"] == "done"
     print("SMOKE", "PASS" if ok else "FAIL")
     return ok
 
