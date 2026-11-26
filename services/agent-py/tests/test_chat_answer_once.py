@@ -372,8 +372,7 @@ async def test_a_resume_that_failed_before_applying_frees_the_question(world: Ch
     paused = await world.start()
     # No model client for this resume: it fails before any answer is applied.
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(world.services.harness, "_client", None)
-        mp.setattr(world.services.harness, "_client_factory", lambda: None)
+        mp.setattr(world.services.harness, "_client_factory", lambda *_: None)
         response, first = await world.resume(paused)
     assert response.status_code == 200
     assert await world.status(first) == "failed" and world.count() == 0

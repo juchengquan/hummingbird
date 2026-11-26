@@ -278,20 +278,27 @@ async def command_frames(
     model: str,
     request: CommandInput,
     delay: Callable[[int], float],
+    structured_client: AnthropicClient | None = None,
+    structured_model: str | None = None,
 ) -> AsyncIterator[str]:
+    """The command's stream. The tool choice and the comment / table elements
+    are forced tool calls: they go to `structured_client` / `structured_model`
+    (a model with structured output, Q116) when given, else `client` / `model`."""
     doc = request.document
+    s_client = structured_client if structured_client is not None else client
+    s_model = structured_model or model
     try:
         tool = request.tool_name
         if tool is None:
-            tool = await choose_tool(client, model, request)
+            tool = await choose_tool(s_client, s_model, request)
             yield frame({"data": tool, "type": "data-toolName"})
         yield frame({"type": "start", "messageId": _id()})
         yield frame({"type": "start-step"})
         messages = request.messages
         if tool == "comment":
             async for out in _elements(
-                client,
-                model,
+                s_client,
+                s_model,
                 comment_prompt(context=doc.comment_context, messages=messages),
                 item=_COMMENT_ITEM,
                 part="data-comment",
@@ -301,8 +308,8 @@ async def command_frames(
                 yield out
         elif tool == "edit" and doc.edit is not None and doc.edit.kind == "table":
             async for out in _elements(
-                client,
-                model,
+                s_client,
+                s_model,
                 table_prompt(context=doc.edit.context, messages=messages),
                 item=_CELL_ITEM,
                 part="data-table",

@@ -122,14 +122,14 @@ def test_chat_rejects_missing_token(client: TestClient) -> None:
 
 
 def test_chat_503_when_no_anthropic_key(client: TestClient) -> None:
-    """Anthropic key unset → 503. Fast-fail signal to ops; do NOT
+    """No provider for the model → 503. Fast-fail signal to ops; do NOT
     fall through to the stub (the chat path is user-facing, the model
     being absent isn't recoverable on the server side)."""
     with patch.object(chat_router, "resolve_anthropic_client", return_value=None):
         r = client.post("/v1/chat", json=_valid_body(), headers=_auth())
     assert r.status_code == 503
     assert r.json()["code"] == "unavailable"
-    assert "ANTHROPIC_API_KEY" in r.json()["message"]
+    assert "No provider for" in r.json()["message"]
 
 
 def test_chat_rejects_empty_messages(client: TestClient) -> None:

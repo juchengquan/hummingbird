@@ -12,7 +12,7 @@ from ..auth import get_current_user
 from ..chat import resolve_anthropic_client
 from ..contract import models
 from ..db import get_pool, has_pool
-from ..memory_extract import extract_facts, resolve_memory_model
+from ..memory_extract import extract_facts, resolve_memory_target
 from ..model_allowlist import get_model_allowlist
 from ..settings import get_settings
 
@@ -58,13 +58,13 @@ async def memory_extract(
     if not has_pool():
         return models.MemoryExtractResponse(ok=True)
 
-    model = resolve_memory_model(get_model_allowlist(), get_settings().MEMORY_EXTRACT_MODEL)
+    target = resolve_memory_target(get_model_allowlist(), get_settings().MEMORY_EXTRACT_MODEL)
     await extract_facts(
         get_pool(),
         user_id=user_id,
         turn_text=body.turnText,
         conversation_id=body.conversationId,
-        client=resolve_anthropic_client(),
-        model=model,
+        client=resolve_anthropic_client(target),
+        model=target.api_id,
     )
     return models.MemoryExtractResponse(ok=True)

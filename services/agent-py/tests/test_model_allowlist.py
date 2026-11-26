@@ -1,5 +1,5 @@
-"""Model allowlist — `config/models.json`'s `anthropic/*` entries are the
-only ids the service accepts; each maps to its Anthropic API id.
+"""Model allowlist — every `config/models.json` id is accepted (wave 10);
+an `anthropic/*` one maps to its Anthropic API id on the direct route.
 
 Covers: the mapping (explicit `anthropicModelId` + prefix-strip
 fallback), unknown ids → 400 `unknown_model` on `/v1/chat`, a tampered
@@ -54,11 +54,20 @@ def test_allowed_catalog_ids_map_to_api_ids() -> None:
     assert resolve_api_model_id("anthropic/claude-haiku-4.5") == "claude-haiku-4-5"
 
 
+def test_every_catalog_id_is_accepted() -> None:
+    """Wave 10 (Q109): the other providers' models are accepted too; without a
+    provider for them here they are valid ids that can't run (503 at call)."""
+    allowlist = get_model_allowlist()
+    assert resolve_api_model_id("deepseek/deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
+    assert resolve_api_model_id("openrouter/anthropic/claude-sonnet-4.5") == (
+        "anthropic/claude-sonnet-4.5"
+    )
+    assert not allowlist.available("deepseek/deepseek-v4-flash")
+
+
 @pytest.mark.parametrize(
     "model_id",
     [
-        "deepseek/deepseek-v4-flash",  # in the catalog, but not anthropic/*
-        "openrouter/anthropic/claude-sonnet-4.5",
         "claude-sonnet-4-6",  # a raw API id is not a catalog id
         "anthropic/claude-opus-9",
         "",
@@ -90,6 +99,7 @@ def test_explicit_field_wins_and_prefix_strip_is_the_fallback() -> None:
     assert dict(allowlist.api_ids) == {
         "anthropic/a.1": "claude-a-1",
         "anthropic/claude-b": "claude-b",
+        "openai/gpt-x": "openai/gpt-x",
     }
 
 
@@ -107,7 +117,7 @@ def test_structured_output_flag_is_read_from_the_catalog() -> None:
         },
         default_model="anthropic/c",
     )
-    assert allowlist.structured_output == frozenset({"anthropic/a"})
+    assert allowlist.structured_output == frozenset({"anthropic/a", "openai/x"})
     assert allowlist.supports_structured_output("anthropic/a") is True
     assert allowlist.supports_structured_output("anthropic/b") is False
     # Absent → the default model's flag.
@@ -140,7 +150,7 @@ def test_reasoning_effort_flag_is_read_from_the_catalog() -> None:
 # --- boot-time validation ---------------------------------------------------
 
 
-@pytest.mark.parametrize("default", ["deepseek/deepseek-v4-flash", "claude-haiku-4-5"])
+@pytest.mark.parametrize("default", ["deepseek/deepseek-v9", "claude-haiku-4-5"])
 def test_default_outside_allowlist_fails_boot(
     monkeypatch: pytest.MonkeyPatch, default: str
 ) -> None:
@@ -169,10 +179,10 @@ def test_missing_catalog_fails_boot(monkeypatch: pytest.MonkeyPatch, tmp_path: P
         create_app(enable_poller=False)
 
 
-def test_catalog_without_anthropic_models_fails(tmp_path: Path) -> None:
+def test_an_empty_catalog_fails(tmp_path: Path) -> None:
     path = tmp_path / "models.json"
-    path.write_text(json.dumps({"models": [{"id": "openai/gpt-x"}]}))
-    with pytest.raises(ModelConfigError, match="no anthropic"):
+    path.write_text(json.dumps({"models": []}))
+    with pytest.raises(ModelConfigError, match="no models"):
         load_allowlist(path, default_model="openai/gpt-x")
 
 
@@ -248,7 +258,7 @@ def test_chat_maps_allowed_model_to_api_id(client: TestClient) -> None:
     assert fake.calls[0]["model"] == "claude-sonnet-4-6"
 
 
-@pytest.mark.parametrize("model", ["deepseek/deepseek-v4-flash", "claude-3-5-sonnet-20241022"])
+@pytest.mark.parametrize("model", ["deepseek/deepseek-v9", "claude-3-5-sonnet-20241022"])
 def test_chat_rejects_unlisted_model(client: TestClient, model: str) -> None:
     fake = _RecordingClient()
     with patch.object(chat_router, "resolve_anthropic_client", return_value=fake):

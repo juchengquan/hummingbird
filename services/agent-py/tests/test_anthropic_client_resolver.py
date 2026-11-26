@@ -18,7 +18,8 @@ from typing import Any
 
 import pytest
 
-from agent_py import executor
+from agent_py import executor, model_routes
+from agent_py.model_allowlist import get_model_allowlist
 from agent_py.settings import get_settings
 
 
@@ -27,7 +28,8 @@ def _reset_resolver_cache() -> None:
     singleton so each test gets a fresh resolution. Tests run in one
     process; without these resets a later test would observe an
     earlier test's client."""
-    executor._anthropic_client = None
+    model_routes.reset_clients()
+    get_model_allowlist.cache_clear()
     get_settings.cache_clear()
 
 

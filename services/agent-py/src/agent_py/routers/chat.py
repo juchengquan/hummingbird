@@ -29,7 +29,7 @@ from ..chat import (
 )
 from ..db import get_pool, has_pool
 from ..mcp_tools import extend_registry_with_mcp
-from ..model_allowlist import UnknownModelError, resolve_api_model_id
+from ..model_allowlist import UnknownModelError, resolve_target
 from ..rate_limit import SlidingWindow, rate_limit_key
 from ..tools import (
     SkillConfigs,
@@ -189,19 +189,19 @@ async def chat(
     # the provider check, same order as the Next.js route, so a bad id is
     # a 400 regardless of how the deploy is configured.
     try:
-        api_model_id = resolve_api_model_id(body.model)
+        target = resolve_target(body.model)
     except UnknownModelError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_detail()
         ) from exc
 
-    client = resolve_anthropic_client()
+    client = resolve_anthropic_client(target)
     if client is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
                 "code": "unavailable",
-                "message": "ANTHROPIC_API_KEY is not configured on the agent service.",
+                "message": f"No provider for {body.model} is configured on the agent service.",
             },
         )
 
@@ -251,7 +251,7 @@ async def chat(
     tools: tuple[ToolDescriptor, ...] = tuple(tools_dict.values())
 
     config = ChatConfig(
-        model=api_model_id,
+        model=target.api_id,
         messages=[ChatMessage(role=m.role, content=m.content) for m in body.messages],
         system=body.system,
         max_tokens=body.max_tokens or DEFAULT_MAX_TOKENS,
@@ -265,8 +265,12 @@ async def chat(
     # `suggestions` event → `data-suggestions` part. Decoration
     # only — failures are swallowed by `generate_chat_suggestions`.
     async def suggest(assistant_text: str) -> list[str]:
+        # The chips run on the default model, so on its provider's client.
+        chips_client = resolve_anthropic_client()
+        if chips_client is None:
+            return []
         return await generate_chat_suggestions(
-            client=client,
+            client=chips_client,
             history=config.messages,
             assistant_reply=assistant_text,
         )

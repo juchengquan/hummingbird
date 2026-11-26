@@ -30,8 +30,10 @@ from agent_py.memory_extract import (
     merge_facts,
     plan_to_json,
     resolve_memory_model,
+    resolve_memory_target,
 )
 from agent_py.model_allowlist import parse_allowlist
+from agent_py.model_routes import Provider
 from agent_py.routers import memory as memory_router
 
 from .test_embed import Responder, fake_pool, pg_error
@@ -81,20 +83,54 @@ def test_fact_op_rejects_what_zod_rejects() -> None:
 
 _CATALOG = {
     "models": [
-        {"id": "anthropic/claude-haiku-4.5", "anthropicModelId": "claude-haiku-4-5"},
-        {"id": "anthropic/claude-sonnet-4.6"},
-        {"id": "google/gemini-2.5-flash"},
+        {
+            "id": "anthropic/claude-haiku-4.5",
+            "anthropicModelId": "claude-haiku-4-5",
+            "supportsStructuredOutput": True,
+        },
+        {"id": "anthropic/claude-sonnet-4.6", "supportsStructuredOutput": True},
+        {
+            "id": "google/gemini-2.5-flash",
+            "supportsStructuredOutput": True,
+            "routes": [{"via": "gateway"}],
+        },
+        {
+            "id": "google/gemini-2.5-pro",
+            "supportsStructuredOutput": True,
+            "routes": [{"via": "gateway"}],
+        },
+        {"id": "minimax/minimax-m3", "routes": [{"via": "minimax-cn", "upstreamId": "MiniMax-M3"}]},
     ]
 }
-_ALLOW = parse_allowlist(_CATALOG, default_model="anthropic/claude-haiku-4.5")
+_PROVIDERS = {
+    "anthropic": Provider("anthropic", "https://api.anthropic.com", api_key="k"),
+    "gateway": Provider("gateway", "https://ai-gateway.vercel.sh", auth_token="g"),
+    "minimax-cn": Provider("minimax-cn", "https://api.minimaxi.com/anthropic", api_key="m"),
+}
+_ALLOW = parse_allowlist(_CATALOG, default_model="anthropic/claude-haiku-4.5", providers=_PROVIDERS)
 
 
 def test_memory_model_uses_an_allowed_override_else_the_default() -> None:
     assert resolve_memory_model(_ALLOW, "anthropic/claude-sonnet-4.6") == "claude-sonnet-4.6"
     assert resolve_memory_model(_ALLOW, "") == "claude-haiku-4-5"
-    # The Next.js default (and any non-anthropic id) falls back.
-    assert resolve_memory_model(_ALLOW, "google/gemini-2.5-flash") == "claude-haiku-4-5"
+    # The Next.js default runs here now, on the Gateway (wave 10).
+    assert resolve_memory_model(_ALLOW, "google/gemini-2.5-flash") == "google/gemini-2.5-flash"
     assert resolve_memory_model(_ALLOW, "claude-sonnet-4-6") == "claude-haiku-4-5"
+
+
+def test_memory_model_needs_structured_output_and_a_provider() -> None:
+    """Extraction is a forced tool call: a model without structured output
+    (Minimax answers a forced tool in text) or without a provider here falls
+    back to the default."""
+    assert resolve_memory_model(_ALLOW, "minimax/minimax-m3") == "claude-haiku-4-5"
+    no_gateway = parse_allowlist(
+        _CATALOG,
+        default_model="anthropic/claude-haiku-4.5",
+        providers={"anthropic": _PROVIDERS["anthropic"]},
+    )
+    assert resolve_memory_model(no_gateway, "google/gemini-2.5-pro") == "claude-haiku-4-5"
+    target = resolve_memory_target(_ALLOW, "google/gemini-2.5-pro")
+    assert (target.provider, target.api_id) == ("gateway", "google/gemini-2.5-pro")
 
 
 # --- extract_facts ------------------------------------------------------------

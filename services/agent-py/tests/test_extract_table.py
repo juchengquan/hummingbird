@@ -193,7 +193,7 @@ def test_invalid_body_is_422(client: TestClient, body: dict[str, Any]) -> None:
 
 def test_unknown_model_is_400(client: TestClient) -> None:
     fake = _FakeClient()
-    r = _post(client, fake, {**BODY, "model": "google/gemini-2.5-flash"})
+    r = _post(client, fake, {**BODY, "model": "google/gemini-9"})
     assert r.status_code == 400
     assert r.json()["code"] == "unknown_model"
     assert fake.messages.calls == []

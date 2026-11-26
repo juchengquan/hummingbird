@@ -30,6 +30,7 @@ from typing import Any
 
 from ..chat_loop import LoopResult, UsageMeter
 from ..emitter import RunEmitter
+from ..model_routes import ModelTarget
 from ..tools import RunToolContext, ToolContext, ToolDescriptor
 from .harness import CancelSignal, RunInput
 from .model import RunResultData
@@ -139,6 +140,9 @@ class ResolvedModel:
     service default."""
     api_id: str
     """What is sent to the provider."""
+    target: ModelTarget | None = None
+    """Where the calls go (`model_routes.py`); None → the default model's
+    provider (a hook that names an id by hand)."""
 
 
 PromptSection = Callable[[RunInput, RunOptions, HookContext], "str | None | Awaitable[str | None]"]

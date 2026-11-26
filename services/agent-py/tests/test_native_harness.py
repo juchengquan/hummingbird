@@ -906,7 +906,9 @@ async def test_suggestions_follow_the_answer_and_count_in_usage() -> None:
 
 
 async def test_unavailable_client_fails_the_run() -> None:
-    harness = NativeHarness(client_factory=lambda: None, build_tools=toolset(), suggestions=False)
+    harness = NativeHarness(
+        client_factory=lambda *_: None, build_tools=toolset(), suggestions=False
+    )
     res = await harness.run(run_input(), RunEmitter(run_id="r", sink=_noop), asyncio.Event())
     assert isinstance(res.outcome, Failed) and res.outcome.code == "unavailable"
 

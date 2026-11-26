@@ -88,6 +88,27 @@
       ]
     },
     {
+      "id": "minimax/minimax-m3.1-flash",
+      "label": "MiniMax M3.1 Flash",
+      "provider": "MiniMax",
+      "contextWindow": 512000,
+      "supportsReasoningEffort": true,
+      "supportsVision": true,
+      "routes": [{ "via": "minimax-cn", "upstreamId": "MiniMax-M3.1-Flash" }]
+    },
+    {
+      "id": "minimax/minimax-m3",
+      "label": "MiniMax M3",
+      "provider": "MiniMax",
+      "contextWindow": 512000,
+      "supportsReasoningEffort": true,
+      "supportsVision": true,
+      "routes": [
+        { "via": "minimax-cn", "upstreamId": "MiniMax-M3" },
+        { "via": "gateway" }
+      ]
+    },
+    {
       "id": "ollama/llama3.1:8b",
       "label": "Llama 3.1 8B (Ollama)",
       "provider": "Ollama",

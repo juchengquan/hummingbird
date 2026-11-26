@@ -35,7 +35,12 @@ from typing import Any, Literal
 
 from ..chat_loop import DEFAULT_MAX_STEPS
 from ..code_sandbox.mount_files import MountManifestEntry
-from ..model_allowlist import AUTO_MODEL_ID, get_model_allowlist, resolve_optional_model
+from ..model_allowlist import (
+    AUTO_MODEL_ID,
+    TaskModelError,
+    get_model_allowlist,
+    resolve_optional_model,
+)
 from ..reasoning_effort import ReasoningEffort, parse_reasoning_effort
 from ..tools import SkillConfigs
 
@@ -391,3 +396,8 @@ def validate_run_options(options: Mapping[str, object]) -> None:
     ):
         return
     resolve_optional_model(model)
+    if options.get("mode") == "background":
+        # Q117: a task calls tools; a model that can't is refused up front.
+        allowlist = get_model_allowlist()
+        if not allowlist.supports_tools(model):
+            raise TaskModelError(model or allowlist.default_model)

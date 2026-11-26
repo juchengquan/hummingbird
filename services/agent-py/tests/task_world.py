@@ -488,7 +488,7 @@ async def open_world(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[World]:
     world = World(pool, user, workspace, thread, http, settings)
     monkeypatch.setattr(executor, "extend_registry_with_mcp", world.discover)
     monkeypatch.setattr(
-        executor, "_resolve_anthropic_client", lambda: world.model if world.key else None
+        executor, "_resolve_anthropic_client", lambda *_: world.model if world.key else None
     )
     try:
         yield world

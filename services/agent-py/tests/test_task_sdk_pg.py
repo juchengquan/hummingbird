@@ -88,7 +88,7 @@ async def test_the_sdk_sends_one_result_per_call(
         base_url="http://model.test",
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(answer)),
     )
-    monkeypatch.setattr("agent_py.executor._resolve_anthropic_client", lambda: client)
+    monkeypatch.setattr("agent_py.executor._resolve_anthropic_client", lambda *_: client)
     task = await world.start()
     await world.work()
     for question, approved in (("toolu_q1", True), ("toolu_q2", False)):

@@ -33,7 +33,6 @@ def _factories() -> dict[str, Callable[[], Any]]:
 
 @pytest.fixture(autouse=True)
 def _fresh(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(executor, "_anthropic_client", None)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     get_settings.cache_clear()
 

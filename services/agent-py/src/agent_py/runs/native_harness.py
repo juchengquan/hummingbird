@@ -124,7 +124,8 @@ from ..chat_loop import (
 from ..emitter import RunEmitter
 from ..events import InputRequestOption, SuggestionsEvent
 from ..input_policy import request_kind_for
-from ..model_allowlist import UnknownModelError
+from ..model_allowlist import UnknownModelError, client_for_target, get_model_allowlist
+from ..model_routes import ModelTarget
 from ..providers.anthropic_provider import AsyncAnthropicClient, _make_tool_result_block
 from ..rate_limit import ToolBudgets
 from ..reasoning_effort import thinking_params
@@ -491,7 +492,8 @@ class _Prepared:
     tainted_by: str | None
 
 
-ClientFactory = Callable[[], AsyncAnthropicClient | None]
+ClientFactory = Callable[[ModelTarget | None], AsyncAnthropicClient | None]
+"""A model target → the client serving it (None → the default model's)."""
 
 APPLY_FAILED_MESSAGE = (
     "The answer could not be recorded, so nothing was done with it. Try answering again."
@@ -516,7 +518,6 @@ class NativeHarness:
         max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> None:
         self._client_factory = client_factory
-        self._client: AsyncAnthropicClient | None = None
         self._build_tools = build_tools
         self._hooks = hooks
         self._pool_provider = pool_provider
@@ -524,10 +525,8 @@ class NativeHarness:
         self._suggestions = suggestions
         self._max_tokens = max_tokens
 
-    def _resolve_client(self) -> AsyncAnthropicClient | None:
-        if self._client is None:
-            self._client = self._client_factory()
-        return self._client
+    def _resolve_client(self, target: ModelTarget | None) -> AsyncAnthropicClient | None:
+        return self._client_factory(target)
 
     async def run(
         self, run_input: RunInput, emitter: RunEmitter, cancel: CancelSignal
@@ -562,10 +561,14 @@ class NativeHarness:
             model = await hooks.resolve_model(run_input, opts, ctx)
         except UnknownModelError as exc:
             return HarnessResult(Failed(exc.code, str(exc)))
-        client = self._resolve_client()
+        client = self._resolve_client(model.target)
         if client is None:
             return HarnessResult(
-                Failed("unavailable", "ANTHROPIC_API_KEY is not configured on the agent service.")
+                Failed(
+                    "unavailable",
+                    f"No provider for {model.catalog_id or 'the default model'} is configured "
+                    "on the agent service.",
+                )
             )
         if cancel.is_set():
             return HarnessResult(Cancelled())
@@ -578,6 +581,9 @@ class NativeHarness:
         tools = dict(toolset.tools)
         client_tools = _client_tools(run_input.tools, set(tools))
         tools.update(client_tools)
+        if not get_model_allowlist().supports_tools(model.catalog_id):
+            # Q116: a model the catalog marks `supportsTools: false` chats only.
+            tools, client_tools = {}, {}
         client_names = frozenset(client_tools)
         gated = HITL_TOOLS | opts.require_approval_for | toolset.gated | client_names
 
@@ -596,7 +602,10 @@ class NativeHarness:
             prepared = _Prepared(messages, len(messages), taint_of(history))
 
         async def on_answer(text: str) -> None:
-            await self._suggest(client, history, text, emitter, cancel, meter)
+            # The chips run on the default model, so on its provider's client.
+            chips_client = self._resolve_client(None)
+            if chips_client is not None:
+                await self._suggest(chips_client, history, text, emitter, cancel, meter)
 
         thinking = thinking_params(model.catalog_id, opts.reasoning_effort)
         if thinking is not None and not _turn_can_think(prepared.messages):
@@ -891,13 +900,11 @@ def _list(value: object) -> list[object]:
 
 
 def _client_from_settings(settings: Settings) -> ClientFactory:
-    def make() -> AsyncAnthropicClient | None:
-        api_key = settings.ANTHROPIC_API_KEY.strip()
-        if not api_key:
-            return None
-        from ..anthropic_client import make_anthropic_client
+    """The target's provider client (`model_routes.py`). `settings` is the
+    process's (`get_settings`), which the allowlist is built from."""
 
-        return make_anthropic_client(api_key=api_key, base_url=settings.ANTHROPIC_BASE_URL)  # type: ignore[no-any-return]
+    def make(target: ModelTarget | None = None) -> AsyncAnthropicClient | None:
+        return client_for_target(target)  # type: ignore[no-any-return]
 
     return make
 
@@ -926,7 +933,7 @@ def build_native_harness(
     `generateImage` `MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE`, per client key).
     `suggestions`: generate follow-up chips after an answer."""
     factory: ClientFactory = (
-        (lambda: client) if client is not None else _client_from_settings(settings)
+        (lambda _target: client) if client is not None else _client_from_settings(settings)
     )
     if consume_budget is None:
         # The Next chat route's `chatWebToolLimit` / `chatImageGenLimit`:

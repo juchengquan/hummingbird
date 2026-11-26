@@ -141,12 +141,23 @@ class Settings(BaseSettings):
     nothing falls back to canned output."""
 
     ANTHROPIC_BASE_URL: str = ""
-    """Optional override for the Anthropic API base URL. Empty = SDK default
-    (https://api.anthropic.com). Set to point the SDK at an Anthropic-
-    compatible endpoint — proxy, self-hosted gateway, or a region-specific
-    upstream (e.g. Minimax's `/anthropic/v1` host). Mirrors the TS side's
-    `MINIMAX_CN_BASE_URL` override pattern. Has no effect when
-    `ANTHROPIC_API_KEY` is empty."""
+    """Optional override for the Anthropic API base URL. Empty = Anthropic's
+    own API (https://api.anthropic.com, passed explicitly —
+    `anthropic_client.py`). Set to point the direct route at an Anthropic-
+    compatible endpoint (a proxy). Has no effect when `ANTHROPIC_API_KEY`
+    is empty."""
+
+    # --- Other providers (wave 10, `model_routes.py`) ----------------------
+    # The catalog's other routes, named by `config/providers.json`. All are
+    # spoken to in the Anthropic Messages format. `MINIMAX_CN_*` and
+    # `OLLAMA_*` are declared below with their other uses.
+    AI_GATEWAY_API_KEY: str = ""
+    """The Vercel AI Gateway (its `/v1/messages`): the `gateway` routes —
+    OpenAI, Google, DeepSeek, and the `anthropic/*` models when
+    `ANTHROPIC_API_KEY` is unset. The same variable Next reads."""
+
+    OPENROUTER_API_KEY: str = ""
+    """OpenRouter (`/api/v1/messages`): the `openrouter/*` models."""
 
     # --- Model allowlist --------------------------------------------------
     MODELS_CONFIG_PATH: str = ""

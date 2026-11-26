@@ -76,7 +76,14 @@ from .input_policy import (
     request_kind_for,
 )
 from .mcp_tools import extend_registry_with_mcp
-from .model_allowlist import UnknownModelError, resolve_api_model_id
+from .model_allowlist import (
+    TaskModelError,
+    UnknownModelError,
+    client_for_target,
+    get_model_allowlist,
+    resolve_target,
+)
+from .model_routes import ModelTarget
 from .providers.anthropic_provider import (
     AnthropicStepConfig,
     AsyncAnthropicClient,
@@ -1601,31 +1608,12 @@ def _make_db_sink(pool: asyncpg.Pool, *, user_id: str) -> EventSink:
     return sink
 
 
-# Lazy import + memo for the Anthropic client. Pulled in once per
-# process, never if the API key is unset. Keeping the import lazy
-# also avoids paying anthropic's import cost in test runs that use
-# only the stub or a fake client.
-_anthropic_client: AsyncAnthropicClient | None = None
-
-
-def _resolve_anthropic_client() -> AsyncAnthropicClient | None:
-    global _anthropic_client
-    if _anthropic_client is not None:
-        return _anthropic_client
-    settings = get_settings()
-    api_key = settings.ANTHROPIC_API_KEY.strip()
-    if not api_key:
-        return None
-    # Real SDK import — only paid for when configured. Tests that
-    # need a step fn bypass this via the `make_step_fn` injection
-    # point, so this branch never runs under pytest.
-    from .anthropic_client import make_anthropic_client
-
-    # Optional `ANTHROPIC_BASE_URL` override lets a deploy point at any
-    # Anthropic-compatible endpoint (proxy, self-hosted gateway, …); blank
-    # means Anthropic's own API, passed explicitly (`anthropic_client.py`).
-    _anthropic_client = make_anthropic_client(api_key=api_key, base_url=settings.ANTHROPIC_BASE_URL)
-    return _anthropic_client
+def _resolve_anthropic_client(target: ModelTarget | None = None) -> AsyncAnthropicClient | None:
+    """The Anthropic SDK client serving `target` (None → the default model):
+    its provider's, cached per provider (`model_routes.py`), or None when no
+    configured provider serves it. Tests that need a step fn bypass this via
+    the `make_step_fn` injection point."""
+    return client_for_target(target)  # type: ignore[no-any-return]
 
 
 async def _maybe_verify(
@@ -1638,22 +1626,24 @@ async def _maybe_verify(
     """Run the citation verifier for a research run, returning the wire
     payload for the `result` event (or None). Gated on research mode;
     the rest (`VERIFY_MODEL`, the cross-family client) is
-    `verify_client.verify_citations`, falling back to the run's own
-    Anthropic client."""
+    `verify_client.verify_citations`, falling back to Anthropic's own API
+    (`VERIFY_MODEL` is an Anthropic id, whichever provider ran the task)."""
     if mode != "research":
         return None
     return await verify_client.verify_citations(
         text=text,
         sources=sources,
         answerer_provider=answerer_provider,
-        anthropic_client=_resolve_anthropic_client,
+        anthropic_client=verify_client.settings_anthropic_client,
     )
 
 
 SPAWN_STEP_LIMIT_ERROR = (
     "No sub-agent was started: this task is at its step limit. Answer with what you have."
 )
-NO_KEY_ERROR = "ANTHROPIC_API_KEY is not configured on the agent service, so this task can't run."
+NO_KEY_ERROR = (
+    "No provider for this task's model is configured on the agent service, so this task can't run."
+)
 NO_MODEL_ERROR = "This task has no model. Choose a model and run it again."
 NO_MESSAGES_ERROR = "This task has no messages to send to the model."
 
@@ -1696,7 +1686,10 @@ def _default_make_step_fn(
     # Allowlist re-check: `tasks.checkpoint` is owner-writable under
     # RLS. Catalog id → Anthropic API id; unknown → UnknownModelError,
     # which fails the run (both call sites are inside the run guard).
-    model = resolve_api_model_id(catalog_model)
+    target = resolve_target(catalog_model)
+    if not get_model_allowlist().supports_tools(catalog_model):
+        raise TaskModelError(catalog_model)
+    model = target.api_id
     if not messages:
         raise RunSetupError("invalid_request", NO_MESSAGES_ERROR)
     unusable = _unusable_part(checkpoint)
@@ -1708,7 +1701,7 @@ def _default_make_step_fn(
     if get_settings().WORKER_STUB_MODEL:
         logger.warning("executor.using_stub_step_fn", run_id=payload.run_id)
         return _stub_step_fn
-    client = _resolve_anthropic_client()
+    client = _resolve_anthropic_client(target)
     if client is None:
         raise RunSetupError("unavailable", NO_KEY_ERROR)
     workspace_prompt = _str_or_none(cfg.get("workspaceSystemPrompt"))
