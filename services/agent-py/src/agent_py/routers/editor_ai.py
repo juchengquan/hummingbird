@@ -27,9 +27,15 @@ from fastapi.responses import StreamingResponse
 from ..auth import get_current_user
 from ..chat import resolve_anthropic_client
 from ..contract import models
-from ..editor_ai.command import CommandInput, command_frames, complete_text
+from ..editor_ai.command import (
+    COMPLETE_THINKING_ROOM,
+    CommandInput,
+    command_frames,
+    complete_text,
+)
 from ..editor_ai.prompts import EditorDocument, EditorMessage, EditTarget
-from ..model_allowlist import UnknownModelError, resolve_optional_model
+from ..model_allowlist import UnknownModelError, get_model_allowlist, resolve_optional_target
+from ..model_routes import ModelTarget
 from ..rate_limit import SlidingWindow, rate_limit_key
 from ..runs.access import RequireAuthConfigError, require_auth_for_ai
 from ..runs.wiring import RunServices, get_run_services
@@ -83,17 +89,17 @@ def editor_caller(
     return None
 
 
-def _model(model_id: str | None) -> str:
+def _target(model_id: str | None) -> ModelTarget:
     try:
-        return resolve_optional_model(model_id)
+        return resolve_optional_target(model_id)
     except UnknownModelError as exc:
         raise HTTPException(status_code=400, detail=exc.to_detail()) from exc
 
 
-def _client() -> Any:
-    client = resolve_anthropic_client()
+def _client(target: ModelTarget) -> Any:
+    client = resolve_anthropic_client(target)
     if client is None:
-        _raise(503, "auth", "ANTHROPIC_API_KEY is not configured.")
+        _raise(503, "auth", f"No provider for {target.catalog_id} is configured.")
     return client
 
 
@@ -141,8 +147,12 @@ async def ai_command(
     document = _document(body.document)
     if body.toolName == "edit" and document.edit is None:
         _raise(400, "invalid_request", "Edit needs a selection.")
-    model = _model(body.model)
-    client = _client()
+    target = _target(body.model)
+    client = _client(target)
+    # The tool choice + comment / table elements are forced tool calls: a
+    # model without structured output hands them to the default (Q116).
+    structured = get_model_allowlist().structured_target(body.model)
+    structured_client = client if structured == target else _client(structured)
     command = CommandInput(
         messages=tuple(
             EditorMessage(
@@ -157,7 +167,9 @@ async def ai_command(
     return StreamingResponse(
         command_frames(
             client=client,
-            model=model,
+            model=target.api_id,
+            structured_client=structured_client,
+            structured_model=structured.api_id,
             request=command,
             delay=lambda ms: _text_delay(ms),
         ),
@@ -185,10 +197,19 @@ async def ai_complete(
             f"Too many completion requests. Retry in {verdict.retry_after_sec}s.",
             headers={"Retry-After": str(verdict.retry_after_sec)},
         )
-    model = _model(body.model)
-    client = _client()
+    target = _target(body.model)
+    client = _client(target)
     return StreamingResponse(
-        complete_text(client=client, model=model, block_text=body.blockText, prefix=body.prefix),
+        complete_text(
+            client=client,
+            model=target.api_id,
+            block_text=body.blockText,
+            prefix=body.prefix,
+            # A model that thinks unprompted needs room for it (`thinksUnprompted`).
+            thinking_room=COMPLETE_THINKING_ROOM
+            if get_model_allowlist().thinks_first(body.model)
+            else 0,
+        ),
         media_type="text/plain; charset=utf-8",
     )
 

@@ -336,8 +336,8 @@ def serve(backend: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..
                 settings, client=model, build_tools=_toolset, suggestions=False
             ),
         )
-        # The executor (background runs) caches its client module-wide.
-        monkeypatch.setattr(executor, "_anthropic_client", model)
+        # The executor (background runs) resolves its client per model.
+        monkeypatch.setattr(executor, "_resolve_anthropic_client", lambda *_: model)
 
         if backend == "postgres":
             user, conv = _db(_seed)

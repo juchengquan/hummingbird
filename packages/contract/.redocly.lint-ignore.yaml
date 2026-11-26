@@ -1,9 +1,11 @@
 # Deliberate exceptions to redocly.yaml's rules. Each entry needs a reason.
 openapi.yaml:
-  # Public liveness/readiness probes take no input and have no 4xx outcome.
+  # Public liveness/readiness probes and the served-models list take no
+  # input and have no 4xx outcome.
   operation-4xx-response:
     - "#/paths/~1healthz/get/responses"
     - "#/paths/~1readyz/get/responses"
+    - "#/paths/~1v1~1models/get/responses"
   # The `value` payloads of Hummingbird's CUSTOM run events. They travel
   # inside SSE frames (as AG-UI `CustomEvent.value`), which OpenAPI cannot
   # reference from an operation, but they are part of the contract and

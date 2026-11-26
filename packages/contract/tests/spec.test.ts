@@ -13,8 +13,10 @@ import { Contract, createAjv, loadSpec, operations } from "../conformance/harnes
  *  - getShare: the share token is the capability — anonymous viewers open
  *    a share link without an account.
  *  - reportCspViolation: browsers POST CSP violation reports without
- *    credentials. */
-const PUBLIC_V1_OPERATIONS = new Set(["getShare", "reportCspViolation"])
+ *    credentials.
+ *  - listModels: the model picker reads it signed out too (anonymous runs
+ *    and editor calls pick a model); it names catalog ids only (Q119). */
+const PUBLIC_V1_OPERATIONS = new Set(["getShare", "reportCspViolation", "listModels"])
 
 /** `/v1` operations that take a bearer token OR no credential at all
  *  (`security: [{ bearerAuth: [] }, {}]`). Same bar as above.

@@ -33,6 +33,7 @@ import structlog
 from pydantic import BaseModel, Field, model_validator
 
 from .model_allowlist import ModelAllowlist
+from .model_routes import ModelTarget
 from .providers.anthropic_provider import AsyncAnthropicClient
 from .store import _set_user_context
 
@@ -185,21 +186,26 @@ def merge_facts(existing: list[MemoryFact], ops: list[FactOp]) -> MergePlan:
 _WARNED_MODELS: set[str] = set()
 
 
-def resolve_memory_model(allowlist: ModelAllowlist, configured: str) -> str:
-    """Anthropic API id for the extraction model: `MEMORY_EXTRACT_MODEL`
-    when it is an allowed catalog id, else the service default. (The
-    Next.js default, `google/gemini-2.5-flash`, is not callable here.)"""
+def resolve_memory_target(allowlist: ModelAllowlist, configured: str) -> ModelTarget:
+    """The extraction model: `MEMORY_EXTRACT_MODEL` when it is a catalog id
+    with structured output (extraction is a forced tool call, Q116) that a
+    provider serves here, else the service default."""
     model_id = configured.strip()
-    if model_id and model_id in allowlist.api_ids:
-        return allowlist.resolve(model_id)
+    if model_id and model_id in allowlist.structured_output and allowlist.available(model_id):
+        return allowlist.target(model_id)
     if model_id and model_id not in _WARNED_MODELS:
         _WARNED_MODELS.add(model_id)
         logger.info(
-            "memory_extract.model_not_allowed",
+            "memory_extract.model_not_used",
             configured=model_id,
             using=allowlist.default_model,
         )
-    return allowlist.default_api_id
+    return allowlist.default_target
+
+
+def resolve_memory_model(allowlist: ModelAllowlist, configured: str) -> str:
+    """The provider's id of `resolve_memory_target`."""
+    return resolve_memory_target(allowlist, configured).api_id
 
 
 def _field(obj: Any, name: str) -> Any:

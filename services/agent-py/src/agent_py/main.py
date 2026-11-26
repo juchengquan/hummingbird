@@ -48,6 +48,7 @@ from .routers import (
     url,
     whoami,
 )
+from .routers import models as models_router
 
 # Re-exports for symbols that tests + other callers still import
 # directly from `agent_py.main`. The endpoints + their models now
@@ -293,6 +294,7 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
     app.include_router(csp_report.router)
     app.include_router(runs.router)
     app.include_router(editor_ai.router)
+    app.include_router(models_router.router)
 
     # Cap request bodies before routing / auth: FastAPI reads (and
     # spools multipart parts of) the body before the auth dependency

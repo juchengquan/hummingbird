@@ -65,14 +65,17 @@ Click your avatar or initial at the bottom of the left sidebar.
     (about 9 MB in all). Every
     other request (summaries, embeds, sharing, …) goes exactly where
     `python` sends it.
-- **Models per backend.** The agent services (`python` and `ts-service`
-  when signed in, `python-runs` always) only run the Anthropic models,
-  so while one of them serves chat the model picker lists just those,
-  and a model they can't run is switched to one they can, with a note
-  saying so. Auto is offered on `python-runs` (it routes each message
-  between the two Anthropic models of the routing pair, and the reply
-  shows which one it used) but not on `python` or `ts-service`.
-  Switching back to `ts` brings the full list back.
+- **Models per backend.** The Python agent service (`python` when signed
+  in, `python-runs` always) runs the models its deploy has a provider key
+  for — Anthropic, MiniMax, the AI Gateway's, OpenRouter's, Ollama's —
+  and tells the browser which ones; the TypeScript one (`ts-service`)
+  runs only the Anthropic models. While an agent service serves chat the
+  model picker lists just what it runs, and a model it can't run is
+  switched to one it can, with a note saying so. Auto is offered on
+  `python-runs` when both models of the routing pair run there (it routes
+  each message between them, and the reply shows which one it used) but
+  not on `python` or `ts-service`. Switching back to `ts` brings the full
+  list back.
 
 ## Tips & gotchas
 - The Chat backend toggle is only visible when the corresponding

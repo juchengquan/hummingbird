@@ -175,7 +175,7 @@ def model(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeAnthropic]:
         base_url="http://model.test",
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(fake)),
     )
-    monkeypatch.setattr(editor_ai, "resolve_anthropic_client", lambda: client)
+    monkeypatch.setattr(editor_ai, "resolve_anthropic_client", lambda *_: client)
     monkeypatch.setattr(editor_ai, "_text_delay", lambda _ms: 0.0)
     wiring.reset_run_services()
     editor_ai.reset_limits()
@@ -326,12 +326,10 @@ def test_edit_without_a_selection_is_refused(client: TestClient, model: FakeAnth
 
 
 def test_an_unknown_model_is_refused(client: TestClient, model: FakeAnthropic) -> None:
-    r = client.post(
-        "/v1/ai/command", json={**_request("comment"), "model": "google/gemini-2.5-flash"}
-    )
+    r = client.post("/v1/ai/command", json={**_request("comment"), "model": "google/gemini-9"})
     assert r.status_code == 400
     assert r.json()["code"] == "unknown_model"
-    r = client.post("/v1/ai/complete", json={"blockText": "x", "model": "openai/gpt-5.5"})
+    r = client.post("/v1/ai/complete", json={"blockText": "x", "model": "claude-haiku-4-5"})
     assert r.status_code == 400
     assert model.calls == []
 
@@ -340,7 +338,7 @@ def test_without_a_model_key_it_says_so(
     monkeypatch: pytest.MonkeyPatch, client: TestClient, model: FakeAnthropic
 ) -> None:
     """503 `auth`, as summarize: the editor falls back to its demo stream."""
-    monkeypatch.setattr(editor_ai, "resolve_anthropic_client", lambda: None)
+    monkeypatch.setattr(editor_ai, "resolve_anthropic_client", lambda *_: None)
     for path, body in (
         ("/v1/ai/command", _request("comment")),
         ("/v1/ai/complete", {"blockText": "x"}),

@@ -648,9 +648,10 @@ async def test_the_harness_limits_image_generation_per_client_key(
             outputs.append(e)
 
     for i in range(2):
-        harness._client = _Model(  # type: ignore[assignment]
+        model = _Model(
             _Call(tools=[call(f"c{i}", "generateImage", prompt="a cat")]), _Call([text("ok")])
         )
+        harness._client_factory = lambda *_, m=model: m  # type: ignore[misc]
         inp = dataclasses.replace(
             run_input(run_id=f"r{i}", options={"skills": [{"id": "imageGen"}]}),
             client_key="203.0.113.9",
@@ -690,7 +691,8 @@ def test_route_model_matches_the_ts_router(signals: RouteSignals, tier: str, rea
     assert decision.model_id == (PAIR.strong if tier == "strong" else PAIR.weak)
 
 
-def test_allowlist_keeps_an_anthropic_routing_pair_only() -> None:
+def test_allowlist_keeps_a_catalog_routing_pair() -> None:
+    """Q118: the pair is any two catalog models, whatever their provider."""
     models = [{"id": "anthropic/a"}, {"id": "anthropic/b"}, {"id": "openai/c"}]
     ok = parse_allowlist(
         {"models": models, "routing": {"strong": "anthropic/a", "weak": "anthropic/b"}},
@@ -701,7 +703,12 @@ def test_allowlist_keeps_an_anthropic_routing_pair_only() -> None:
         {"models": models, "routing": {"strong": "anthropic/a", "weak": "openai/c"}},
         default_model="anthropic/a",
     )
-    assert mixed.routing is None
+    assert mixed.routing == RoutingPair(strong="anthropic/a", weak="openai/c")
+    outside = parse_allowlist(
+        {"models": models, "routing": {"strong": "anthropic/a", "weak": "openai/nope"}},
+        default_model="anthropic/a",
+    )
+    assert outside.routing is None
     assert parse_allowlist({"models": models}, default_model="anthropic/a").routing is None
     # The repo catalog's pair is anthropic/* on both sides.
     assert get_model_allowlist().routing is not None

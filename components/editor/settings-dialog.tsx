@@ -42,6 +42,7 @@ import {
 import { isAgentPyConfigured } from '@/client/api-client';
 import { useAuth } from '@/client/hooks/use-auth';
 import { useStore } from '@/client/hooks/use-store';
+import { useServedModels } from '@/client/hooks/use-served-models';
 import { editorAiAgentModels, editorAiBackend } from '@/shared/editor-ai/routing';
 import { cn } from '@/shared/utils';
 
@@ -229,6 +230,7 @@ export function SettingsDialog() {
       ownKey: Boolean(tempKeys.aiGatewayApiKey),
       signedIn: status === 'signed-in',
     }) === 'agent-py';
+  useServedModels(); // agent-py's models, when they arrive (Q119)
   const offered: Model[] = onAgentPy
     ? editorAiAgentModels().map((m) => ({ label: m.label, value: m.id }))
     : models;

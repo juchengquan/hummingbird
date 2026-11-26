@@ -17,6 +17,7 @@ import {
   TASK_FALLBACK_MODEL,
   TASK_MODEL_BACKEND,
 } from "@/shared/backend-models"
+import { useServedModels } from "@/client/hooks/use-served-models"
 import type {
   ScheduleCreateInput,
   ScheduleResponse,
@@ -227,6 +228,7 @@ function ScheduleEditor({
   )
   // A model-less schedule is shown — and saved — with the default.
   const [model, setModel] = useState(schedule?.model ?? TASK_FALLBACK_MODEL)
+  useServedModels() // re-render when agent-py's task models arrive (Q119)
   const taskModels = modelsForBackend(TASK_MODEL_BACKEND.kind)
   const [busy, setBusy] = useState(false)
 

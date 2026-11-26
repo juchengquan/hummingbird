@@ -38,7 +38,7 @@ import structlog
 from ..chat_loop import LoopResult
 from ..events import RoutedModelEvent
 from ..input_policy import ASK_USER_TOOL_NAME, RENDER_UI_TOOL_NAME
-from ..model_allowlist import AUTO_MODEL_ID, get_model_allowlist, resolve_optional_model
+from ..model_allowlist import AUTO_MODEL_ID, get_model_allowlist, resolve_optional_target
 from ..routing import RouteSignals, route_model
 from ..tools import default_tool_registry
 from ..tools.image_gen import remix_note_section
@@ -209,10 +209,10 @@ async def resolve_model(ri: RunInput, opts: RunOptions, ctx: HookContext) -> Res
                 reason=decision.reason,
             )
             await ctx.emitter.emit(RoutedModelEvent, model=decision.model_id)
-            return ResolvedModel(
-                catalog_id=decision.model_id, api_id=resolve_optional_model(decision.model_id)
-            )
-    return ResolvedModel(catalog_id=opts.model, api_id=resolve_optional_model(opts.model))
+            target = resolve_optional_target(decision.model_id)
+            return ResolvedModel(catalog_id=decision.model_id, api_id=target.api_id, target=target)
+    target = resolve_optional_target(opts.model)
+    return ResolvedModel(catalog_id=opts.model, api_id=target.api_id, target=target)
 
 
 async def succeeded_result(

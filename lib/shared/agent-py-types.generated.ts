@@ -315,10 +315,9 @@ export interface paths {
          *     conversation / compress / project-breakdown. Three return
          *     JSON; compress returns `{recap: str}` markdown.
          *
-         *     Notable difference from TS: this endpoint only talks to
-         *     Anthropic (no Vercel-gateway routing). `model` is optional; when
-         *     sent it must be an allowed `anthropic/*` catalog id from
-         *     `config/models.json` (else `400 unknown_model`, as on the Next.js
+         *     `model` is optional; when sent it must be a catalog id from
+         *     `config/models.json`, served on its provider's route (else `400
+         *     unknown_model`, as on the Next.js
          *     route). Absent → `AGENT_DEFAULT_MODEL`.
          */
         post: operations["summarize_v1_summarize_post"];
@@ -750,6 +749,23 @@ export interface paths {
          * @description Ghost-text autocomplete: a short continuation of `blockText`, as text.
          */
         post: operations["ai_complete_v1_ai_complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Models */
+        get: operations["listModels"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1572,6 +1588,15 @@ export interface components {
         Metadata: {
             [key: string]: unknown;
         };
+        /** ModelList */
+        ModelList: {
+            /** Models */
+            models: components["schemas"]["ServedModel"][];
+            /** Defaultmodel */
+            defaultModel: string;
+            /** Auto */
+            auto: boolean;
+        };
         PartSource: components["schemas"]["DataSource"] | components["schemas"]["UrlSource"] | components["schemas"]["FileSource"];
         /** ProjectBreakdownBody */
         ProjectBreakdownBody: {
@@ -2069,6 +2094,16 @@ export interface components {
              * Format: date-time
              */
             updatedAt: string;
+        };
+        /** ServedModel */
+        ServedModel: {
+            /**
+             * Id
+             * @example minimax/minimax-m3.1-flash
+             */
+            id: string;
+            /** Tasks */
+            tasks: boolean;
         };
         /** @enum {string} */
         ShareKind: "conversation" | "document";
@@ -3563,6 +3598,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelList"];
                 };
             };
         };

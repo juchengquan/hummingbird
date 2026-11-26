@@ -126,43 +126,68 @@ changes without regenerating them).
 
 One list governs every backend: `config/models.json`. The Next.js
 routes accept any id in it (`selectModel` → 400 `unknown_model`
-otherwise, unless the request brings its own gateway key). The two
-services call Anthropic directly, so they accept **only its
-`anthropic/*` entries** and send each one's `anthropicModelId` upstream
-(`anthropic/claude-sonnet-4.6` → `claude-sonnet-4-6`; the catalog id
-uses a dot, the Anthropic API id a dash, so every `anthropic/*` entry
-sets the field — without it the service strips the `anthropic/`
-prefix). Anything else — a non-Anthropic catalog id, a raw API id, a
-typo — is a 400 `unknown_model`:
+otherwise, unless the request brings its own gateway key).
+
+**agent-py** (wave 10) accepts every catalog id too and serves each on
+its provider (`agent_py/model_routes.py`). It speaks one wire format,
+Anthropic's Messages API, to every provider Next uses: the Vercel AI
+Gateway (`/v1/messages`), OpenRouter (`/api/v1/messages`), Ollama (≥ 0.14)
+and Minimax (already `"type": "anthropic"`). The providers come from
+`config/providers.json` and the variables it names; a model takes its
+catalog `routes` in order, the first whose provider is configured, as
+`lib/server/model-provider.ts` picks it, except that an `anthropic/*`
+model goes to Anthropic directly when `ANTHROPIC_API_KEY` is set (its
+`anthropicModelId`: `anthropic/claude-sonnet-4.6` → `claude-sonnet-4-6`).
+A provider whose URL is plain http, loopback or private is skipped with
+a warning unless it is `allowInsecureBaseUrl` (Ollama), as Next's
+`isSafeBaseUrl` does. A catalog id without a configured provider is still
+valid: its calls answer 503 (`unavailable` / `auth`), as a missing
+Anthropic key did. `GET /v1/models` lists the ids that do run, and the
+browser's picker offers those.
+
+**agent-ts** (frozen) still accepts only the `anthropic/*` entries and
+calls Anthropic directly. Anything else is a 400 `unknown_model` there.
 
 | | agent-py | agent-ts |
 |---|---|---|
-| Rule | `agent_py/model_allowlist.py` (reads the JSON itself) | `src/models.ts` over `ANTHROPIC_SERVICE_MODELS` in `src/vendor/shared/models.ts` (frozen copy of `lib/shared/models.ts`; reads `config/models.json` via `@config/*`) |
-| 400 body | `{"detail": {"code": "unknown_model", "message"}}` (FastAPI `HTTPException`) | `{code: "unknown_model", message}` (Next.js envelope) |
+| Rule | `agent_py/model_allowlist.py` + `model_routes.py` (read the JSON themselves) | `src/models.ts` over `ANTHROPIC_SERVICE_MODELS` in `src/vendor/shared/models.ts` (frozen copy of `lib/shared/models.ts`; reads `config/models.json` via `@config/*`) |
+| 400 body | `{"code": "unknown_model", "message"}` | `{code: "unknown_model", message}` (Next.js envelope) |
+
+What a model can do follows the catalog's flags, as on Next:
+
+- `supportsStructuredOutput`: a forced tool call (structured output) runs
+  on the model only when set; otherwise on `AGENT_DEFAULT_MODEL` — the
+  editor's tool choice and its comment / table elements, memory
+  extraction. (The wave-10 probe found Minimax answers a forced
+  `tool_choice` in plain text.) `/v1/extract-table` keeps Next's rule:
+  structured path when flagged, the lenient JSON text path otherwise.
+- `supportsReasoningEffort`: thinking is sent only to these.
+- `supportsTools: false`: chat only — no tools on runs, refused as a task
+  (no catalog entry sets it today).
+- `thinksUnprompted`: the model thinks before answering without being
+  asked (MiniMax M2.7 / M3 / M3.1 Flash); ghost text gives it room.
+- Images go to every model as on Next (Next doesn't refuse them either).
+- OpenRouter `fallbacks` go as OpenRouter's `models` list.
 
 Where it's enforced:
 
-- **`/v1/chat`** — `model` is required and must be allowed; checked
-  before the API-key check, like the Next.js route.
+- **`/v1/chat`** — `model` is required and must be a catalog id; checked
+  before the provider check, like the Next.js route.
 - **`/v1/summarize`** — `model` is optional; absent →
-  `AGENT_DEFAULT_MODEL`, present → must be allowed.
-- **Follow-up suggestions** — always `AGENT_DEFAULT_MODEL`.
+  `AGENT_DEFAULT_MODEL`, present → must be a catalog id.
+- **Follow-up suggestions** — always `AGENT_DEFAULT_MODEL`, on its own
+  provider's client.
 - **Task executor** — `tasks.checkpoint.config.model` is re-checked
-  before the run calls Anthropic. `/api/tasks` validated the id at
-  creation, but the checkpoint row is owner-writable under RLS, so a
-  tampered id fails the run (`result: failed`, task `failed`) instead
-  of reaching Anthropic.
+  before the run calls its provider. The checkpoint row is owner-writable
+  under RLS, so a tampered id fails the run (`result: failed`, task
+  `failed`) instead of reaching a model.
 - **`/v1/extract-table`** (agent-py only) — `model` is optional; absent
-  → `AGENT_DEFAULT_MODEL` (the Next.js route defaults to
-  `google/gemini-2.5-flash`, which this service can't call), present →
-  must be allowed. The entry's `supportsStructuredOutput` flag picks the
-  native structured path first, as on the Next.js route.
+  → `AGENT_DEFAULT_MODEL`, present → must be a catalog id.
 - **`/v1/memory/extract`** (agent-py only) — no request model; the
-  operator's `MEMORY_EXTRACT_MODEL` is used only when it is an allowed
-  `anthropic/*` id, otherwise (and when unset) `AGENT_DEFAULT_MODEL`. The
-  Next.js route defaults to `google/gemini-2.5-flash`, so a shared
-  `.env` with a non-Anthropic value is not an error here — it falls
-  back. Always the forced-tool structured path (as `generateObject`).
+  operator's `MEMORY_EXTRACT_MODEL` is used when it is a catalog id with
+  structured output that a provider serves here, otherwise (and when
+  unset) `AGENT_DEFAULT_MODEL`. Always the forced-tool structured path
+  (as `generateObject`).
 - `/v1/extract`, `/v1/url/fetch`, `/v1/embed` (its embedder is an
   OpenAI-compatible endpoint, `EMBEDDINGS_*` / `OLLAMA_*`, not a chat
   model), `/v1/csp-report`, MCP and image / file refresh take no model

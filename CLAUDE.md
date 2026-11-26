@@ -329,7 +329,8 @@ asyncpg · structlog · pytest · ruff · mypy.
 | `services/agent-py/src/agent_py/main.py` | FastAPI app + endpoints. Lifespan owns the DB pool + the poller task. |
 | `services/agent-py/src/agent_py/auth.py` | Supabase JWT verification middleware (HS256 against `SUPABASE_JWT_SECRET`; ES256 / RS256 against the project's JWKS, `jwks.py`). |
 | `services/agent-py/src/agent_py/settings.py` | `pydantic-settings` config. Reads the repo-level `.env`. |
-| `services/agent-py/src/agent_py/model_allowlist.py` | Model allowlist — the `anthropic/*` entries of `config/models.json`, each mapped to its `anthropicModelId`. Loaded + validated at `create_app`. agent-ts twin: `services/agent-ts/src/models.ts`. |
+| `services/agent-py/src/agent_py/model_allowlist.py` | Model allowlist — every `config/models.json` id, each with its target (provider + the id it knows the model by) and its catalog flags. Loaded + validated at `create_app`. agent-ts twin (Anthropic-only, frozen): `services/agent-ts/src/models.ts`. |
+| `services/agent-py/src/agent_py/model_routes.py` | Which provider serves each model (wave 10): `config/providers.json` + the variables it names, all spoken to in the Anthropic Messages format; one SDK client per provider with explicit credentials. |
 | `services/agent-py/src/agent_py/db.py` | asyncpg pool lifecycle. Open on startup if `SUPABASE_DB_URL` is set; close on shutdown. |
 | `services/agent-py/src/agent_py/jobs.py` | `claim_next_job` (Phase 1) + `release_job_to_queue` (Phase 1 dry-run) + `mark_job_done` / `mark_job_failed` (Phase 2a settlement). |
 | `services/agent-py/src/agent_py/events.py` | TaskEvent IR — status / step_start / step_end / token / result. Shape mirrors `lib/shared/agent/events.ts`. |
@@ -372,17 +373,25 @@ has executed anything in that window (`task_worker_active_within`,
 migration 0040), so a busy worker's backlog waits instead. The service reads the
 same top-level `.env` as Next.js.
 
-**Model allowlist (agent-py + agent-ts):** both services accept only the
-`anthropic/*` entries of `config/models.json` and send each entry's
-`anthropicModelId` (e.g. `claude-sonnet-4-6`) to Anthropic; any other
-id is 400 `unknown_model` on `/v1/chat` + `/v1/summarize`, and a run
-whose checkpoint `config.model` isn't allowed fails before calling
-Anthropic. `AGENT_DEFAULT_MODEL` (default `anthropic/claude-haiku-4.5`)
-covers a model-less summarize + the suggestion chips, and must be on
-the allowlist or the service won't boot. agent-py finds the catalog by
-walking up from the package, or via `MODELS_CONFIG_PATH`. Adding an
-`anthropic/*` model to `config/models.json` means setting its
-`anthropicModelId` too. Details: `services/README.md` § Model allowlist.
+**Model allowlist (agent-py + agent-ts):** agent-py (wave 10) accepts
+every `config/models.json` id and serves each on its provider
+(`model_routes.py`): the catalog's `routes`, first configured provider
+first, all in the Anthropic Messages format (the AI Gateway, OpenRouter,
+Ollama, Minimax), with an `anthropic/*` model sent to Anthropic directly
+(its `anthropicModelId`) when `ANTHROPIC_API_KEY` is set. Keys are the
+variables Next reads (`AI_GATEWAY_API_KEY`, `OPENROUTER_API_KEY`,
+`MINIMAX_CN_*`, `OLLAMA_*`). A catalog id without a provider is 503, any
+other id 400 `unknown_model`; `GET /v1/models` lists what runs, and the
+browser's picker follows it (`lib/shared/served-models.ts`). Forced tool
+calls run on a model only if it's `supportsStructuredOutput`, else on the
+default; `supportsTools: false` / `thinksUnprompted` are agent-py's own
+flags. agent-ts accepts only the `anthropic/*` entries (frozen).
+`AGENT_DEFAULT_MODEL` (default `anthropic/claude-haiku-4.5`) covers a
+model-less request, the suggestion chips and those structured calls, and
+must be in the catalog or the service won't boot. agent-py finds the
+catalog by walking up from the package, or via `MODELS_CONFIG_PATH`
+(`providers.json` beside it). Adding an `anthropic/*` model means setting
+its `anthropicModelId` too. Details: `services/README.md` § Model allowlist.
 
 **Runs API (`/v1/runs`, Phase 2 of `docs/PLAN-frontend-backend-split.md`).**
 Seven endpoints in `routers/runs.py`: `POST /v1/runs` (start — AG-UI

@@ -127,10 +127,11 @@ export async function POST(req: NextRequest) {
     mode === "research" ? RESEARCH_DEFAULT_MAX_STEPS : DEFAULT_MAX_STEPS
   const maxSteps = Math.min(body.maxSteps ?? defaultMaxForMode, MAX_MAX_STEPS)
 
-  // The worker runs the agent-service models only (Q55): anything else,
-  // the resolved default and Auto included, is refused before anything
-  // is created — it could only fail after the 202.
-  if (!backendAcceptsModel("agent-service", modelId)) {
+  // The worker runs the task models only (Q55): anything else, the
+  // resolved default and Auto included, is refused before anything is
+  // created — it could only fail after the 202. The server never loads
+  // agent-py's `/v1/models`, so this old path keeps the `anthropic/*` list.
+  if (!backendAcceptsModel("agent-tasks", modelId)) {
     return NextResponse.json(
       {
         code: "unknown_model",

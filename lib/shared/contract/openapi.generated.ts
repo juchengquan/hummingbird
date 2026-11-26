@@ -284,6 +284,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The models this backend can run
+         * @description **Public — no bearer token.** The `config/models.json` ids a
+         *     provider is configured for on this backend, in catalog order, each
+         *     with whether background tasks can run on it (a model that can't call
+         *     tools can't, Q117). Every catalog id is a valid model on the other
+         *     endpoints; one missing here answers `503` (no provider) instead of
+         *     running. The browser's model picker offers these (Q119). Reveals
+         *     which providers the deploy has keys for, nothing else.
+         */
+        get: operations["listModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runs": {
         parameters: {
             query?: never;
@@ -1299,6 +1325,18 @@ export interface components {
         Metadata: {
             [key: string]: unknown;
         };
+        ModelList: {
+            /** @description Whether `auto` (smart routing) runs here — both models of the catalog's routing pair are served. */
+            auto: boolean;
+            /**
+             * @description The backend's default (`AGENT_DEFAULT_MODEL`): what a request
+             *     without a model runs on, and the model of the follow-up chips and
+             *     of structured-output calls a model without it hands over.
+             */
+            defaultModel: string;
+            /** @description The catalog ids with a provider here, in catalog order. */
+            models: components["schemas"]["ServedModel"][];
+        };
         /** @description Moves the value at from to path. RFC 6902 section 4.4. */
         MoveOperation: {
             /** @description Where the value is moved from. */
@@ -2219,6 +2257,15 @@ export interface components {
             timezone?: string;
             workspaceId?: string;
         };
+        ServedModel: {
+            /**
+             * @description The `config/models.json` id.
+             * @example minimax/minimax-m3.1-flash
+             */
+            id: string;
+            /** @description Whether background tasks run on it here (it can call tools, Q117). */
+            tasks: boolean;
+        };
         SharedMessage: {
             content: string;
             id: string;
@@ -2847,6 +2894,7 @@ export type MemoryExtractResponse = components['schemas']['MemoryExtractResponse
 export type Message = components['schemas']['Message'];
 export type MessagesSnapshotEvent = components['schemas']['MessagesSnapshotEvent'];
 export type Metadata = components['schemas']['Metadata'];
+export type ModelList = components['schemas']['ModelList'];
 export type MoveOperation = components['schemas']['MoveOperation'];
 export type PartSource = components['schemas']['PartSource'];
 export type RawEvent = components['schemas']['RawEvent'];
@@ -2903,6 +2951,7 @@ export type ScheduleCron = components['schemas']['ScheduleCron'];
 export type ScheduleListResponse = components['schemas']['ScheduleListResponse'];
 export type ScheduleResponse = components['schemas']['ScheduleResponse'];
 export type ScheduleUpdateRequest = components['schemas']['ScheduleUpdateRequest'];
+export type ServedModel = components['schemas']['ServedModel'];
 export type SharedMessage = components['schemas']['SharedMessage'];
 export type ShareKind = components['schemas']['ShareKind'];
 export type SkillConfig = components['schemas']['SkillConfig'];
@@ -3265,6 +3314,26 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             413: components["responses"]["PayloadTooLarge"];
             422: components["responses"]["ValidationError"];
+        };
+    };
+    listModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The served models. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelList"];
+                };
+            };
         };
     };
     listRuns: {

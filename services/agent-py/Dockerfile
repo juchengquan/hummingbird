@@ -8,8 +8,8 @@
 # `uv` install on stage 1 keeps the runtime image free of build tools.
 #
 # Build context is the REPO ROOT (the service reads the shared model
-# catalog `config/models.json` — its `anthropic/*` entries are the model
-# allowlist), e.g.:
+# catalog `config/models.json` — the model allowlist — and the providers
+# its routes name, `config/providers.json`), e.g.:
 #   docker build -f services/agent-py/Dockerfile -t hummingbird/agent-py .
 # The root `.dockerignore` keeps `.env*`, `.venv`, caches, `.git` and
 # `.claude` out of that context.
@@ -59,8 +59,10 @@ WORKDIR /app
 COPY --from=builder --chown=agent:agent /app/.venv /app/.venv
 COPY --from=builder --chown=agent:agent /app/src /app/src
 # Model allowlist — read (and validated) at boot; a missing file fails
-# startup. `MODELS_CONFIG_PATH` pins the location explicitly.
+# startup. `MODELS_CONFIG_PATH` pins the location explicitly. The providers
+# the catalog's routes name sit beside it (`model_routes.py`, wave 10).
 COPY --chown=agent:agent config/models.json /app/config/models.json
+COPY --chown=agent:agent config/providers.json /app/config/providers.json
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \

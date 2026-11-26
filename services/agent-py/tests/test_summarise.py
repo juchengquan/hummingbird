@@ -388,11 +388,11 @@ def test_summarize_allowed_model_maps_to_api_id(client: TestClient) -> None:
 
 
 @pytest.mark.parametrize(
-    "model", ["google/gemini-2.5-flash", "claude-3-5-sonnet-20241022", "anthropic/nope"]
+    "model", ["google/gemini-9", "claude-3-5-sonnet-20241022", "anthropic/nope"]
 )
 def test_summarize_rejects_unlisted_model(client: TestClient, model: str) -> None:
-    """Non-anthropic catalog ids, raw API ids and typos → 400
-    `unknown_model` before any upstream call."""
+    """Ids outside the catalog, raw API ids and typos → 400 `unknown_model`
+    before any upstream call."""
     fake = _FakeClient('{"summary":"s","keyTopics":[]}')
     with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
         r = client.post(

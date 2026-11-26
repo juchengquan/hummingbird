@@ -315,12 +315,9 @@ def settings_anthropic_client() -> Any:
     api_key = settings.ANTHROPIC_API_KEY.strip()
     if not api_key:
         return None
-    from anthropic import AsyncAnthropic
+    from .anthropic_client import make_anthropic_client
 
-    base_url = settings.ANTHROPIC_BASE_URL.strip()
-    if base_url:
-        return AsyncAnthropic(api_key=api_key, base_url=base_url)
-    return AsyncAnthropic(api_key=api_key)
+    return make_anthropic_client(api_key=api_key, base_url=settings.ANTHROPIC_BASE_URL)
 
 
 async def verify_turn(

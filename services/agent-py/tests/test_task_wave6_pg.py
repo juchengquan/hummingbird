@@ -73,7 +73,7 @@ async def test_a_done_task_writes_its_result_into_the_outcome(world: World) -> N
 
 
 async def test_a_failed_task_writes_its_error_into_the_outcome(world: World) -> None:
-    world.key = False  # no ANTHROPIC_API_KEY: the run fails before the model (Q55)
+    world.key = False  # no provider for the model: the run fails before the model (Q55)
     task = await world.start()
     await world.work()
 
@@ -81,7 +81,7 @@ async def test_a_failed_task_writes_its_error_into_the_outcome(world: World) -> 
     assert row["status"] == "failed"
     assert row["outcome"]["type"] == "error"
     assert row["outcome"]["code"] == "unavailable"
-    assert "ANTHROPIC_API_KEY" in row["outcome"]["message"]
+    assert "No provider" in row["outcome"]["message"]
 
 
 async def test_a_cancelled_task_has_the_cancelled_outcome(world: World) -> None:

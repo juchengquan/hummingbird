@@ -782,6 +782,27 @@ class Metadata(BaseModel):
     )
 
 
+class ModelList(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    models: list[ServedModel]
+    """
+    The catalog ids with a provider here, in catalog order.
+    """
+    defaultModel: str
+    """
+    The backend's default (`AGENT_DEFAULT_MODEL`): what a request
+    without a model runs on, and the model of the follow-up chips and
+    of structured-output calls a model without it hands over.
+
+    """
+    auto: bool
+    """
+    Whether `auto` (smart routing) runs here — both models of the catalog's routing pair are served.
+    """
+
+
 class ReadinessChecks(BaseModel):
     """
     Implementation-specific dependency checks. The keys below are the
@@ -1708,6 +1729,20 @@ class ScheduleUpdateRequest(BaseModel):
     systemPrompt: Annotated[str | None, Field(max_length=20000)] = None
     skills: Annotated[list[SkillConfig] | None, Field(max_length=10)] = None
     maxSteps: Annotated[int | None, Field(ge=1, le=50)] = None
+
+
+class ServedModel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: Annotated[str, Field(examples=["minimax/minimax-m3.1-flash"])]
+    """
+    The `config/models.json` id.
+    """
+    tasks: bool
+    """
+    Whether background tasks run on it here (it can call tools, Q117).
+    """
 
 
 type ShareKind = Literal["conversation", "document"]

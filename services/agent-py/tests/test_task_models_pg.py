@@ -29,7 +29,7 @@ async def test_no_key_fails_a_start(world: World) -> None:
     task = await world.start()
     await world.work()
     assert await world.status(task) == "failed"
-    assert "ANTHROPIC_API_KEY" in await world.error(task)
+    assert "No provider" in await world.error(task)
     assert (await world.jobs(task))[0]["status"] == "failed"
 
 
@@ -62,7 +62,7 @@ async def test_no_key_fails_a_continue(world: World, monkeypatch: pytest.MonkeyP
     await world.work()
     assert len(await world.jobs(task, "continue")) == 1
     assert await world.status(task) == "failed"
-    assert "ANTHROPIC_API_KEY" in await world.error(task)
+    assert "No provider" in await world.error(task)
 
 
 async def test_no_key_fails_a_respond_before_the_approved_tool_runs(world: World) -> None:
@@ -73,7 +73,7 @@ async def test_no_key_fails_a_respond_before_the_approved_tool_runs(world: World
     await world.respond(task, "q", approved=True)
     await world.work()
     assert await world.status(task) == "failed"
-    assert "ANTHROPIC_API_KEY" in await world.error(task)
+    assert "No provider" in await world.error(task)
     assert world.count(SEND) == 0
 
 
@@ -87,7 +87,7 @@ async def test_no_key_fails_a_fan_in(world: World) -> None:
     world.key = False
     await world.work()
     assert await world.status(task) == "failed"
-    assert "ANTHROPIC_API_KEY" in await world.error(task)
+    assert "No provider" in await world.error(task)
 
 
 async def test_no_key_fails_a_runs_resume(world: World) -> None:
@@ -99,7 +99,7 @@ async def test_no_key_fails_a_runs_resume(world: World) -> None:
     world.key = False
     await world.work()
     assert await world.status(resume) == "failed"
-    assert "ANTHROPIC_API_KEY" in await world.error(resume)
+    assert "No provider" in await world.error(resume)
     assert world.count(SEND) == 0
 
 
@@ -149,7 +149,7 @@ async def test_a_schedule_without_a_model_fails_with_no_model(world: World) -> N
     assert world.model.calls == []
 
 
-@pytest.mark.parametrize("model", ["auto", "deepseek/deepseek-v4-flash", "claude-sonnet-4-6"])
+@pytest.mark.parametrize("model", ["auto", "deepseek/deepseek-v9", "claude-sonnet-4-6"])
 async def test_runs_refuse_a_model_the_worker_cannot_run(world: World, model: str) -> None:
     response, run = await world.post_run({"mode": "background", "model": model})
     assert response.status_code == 400 and response.json()["code"] == "unknown_model"
@@ -162,7 +162,7 @@ async def test_a_resume_refuses_a_saved_model_the_worker_cannot_run(world: World
     await world.work()
     await world.sql(
         "UPDATE public.tasks SET checkpoint = jsonb_set(checkpoint, '{config,model}', "
-        "'\"deepseek/deepseek-v4-flash\"') WHERE id = $1",
+        "'\"deepseek/deepseek-v9\"') WHERE id = $1",
         uuid.UUID(task),
     )
     response, run = await world.resume(task, {"q": {"value": "x"}})

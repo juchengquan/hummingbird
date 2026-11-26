@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
 from ..chat import ChatMessage, resolve_anthropic_client
-from ..model_allowlist import UnknownModelError, resolve_optional_model
+from ..model_allowlist import UnknownModelError, resolve_optional_target
 from ..summarise import (
     SummariseError,
     summarise_compress,
@@ -73,26 +73,26 @@ async def summarize(
     conversation / compress / project-breakdown. Three return
     JSON; compress returns `{recap: str}` markdown.
 
-    Notable difference from TS: this endpoint only talks to
-    Anthropic (no Vercel-gateway routing). `model` is optional; when
-    sent it must be an allowed `anthropic/*` catalog id from
-    `config/models.json` (else `400 unknown_model`, as on the Next.js
+    `model` is optional; when sent it must be a catalog id from
+    `config/models.json`, served on its provider's route (else `400
+    unknown_model`, as on the Next.js
     route). Absent → `AGENT_DEFAULT_MODEL`.
     """
     try:
-        model = resolve_optional_model(body.model)
+        target = resolve_optional_target(body.model)
     except UnknownModelError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_detail()
         ) from exc
 
-    client = resolve_anthropic_client()
+    model = target.api_id
+    client = resolve_anthropic_client(target)
     if client is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
                 "code": "auth",
-                "message": "ANTHROPIC_API_KEY is not configured.",
+                "message": f"No provider for {target.catalog_id} is configured.",
             },
         )
 

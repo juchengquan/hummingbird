@@ -1,14 +1,15 @@
 /**
  * Which chat models a backend accepts (Q40 of
  * docs/PLAN-frontend-backend-split.md). The Next.js routes dispatch every
- * catalog model (and resolve `auto`); the agent services (agent-py,
- * agent-ts) accept only the `anthropic/*` allowlist and answer anything
- * else with 400 `unknown_model`, so on them the picker offers only those
- * models and a model they don't accept is switched to their default.
- * agent-py's runs API (`/v1/runs`) also routes `auto` when the catalog's
- * routing pair is on that allowlist (wave 5b-C); its `/v1/chat` and
- * agent-ts don't. Background tasks run in agent-py's worker whatever
- * serves chat, so they take the agent-service models (Q55).
+ * catalog model (and resolve `auto`). agent-py runs the catalog models it
+ * has a provider for (wave 10): its `GET /v1/models`, loaded once into
+ * `@/shared/served-models`; until then, or when it can't be read, the
+ * built-in `anthropic/*` list. agent-ts (frozen) accepts only that list.
+ * On an agent service the picker offers only what it accepts, and a model
+ * it doesn't accept is switched to its default. agent-py's runs API also
+ * routes `auto` when its routing pair is served; its `/v1/chat` and
+ * agent-ts don't. Background tasks run in agent-py's worker whatever serves
+ * chat, so they take agent-py's task models (Q55, Q117).
  */
 
 import {
@@ -20,47 +21,67 @@ import {
   ROUTING_CONFIG,
   type ChatModel,
 } from "./models"
+import { servedModels } from "./served-models"
 
-/** `"any"`: the Next.js routes. `"agent-service"`: agent-py's `/v1/chat`
- *  and agent-ts. `"agent-runs"`: agent-py's runs API — the same models,
- *  plus `auto` when {@link RUNS_ROUTING_AVAILABLE}. */
-export type ModelBackendKind = "any" | "agent-service" | "agent-runs"
+/** `"any"`: the Next.js routes. `"agent-service"`: agent-py's `/v1/chat`.
+ *  `"agent-runs"`: agent-py's runs API — the same models, plus `auto` when
+ *  served. `"agent-tasks"`: agent-py's task worker — the models tasks run
+ *  on. `"agent-ts"`: agent-ts, the `anthropic/*` list. */
+export type ModelBackendKind = "any" | "agent-service" | "agent-runs" | "agent-tasks" | "agent-ts"
 
-/** Whether agent-py's runs route `auto`: the catalog has a routing pair
- *  and both of its models are on the agent-service allowlist (agent-py's
- *  `ModelAllowlist.routing`). */
+/** Whether agent-py's runs route `auto` by the built-in list: the catalog
+ *  has a routing pair and both of its models are `anthropic/*` (used until
+ *  agent-py's own answer arrives). */
 export const RUNS_ROUTING_AVAILABLE: boolean =
   ROUTING_CONFIG !== null &&
   ANTHROPIC_SERVICE_MODELS.has(ROUTING_CONFIG.strong) &&
   ANTHROPIC_SERVICE_MODELS.has(ROUTING_CONFIG.weak)
 
+/** Whether `kind` accepts what agent-py's `/v1/models` lists. */
+export function usesAgentPyList(kind: ModelBackendKind): boolean {
+  return kind === "agent-service" || kind === "agent-runs" || kind === "agent-tasks"
+}
+
+/** The ids `kind` accepts, or null for every catalog model (Next). */
+function acceptedIds(kind: ModelBackendKind): ReadonlySet<string> | ReadonlyMap<string, string> | null {
+  if (!usesAgentPyList(kind)) return kind === "any" ? null : ANTHROPIC_SERVICE_MODELS
+  const served = servedModels()
+  if (!served) return ANTHROPIC_SERVICE_MODELS
+  return kind === "agent-tasks" ? served.tasks : served.ids
+}
+
 export function backendAcceptsModel(kind: ModelBackendKind, id: string): boolean {
   if (id === AUTO_MODEL_ID) return autoAvailableForBackend(kind)
-  if (kind === "any") return CHAT_MODELS.some((m) => m.id === id)
-  return ANTHROPIC_SERVICE_MODELS.has(id)
+  const ids = acceptedIds(kind)
+  return ids === null ? CHAT_MODELS.some((m) => m.id === id) : ids.has(id)
 }
 
 /** The picker's models for `kind`, in catalog order. */
 export function modelsForBackend(kind: ModelBackendKind): ChatModel[] {
-  return kind === "any" ? CHAT_MODELS : CHAT_MODELS.filter((m) => ANTHROPIC_SERVICE_MODELS.has(m.id))
+  const ids = acceptedIds(kind)
+  return ids === null ? CHAT_MODELS : CHAT_MODELS.filter((m) => ids.has(m.id))
 }
 
 /** Whether the smart-routing `auto` entry is offered: the Next.js routes
- *  and agent-py's runs resolve it; agent-py's `/v1/chat` and agent-ts don't. */
+ *  and agent-py's runs resolve it; agent-py's `/v1/chat`, its task worker
+ *  and agent-ts don't. */
 export function autoAvailableForBackend(kind: ModelBackendKind): boolean {
   if (kind === "any") return ROUTING_AVAILABLE
-  if (kind === "agent-runs") return RUNS_ROUTING_AVAILABLE
+  if (kind === "agent-runs") return servedModels()?.auto ?? RUNS_ROUTING_AVAILABLE
   return false
 }
 
 /**
  * The model to switch to when the selected one isn't accepted: the
- * catalog default when the backend takes it, else the first accepted
- * model in `config/models.json` order. `null` only if the catalog has no
- * model for the backend (it then can't serve chat at all).
+ * catalog default when the backend takes it, else agent-py's own default
+ * when it takes that, else the first accepted model in `config/models.json`
+ * order. `null` only if the catalog has no model for the backend (it then
+ * can't serve chat at all).
  */
 export function defaultModelForBackend(kind: ModelBackendKind): string | null {
   if (backendAcceptsModel(kind, DEFAULT_CHAT_MODEL)) return DEFAULT_CHAT_MODEL
+  const own = usesAgentPyList(kind) ? servedModels()?.defaultModel : null
+  if (own && backendAcceptsModel(kind, own)) return own
   return modelsForBackend(kind)[0]?.id ?? null
 }
 
@@ -89,7 +110,7 @@ export function resolveModelBackend(
     case "python":
       return configured.agentPy && signedIn ? { kind: "agent-service", name: "agent-py" } : NEXT_ROUTES
     case "ts-service":
-      return configured.agentTs && signedIn ? { kind: "agent-service", name: "agent-ts" } : NEXT_ROUTES
+      return configured.agentTs && signedIn ? { kind: "agent-ts", name: "agent-ts" } : NEXT_ROUTES
     default:
       return NEXT_ROUTES
   }
@@ -103,7 +124,7 @@ export function modelSwitchFor(backend: ModelBackend, model: string): string | n
 }
 
 /** The task worker, as a backend for the picker and its switch note (Q55). */
-export const TASK_MODEL_BACKEND: ModelBackend = { kind: "agent-service", name: "tasks" }
+export const TASK_MODEL_BACKEND: ModelBackend = { kind: "agent-tasks", name: "tasks" }
 
 /** What a task falls back to (Q67): agent-py's own default, the cheap one. */
 export const TASK_FALLBACK_MODEL = "anthropic/claude-haiku-4.5"

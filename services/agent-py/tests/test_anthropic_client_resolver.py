@@ -2,9 +2,9 @@
 
 Covers the env-driven branching in `executor._resolve_anthropic_client`:
 when no key is set the resolver returns None (executor falls back to
-the stub); when a key is set the resolver instantiates `AsyncAnthropic`
-with the api_key alone or, when `ANTHROPIC_BASE_URL` is also set, with
-both `api_key` and `base_url` so the SDK targets the override host.
+the stub); when a key is set the resolver instantiates `AsyncAnthropic` with the
+api_key and a base URL: the `ANTHROPIC_BASE_URL` override, or Anthropic's
+own API when it is blank (never left to the SDK's env lookup).
 
 Doesn't import the real `anthropic` SDK in any of these — we patch
 `agent_py.executor.AsyncAnthropic` so the test stays hermetic and
@@ -18,7 +18,8 @@ from typing import Any
 
 import pytest
 
-from agent_py import executor
+from agent_py import executor, model_routes
+from agent_py.model_allowlist import get_model_allowlist
 from agent_py.settings import get_settings
 
 
@@ -27,7 +28,8 @@ def _reset_resolver_cache() -> None:
     singleton so each test gets a fresh resolution. Tests run in one
     process; without these resets a later test would observe an
     earlier test's client."""
-    executor._anthropic_client = None
+    model_routes.reset_clients()
+    get_model_allowlist.cache_clear()
     get_settings.cache_clear()
 
 
@@ -77,7 +79,8 @@ def test_constructs_client_with_api_key_only_when_base_url_unset(
     monkeypatch.setattr(anthropic_module, "AsyncAnthropic", _FakeAnthropic)
     client = executor._resolve_anthropic_client()
     assert client is not None
-    assert captured == {"api_key": "sk-test-123"}
+    # Blank → Anthropic's own API, passed explicitly (test_anthropic_client.py).
+    assert captured == {"api_key": "sk-test-123", "base_url": "https://api.anthropic.com"}
 
 
 def test_passes_base_url_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,7 +106,7 @@ def test_passes_base_url_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_strips_whitespace_in_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
     # Pasting from docs / shell often leaves trailing whitespace. The
-    # resolver trims; an all-whitespace value is treated as unset.
+    # resolver trims; an all-whitespace value is treated as blank.
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-789")
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "   ")
 
@@ -118,8 +121,7 @@ def test_strips_whitespace_in_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(anthropic_module, "AsyncAnthropic", _FakeAnthropic)
     client = executor._resolve_anthropic_client()
     assert client is not None
-    assert "base_url" not in captured
-    assert captured == {"api_key": "sk-test-789"}
+    assert captured == {"api_key": "sk-test-789", "base_url": "https://api.anthropic.com"}
 
 
 def test_resolver_caches_across_calls(monkeypatch: pytest.MonkeyPatch) -> None:

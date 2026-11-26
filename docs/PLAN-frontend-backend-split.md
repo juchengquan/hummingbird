@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Waves 1–8 shipped (#294–#308): Phases 0–2, chat and the tasks panel on runs, the backend catch-up (Phase 3's checklist is done). Wave 9 is Phase 4 — the editor's AI on agent-py — plus agent-py verifying asymmetric Supabase tokens. Next: wave 10 makes "agent-py (runs)" the default; Phase 5 (removal) follows.** Decided in a design interview
+Status: **Waves 1–8 shipped (#294–#308): Phases 0–2, chat and the tasks panel on runs, the backend catch-up (Phase 3's checklist is done). Wave 9 is Phase 4 — the editor's AI on agent-py — plus agent-py verifying asymmetric Supabase tokens. Wave 10 brings every catalog model to agent-py (provider parity, Q109; built — the Gateway and OpenRouter routes unverified live); wave 11 makes "agent-py (runs)" the default with a synced switch; Phase 5 (removal) follows.** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
@@ -120,7 +120,7 @@ three times. The goals:
 | Q62 | Migrating 0045 never starts a model call: a parent left waiting on ended sub-agents fails ("run it again") |
 | Q63 | Q57 extends to chat on runs (an applied interactive answer can't be given again), as a small PR after 5c *(done: migration 0046; agent-py stamps a chat resume before its answers take effect, in Postgres and the memory store; a later answer is `409 run_answer_applied` and the client drops the card and asks to resend)* |
 | Q64 | After an applied answer fails, the paused run stays as it is (a second answer is a 409); wave 6 shows the chain's last run |
-| Q65 | A short smoke test against the real Anthropic API before 5c merges; the fakes accepted requests the API refuses |
+| Q65 | A short smoke test against the real Anthropic API before 5c merges; the fakes accepted requests the API refuses. **Ran 2026-11-26 (wave 10): passed**, after fixing the empty `ANTHROPIC_BASE_URL` that sent every call to `""` (`anthropic_client.py`) |
 | Q66 | Watching a task reads its status alone, not the whole row (checkpoint included), and polls every 5 s while it is paused on a question |
 | Q67 | A task whose model it can't run falls back to Haiku (agent-py's own default), not Sonnet |
 | Q68 | Scoping the saved task pointer to the signed-in account waits for wave 6 |
@@ -166,6 +166,19 @@ three times. The goals:
 | Q106 | agent-py verifies Supabase's asymmetric signing keys (ES256 / RS256 from the project's JWKS, cached) beside HS256, so a project on the new keys isn't refused; tested with a locally signed token and a fake JWKS, plus the wrong-key, wrong-algorithm and `alg: none` refusals. Closes Q61's check |
 | Q107 | Housekeeping: the status line; each wave-6 survey item checked against the code and marked (one not fixed becomes a wave-9 item, told to the owner first); Q95's Next SDK upgrade dropped (Phase 5 removes that code) |
 | Q108 | Built like waves 7 and 8 (one branch, the integrator, test-first, no parallel agents); ends with a real-stack browser test of the editor's generate / edit / comment / complete on agent-py with a scripted model |
+| **Wave 10 (2026-11-26)** | |
+| Q109 | agent-py runs 2 of the catalog's 13 models (the `anthropic/*` ones); Next's default (`deepseek/deepseek-v4-flash`) and 10 others go through the Gateway, Minimax, Ollama or OpenRouter. So wave 10 is provider parity in agent-py, and the default flips in wave 11, with no model lost |
+| Q110 | (wave 11) The stored backend choice becomes optional: unset means "follow the deploy" (runs when agent-py is configured, else `ts`). Store v36 turns every stored `"ts"` into unset (it was the old default; a deliberate pick can't be told apart); `python` / `ts-service` stay. A browser moved this way gets one toast saying so and where to switch back |
+| Q111 | (wave 11) The choice syncs as `profiles.chat_backend` (migration 0051, nullable, the four known values), read on sign-in like `memory_enabled`: a server value wins, else an explicit local choice is pushed up; every change writes through. Signed-out browsers keep it locally. agent-py doesn't enforce it |
+| Q112 | The PR that flips the default merges only after the Q65 real-model smoke passes, plus one call per provider with a key |
+| Q113 | Built like waves 7–9; wave 11 ends with a real-stack browser test (fresh browser on runs, a moved browser's toast, the choice following a sign-in into a second browser) |
+| Q114 | Every provider Next uses also accepts the Anthropic Messages format (the Gateway's `/v1/messages`, OpenRouter's `/api/v1/messages`, Ollama ≥ 0.14, Minimax already `"type": "anthropic"`). agent-py keeps its one Anthropic-SDK harness and picks the client (base URL + key) per model from `config/models.json` routes and `config/providers.json`, as Next does. A probe makes one real call per model (stream, tools, thinking, an image) before building; if the Gateway refuses non-Anthropic models on `/v1/messages`, the Gateway alone gets an OpenAI-compatible adapter **Built (option 2, owner's call):** the probe reached Anthropic and Minimax (M2.7, M3, M3.1 Flash: stream, tools, thinking, an image, a tool round trip); no Gateway or OpenRouter key was available, so those routes are built on the Messages format and covered by recorded fixtures only — unverified live. A provider URL that is plain http, loopback or private is skipped with a warning, as Next's `isSafeBaseUrl` does |
+| Q115 | `anthropic/*` models keep going to Anthropic directly when `ANTHROPIC_API_KEY` is set; otherwise they take their catalog route (the Gateway) |
+| Q116 | What a model can do follows the catalog's flags, as on Next: no `supportsVision` → images refused; thinking only where `supportsReasoningEffort`; prompt caching only on `anthropic/*`; the editor's tool choice and the suggestion chips stay on `AGENT_DEFAULT_MODEL`; a model the probe finds can't call tools is chat-only (no tools on runs, not offered for tasks) **Corrected while building:** Next doesn't refuse images for a model without `supportsVision`, so neither does agent-py. Minimax answers a forced `tool_choice` in plain text, so every forced tool call (the editor's tool choice and elements, memory extraction) runs on the model only when it is `supportsStructuredOutput`, else on the default. Minimax models think before answering unasked and use up a 60-token ghost-text budget (0 of 8 live completions had text): a new catalog flag `thinksUnprompted` gives them room, the text cut at the old length (6 of 6). `supportsTools` / `thinksUnprompted` are optional in the Next schema, which ignores both |
+| Q117 | Tasks run on every model the probe finds tool-capable, not only `anthropic/*` |
+| Q118 | OpenRouter `fallbacks` go as OpenRouter's `models` list (checked by the probe; dropped with a README note if ignored); `openrouter/auto` as is; the app's `auto` uses the catalog's `routing` pair whatever its provider |
+| Q119 | `GET /v1/models` (contract 0.7.0, additive) lists the ids agent-py has a provider key for, with the catalog's flags and whether tasks can run on it; the chat picker, the model-switch rule and the editor's list read it instead of the built-in Anthropic-only list. agent-ts stays Anthropic-only (frozen) **Built:** each entry is `{id, tasks}` (the browser has the catalog's flags already). The switch guard waits for the first answer, so a stored pick the built-in list lacks isn't switched away on reload; until then, or when it can't be read, the built-in `anthropic/*` list stands |
+| Q120 | The probe and the smoke use real keys the owner puts in `.env` (`AI_GATEWAY_API_KEY`, and `OPENROUTER_API_KEY` / `MINIMAX_CN_*` / an Ollama if used); only those lines are read, never printed. A provider without a key is covered by recorded fixtures only, and the PR says so **Done:** the keys came from the owner's workspace file: Anthropic and Minimax (priority, with M3.1 Flash added to the catalog alongside M3). The Q65 smoke passed (after fixing the empty `ANTHROPIC_BASE_URL` that sent every agent-py call to `""`), and with Minimax 9/9 |
 
 ## Run contract (v1)
 
@@ -295,6 +308,8 @@ has shipped behind the existing per-account backend switch.
 | 7 (Phase 3) | wave-6 gaps: images never as temporary links (Q86), images in a run's result (Q87), refusal hints (Q88), inert collapsed panels (Q89), leftovers (Q90) | Wave 6 merged (#306) |
 | 8 (Phase 3) | the code interpreter on runs (Q92–Q95), the real-model and sandbox smokes (Q96) | Wave 7 merged (#307) |
 | 9 (Phase 4) | the editor's AI on agent-py (Q101–Q105), asymmetric Supabase tokens (Q106), housekeeping (Q107) | Wave 8 merged (#308) |
+| 10 (Phase 3) | provider parity: every catalog model on agent-py through its route (Q114–Q118), `GET /v1/models` (Q119); starts with the provider probe (Q120) | Wave 9 merged (#309) |
+| 11 (Phase 3) | "agent-py (runs)" the default (Q110), the switch synced on `profiles` (Q111), gated on the real-model smoke (Q112) | Wave 10 merged |
 
 Each wave merges into one integration branch and ships as one PR
 against `dev`.
@@ -375,15 +390,15 @@ Read from the code at #302; the first twelve were also checked by hand.
 - No stale / no-worker reconciler for runs. *(fixed, wave 6: `runs/reconcile.py`)*
 - To settle with one live model call: whether resent `parsed_output` /
   null `system` payloads are rejected. *(guarded: agent-py strips both,
-  checked against the SDK's request types; the live call is Q65's smoke,
-  still to run)*
+  checked against the SDK's request types; the live call passed in
+  Q65's smoke on 2026-11-26)*
 
 ## Revisit later
 
 - **Supabase** as the platform (Q3).
 - **Same origin** vs a separate API origin (Q21).
 - **A2A** at the backend edge (Q14).
-- **The backend switch** is per browser (Q33); make it a synced account setting.
+- **The backend switch** is per browser (Q33); make it a synced account setting. *(wave 11, Q111)*
 - **MCP 2026-07-28** dropped sessions and SSE resumability — check
   `lib/server/mcp/` and agent-py's MCP client against it.
 

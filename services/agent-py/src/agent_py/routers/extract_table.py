@@ -122,17 +122,20 @@ async def extract_table(
     """
     allowlist = get_model_allowlist()
     try:
-        api_model = allowlist.resolve_optional(body.model)
+        target = allowlist.target_optional(body.model)
     except UnknownModelError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=exc.to_detail()
         ) from exc
 
-    client = resolve_anthropic_client()
+    client = resolve_anthropic_client(target)
     if client is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "auth", "message": "ANTHROPIC_API_KEY is not configured."},
+            detail={
+                "code": "auth",
+                "message": f"No provider for {target.catalog_id} is configured.",
+            },
         )
 
     numbered = [
@@ -152,7 +155,7 @@ async def extract_table(
     try:
         outcome = await generate_extraction(
             client=client,
-            model=api_model,
+            model=target.api_id,
             prompt=prompt,
             structured=allowlist.supports_structured_output(body.model),
         )

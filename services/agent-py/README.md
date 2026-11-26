@@ -408,13 +408,50 @@ endpoints in the formats Plate reads: the AI SDK UI message stream (v1,
   `REQUIRE_AUTH_FOR_AI` and its commands share the runs' anonymous per-IP
   windows (`RUNS_ANONYMOUS_RATE_PER_MINUTE`, `RUNS_ANONYMOUS_DAILY_BUDGET`);
   every completion is limited to 60 a minute per IP. Models: the
-  allowlist (`400 unknown_model`), absent → `AGENT_DEFAULT_MODEL`. No
-  `ANTHROPIC_API_KEY` → `503 auth` (the editor then shows its demo
-  stream). Body caps 32 MiB / 256 KiB, as on Next.
+  catalog (`400 unknown_model`), absent → `AGENT_DEFAULT_MODEL`; the tool
+  choice and the comment / table elements are forced tool calls, so a
+  model without `supportsStructuredOutput` hands them to the default. No
+  provider for the model → `503 auth` (the editor then shows its demo
+  stream). A model that thinks unprompted (`thinksUnprompted`) gets room
+  for it in ghost text. Body caps 32 MiB / 256 KiB, as on Next.
 
 After changing a TS prompt, regenerate the fixtures and port the change:
 `EDITOR_AI_PARITY_WRITE=1 bun test components/editor/ai/editor-ai.parity.test.ts`
 and `EDITOR_AI_STREAMS_WRITE=1 bun test app/api/ai/command/stream.fixture.test.ts`.
+
+## Models and providers (wave 10)
+
+Every `config/models.json` model runs here when a provider for it is
+configured (`model_routes.py`). agent-py speaks Anthropic's Messages API
+to all of them: the providers in `config/providers.json` (the file Next
+reads) each have an Anthropic-format endpoint — the Vercel AI Gateway
+(`https://ai-gateway.vercel.sh/v1/messages`), OpenRouter
+(`/api/v1/messages`), Ollama ≥ 0.14 (`/v1/messages`) and Minimax
+(`…/anthropic`). A model takes its catalog `routes` in order, the first
+whose provider has its key; an `anthropic/*` model takes Anthropic itself
+first when `ANTHROPIC_API_KEY` is set. One SDK client per provider, with
+explicit credentials — a Gateway or OpenRouter client never carries the
+Anthropic key. `GET /v1/models` lists what runs (public).
+
+| Provider | Variables | Checked live (wave 10) |
+|---|---|---|
+| Anthropic | `ANTHROPIC_API_KEY` (+ `ANTHROPIC_BASE_URL`) | yes — the Q65 smoke |
+| Minimax | `MINIMAX_CN_API_KEY` + `MINIMAX_CN_BASE_URL` (e.g. `https://api.minimaxi.com/anthropic/v1`) | yes — M3.1 Flash: stream, tools, thinking, an image, a tool round trip, a task, ghost text |
+| AI Gateway | `AI_GATEWAY_API_KEY` | **no** — no key; recorded fixtures only. The Gateway documents `/v1/messages` with Anthropic models; whether it takes the others there is unverified |
+| OpenRouter | `OPENROUTER_API_KEY` | **no** — and whether it honours the `models` fallback list is unverified |
+| Ollama | `OLLAMA_BASE_URL` (+ `OLLAMA_API_KEY`) | on the real stack's scripted server only |
+
+`scripts/probe_providers.py` makes one real call per model with a key in
+the repo's `.env` (stream, a tool call, thinking where flagged, an image
+where flagged) — run it after adding a provider or a model.
+
+A provider whose URL is plain http, loopback or private is skipped with a
+warning unless it is `allowInsecureBaseUrl` (Ollama), as Next's
+`isSafeBaseUrl` does. Catalog flags agent-py reads: `supportsStructuredOutput`
+(forced tool calls; otherwise the default model does them — Minimax answers
+a forced `tool_choice` in text), `supportsReasoningEffort` (thinking),
+`supportsTools: false` (chat only, never a task), `thinksUnprompted` (room
+for the thinking in ghost text).
 
 ## Configuration
 
@@ -451,8 +488,12 @@ and `EDITOR_AI_STREAMS_WRITE=1 bun test app/api/ai/command/stream.fixture.test.t
 | `EMBEDDINGS_BASE_URL` | No | OpenAI-compatible embedder for `/v1/embed` (`<base>/embeddings`, e.g. `http://localhost:11434/v1`). Same var, precedence and defaults as the Next.js provider. Neither this nor `OLLAMA_BASE_URL` set → embedding is off (`/v1/embed` answers `skipped / not_configured`). Operator config, so it is called without the SSRF guard (a localhost Ollama works). |
 | `EMBEDDINGS_API_KEY` | No | Bearer key for `EMBEDDINGS_BASE_URL`; empty → `OLLAMA_API_KEY` → a placeholder (Ollama ignores auth). |
 | `EMBEDDINGS_MODEL` | No | Default `nomic-embed-text` (768-dim, matching `file_sections.embedding vector(768)`). |
-| `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` | No | Fallback embedder when `EMBEDDINGS_BASE_URL` is unset — the same Ollama host the Next.js app uses. |
-| `MEMORY_EXTRACT_MODEL` | No | Catalog id for `/v1/memory/extract`. Used only when it is an allowed `anthropic/*` entry of `config/models.json`; otherwise (or empty — the Next.js default is `google/gemini-2.5-flash`) `AGENT_DEFAULT_MODEL`. Needs `ANTHROPIC_API_KEY`; without it extraction is skipped (still `{ok: true}`). |
+| `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` | No | The `ollama/*` models (Ollama ≥ 0.14, its Anthropic-format endpoint), and the fallback embedder when `EMBEDDINGS_BASE_URL` is unset — the same Ollama host the Next.js app uses. |
+| `MEMORY_EXTRACT_MODEL` | No | Catalog id for `/v1/memory/extract`. Used when it is a `supportsStructuredOutput` model a provider serves here; otherwise (or empty) `AGENT_DEFAULT_MODEL`. Without a provider for the model extraction is skipped (still `{ok: true}`). |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` | For Anthropic directly | `anthropic/*` models go to Anthropic with this key (Q115). An empty `ANTHROPIC_BASE_URL` means Anthropic's own API. |
+| `AI_GATEWAY_API_KEY` | No | The Vercel AI Gateway: the catalog's `gateway` routes (OpenAI, Google, DeepSeek; `anthropic/*` without `ANTHROPIC_API_KEY`). |
+| `OPENROUTER_API_KEY` | No | OpenRouter: the `openrouter/*` models. |
+| `MINIMAX_CN_API_KEY` + `MINIMAX_CN_BASE_URL` | No | Minimax's Anthropic-format endpoint: the `minimax/*` models (and `generateImage`). Both are needed for chat. |
 | `MCP_ALLOW_PRIVATE_HOSTS` | No | Default off. `true` lets MCP traffic — the `/v1/mcp/*` proxy and save check, cloud and local MCP tools on runs — reach loopback / RFC 1918 / `.local`-style hosts (a dev MCP server on `localhost`), checked again at connect time. Link-local and cloud-metadata addresses (169.254.0.0/16, fe80::/10, `metadata.google.internal`, …) stay blocked; bookmarks and `webFetch` stay public-only. Next.js semantics: only the exact value `true` enables it; any value other than `true` / `false` / empty stops the service at boot. Never enable on a shared deployment. |
 
 A repo-level `.env` works — `pydantic-settings` looks for `.env` in the

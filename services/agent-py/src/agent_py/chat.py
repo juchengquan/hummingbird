@@ -73,9 +73,9 @@ from .events import (
     UiPartEvent,
     VerificationEvent,
 )
-from .model_allowlist import default_api_model_id
+from .model_allowlist import client_for_target, default_api_model_id
+from .model_routes import ModelTarget
 from .providers.anthropic_provider import AsyncAnthropicClient
-from .settings import get_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -454,32 +454,15 @@ async def chat_stream_with_tools_ai_sdk(
 
 # --- Client resolution ----------------------------------------------------
 #
-# The agent-loop executor has its own `_resolve_anthropic_client` for the
-# background-task path; the chat endpoint wants the same client config
-# (same `ANTHROPIC_API_KEY` + `ANTHROPIC_BASE_URL`). Sharing the resolver
-# across both paths is tempting but couples the two — the executor's
-# resolver is also memoised process-wide which is fine for a worker but
-# odd for a request handler. Keep them separate; both read the same env.
+# Every model call takes its client from the model's target: one Anthropic
+# SDK client per configured provider (`model_routes.py`, cached there).
 
 
-def resolve_anthropic_client() -> AsyncAnthropicClient | None:
-    """Build an `AsyncAnthropic` for the chat endpoint, or return
-    `None` when `ANTHROPIC_API_KEY` is unset (callers surface a 503).
-
-    Reads `ANTHROPIC_BASE_URL` too — same plumbing as the executor's
-    resolver, kept separate so request-handler lifecycle stays out of
-    the worker-side memo cache.
-    """
-    settings = get_settings()
-    api_key = settings.ANTHROPIC_API_KEY.strip()
-    if not api_key:
-        return None
-    from anthropic import AsyncAnthropic
-
-    base_url = settings.ANTHROPIC_BASE_URL.strip()
-    if base_url:
-        return AsyncAnthropic(api_key=api_key, base_url=base_url)  # type: ignore[return-value]
-    return AsyncAnthropic(api_key=api_key)  # type: ignore[return-value]
+def resolve_anthropic_client(target: ModelTarget | None = None) -> AsyncAnthropicClient | None:
+    """The Anthropic SDK client serving `target` (None → the default model):
+    its provider's (`model_routes.py`, wave 10), or `None` when no configured
+    provider serves it (callers surface a 503)."""
+    return client_for_target(target)  # type: ignore[no-any-return]
 
 
 # --- Follow-up suggestions (PLAN-useChat-adoption.md Phase B.1d) -------
