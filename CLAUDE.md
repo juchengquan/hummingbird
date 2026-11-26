@@ -184,7 +184,8 @@ SQL lives under `supabase/migrations/` as numbered files applied in order (`0001
 `0043_answer_once.sql`, `0044_message_turn_persona.sql`,
 `0045_background_tasks_correct.sql`, `0046_chat_answer_once.sql`,
 `0047_task_identity_and_caps.sql`, `0048_task_read_flags.sql`,
-`0049_subagent_exit_entry.sql`, `0050_task_refusal_hints.sql`) — see `docs/SUPABASE_SETUP.md`
+`0049_subagent_exit_entry.sql`, `0050_task_refusal_hints.sql`,
+`0051_profile_chat_backend.sql`) — see `docs/SUPABASE_SETUP.md`
 for the hosted-cloud run order, or `docs/SUPABASE_LOCAL.md` for the
 local Supabase CLI path (Docker-based, no cloud account needed). For
 verifying the file full-text retrieval pipeline end-to-end after

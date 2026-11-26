@@ -355,6 +355,16 @@ order. Every migration has a unique numeric prefix (CI enforces this via
     SQLSTATE and message as before.
   - **Existing rows:** nothing changes.
   - **Rollback:** the four functions' definitions from 0047 and 0045.
+- `supabase/migrations/0051_profile_chat_backend.sql`
+  - `profiles.chat_backend` (wave 11, Q111): the account's chat backend —
+    `ts`, `python`, `ts-service` or `python-runs`; NULL = never chosen (the
+    deploy's default). The browser reads it on sign-in (a set value wins)
+    and writes every choice through. Own-row RLS as the rest of `profiles`.
+  - **Deploy order:** migrate first; an older Next ignores the column, a
+    newer one without it logs nothing and keeps the choice in the browser.
+  - **Existing rows:** NULL — everyone follows the deploy's default until
+    they pick.
+  - **Rollback:** `alter table profiles drop column chat_backend;`
 
 ### Migration 0018 collision (renamed to `0033_message_generated_files.sql`)
 
