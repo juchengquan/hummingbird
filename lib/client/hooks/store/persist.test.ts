@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import type { AppState } from "../use-store"
-import { partializeState } from "./persist"
+import { mergePersistedState, partializeState, reviveChatBackend } from "./persist"
 import { STORE_VERSION } from "./migrate"
 
 /**
@@ -135,7 +135,27 @@ describe("partializeState — frozen persisted shape", () => {
     // `storagePath` → the same IndexedDB store (shared with its source
     // item). v35: `chatBackend` widened to `'python-runs'` ("agent-py
     // (runs)"). None of them changed the persisted KEY set.
-    expect(STORE_VERSION).toBe(35)
+    // v36: `chatBackend` may be persisted as null — unset, follow the
+    // deploy (wave 11, Q110). Same key set.
+    expect(STORE_VERSION).toBe(36)
+  })
+
+  test("v36: an unchosen backend persists as null and comes back as the deploy's default", () => {
+    const empty = { conversations: [], files: [], artifacts: [] }
+    const base = { ...empty, chatBackend: "python-runs", chatBackendExplicit: false } as unknown as AppState
+    expect(partializeState(base).chatBackend).toBeNull()
+    const chosen = { ...empty, chatBackend: "ts", chatBackendExplicit: true } as unknown as AppState
+    expect(partializeState(chosen).chatBackend).toBe("ts")
+
+    const unset = { chatBackend: null } as unknown as Record<string, unknown>
+    reviveChatBackend(unset, true)
+    expect(unset).toMatchObject({ chatBackend: "python-runs", chatBackendExplicit: false })
+    const unsetNoAgentPy = { chatBackend: null } as unknown as Record<string, unknown>
+    reviveChatBackend(unsetNoAgentPy, false)
+    expect(unsetNoAgentPy).toMatchObject({ chatBackend: "ts", chatBackendExplicit: false })
+    const explicit = { chatBackend: "ts" } as unknown as Record<string, unknown>
+    reviveChatBackend(explicit, true)
+    expect(explicit).toMatchObject({ chatBackend: "ts", chatBackendExplicit: true })
   })
 
   test("v34: artifact references persist only once IndexedDB confirms; inline values verbatim", () => {
@@ -173,5 +193,20 @@ describe("partializeState — frozen persisted shape", () => {
     const persisted = partializeState({ conversations, files: [], artifacts: [] } as unknown as AppState)
     // Nothing is durable in this process → the array passes through untouched.
     expect(persisted.conversations).toBe(conversations as unknown as AppState["conversations"])
+  })
+})
+
+describe("mergePersistedState (v36)", () => {
+  const current = { chatBackend: "python-runs", chatBackendExplicit: false, theme: "dark" } as unknown as AppState
+
+  test("nothing stored (a fresh browser): the in-memory default stays a default", () => {
+    expect(mergePersistedState(undefined, current)).toBe(current)
+  })
+
+  test("a stored choice is explicit; a stored null follows the deploy", () => {
+    const chosen = mergePersistedState({ chatBackend: "ts" }, current)
+    expect([chosen.chatBackend, chosen.chatBackendExplicit, chosen.theme]).toEqual(["ts", true, "dark"])
+    const unset = mergePersistedState({ chatBackend: null }, current)
+    expect(unset.chatBackendExplicit).toBe(false)
   })
 })

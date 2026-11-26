@@ -9,7 +9,7 @@ import { isInlineDataUrl, messageBlobKey, messageBlobRef } from "@/shared/messag
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 35
+export const STORE_VERSION = 36
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -665,6 +665,21 @@ export function runMigrations(
       !(KNOWN_CHAT_BACKENDS as readonly unknown[]).includes(state.chatBackend)
     ) {
       state.chatBackend = "ts"
+    }
+  }
+  if (fromVersion < 36) {
+    // Wave 11 (Q110): the backend choice may be unset (`null`) — follow the
+    // deploy (`@/shared/chat-backend`). A stored `'ts'` was the old default
+    // (v20 seeded it; no one could tell it from a choice), so it becomes
+    // unset and the browser is told once (`chatBackendMoved`, in memory
+    // only — `partializeState` doesn't keep it). The other values were picked
+    // and stay explicit choices. No key, or one no build wrote: unset.
+    const value = state.chatBackend
+    if (value === "ts") {
+      state.chatBackend = null
+      state.chatBackendMoved = true
+    } else if (!(KNOWN_CHAT_BACKENDS as readonly unknown[]).includes(value)) {
+      state.chatBackend = null
     }
   }
   return persistedState

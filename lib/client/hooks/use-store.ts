@@ -17,7 +17,7 @@ import { parseMessageBlobRef } from "@/shared/message-blob-ref"
 
 import { debouncedStorage } from "./store/debounced-storage"
 import { runMigrations, STORE_VERSION } from "./store/migrate"
-import { partializeState, reviveAndPruneState } from "./store/persist"
+import { mergePersistedState, partializeState, reviveAndPruneState } from "./store/persist"
 import { createChatSlice, type ChatSlice } from "./store/slices/chat"
 import {
   createPromptsSlice,
@@ -218,6 +218,7 @@ export const useStore = create<AppState>()(
       name: STORE_STORAGE_KEY,
       version: STORE_VERSION,
       migrate: runMigrations,
+      merge: mergePersistedState,
       onRehydrateStorage: () => (state) => {
         if (state) reviveAndPruneState(state)
         // Make inline message `data:` URLs (pre-v33 data, or an offload
