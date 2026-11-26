@@ -80,6 +80,8 @@ def strip_v1(url: str) -> str:
 
 def client_for(via: str, env: dict[str, str]) -> AsyncAnthropic | None:
     """The route's provider in the Messages format, or None without a key."""
+    if via == "anthropic" and "ANTHROPIC_API_KEY" in env:
+        return AsyncAnthropic(api_key=env["ANTHROPIC_API_KEY"])
     if via == "gateway" and "AI_GATEWAY_API_KEY" in env:
         return AsyncAnthropic(
             base_url=GATEWAY_URL, auth_token=env["AI_GATEWAY_API_KEY"], api_key=None
@@ -113,9 +115,12 @@ async def check(name: str, coro: Any) -> tuple[str, str]:
 
 async def probe_model(model: dict[str, Any], env: dict[str, str]) -> dict[str, Any]:
     row: dict[str, Any] = {"id": model["id"], "route": None, "checks": {}}
-    picked = next(
-        ((r, c) for r in model["routes"] if (c := client_for(r["via"], env)) is not None), None
-    )
+    routes = list(model["routes"])
+    if model["id"].startswith("anthropic/") and "ANTHROPIC_API_KEY" in env:
+        # Q115: Anthropic directly when its key is set, else the catalog route.
+        upstream_id = model.get("anthropicModelId") or model["id"].removeprefix("anthropic/")
+        routes.insert(0, {"via": "anthropic", "upstreamId": upstream_id})
+    picked = next(((r, c) for r in routes if (c := client_for(r["via"], env)) is not None), None)
     if picked is None:
         row["checks"] = {"skipped": "no key for any route"}
         return row
