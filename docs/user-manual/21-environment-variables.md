@@ -25,7 +25,7 @@ groups them by purpose and explains when each is needed.
 | `EMBEDDINGS_BASE_URL` | Optional. An OpenAI-compatible embeddings endpoint (e.g. Ollama's `http://localhost:11434/v1`). Turns on semantic file search: uploaded files' text is split into chunks and embedded. Unset -> `OLLAMA_BASE_URL` is used; neither set -> embedding is off and file search stays full-text only. Read by both Next.js and the Python agent service. |
 | `EMBEDDINGS_API_KEY` | Optional key for `EMBEDDINGS_BASE_URL` (falls back to `OLLAMA_API_KEY`). |
 | `EMBEDDINGS_MODEL` | Default `nomic-embed-text`. Must produce 768-dimension vectors (the database column's size). |
-| `MEMORY_EXTRACT_MODEL` | Optional. The model that picks durable facts out of a finished chat for cross-conversation memory. Next.js default `google/gemini-2.5-flash`. The Python agent service uses it only if it is an `anthropic/*` model from `config/models.json`, else `AGENT_DEFAULT_MODEL`. |
+| `MEMORY_EXTRACT_MODEL` | Optional. The model that picks durable facts out of a finished chat for cross-conversation memory. Next.js default `google/gemini-2.5-flash`. The Python agent service uses it only if it is a model from `config/models.json` with structured output that it has a provider for, else `AGENT_DEFAULT_MODEL`. |
 
 ## Optional - Supabase
 
@@ -76,10 +76,10 @@ groups them by purpose and explains when each is needed.
 
 | Variable | Effect |
 |---|---|
-| `ANTHROPIC_API_KEY` | Read by the Python agent service for direct Anthropic calls. Without it, every run and background task fails with a message saying so. |
+| `ANTHROPIC_API_KEY` | Read by the Python agent service for direct Anthropic calls (the `anthropic/*` models). Its other providers use the variables Next.js reads: `AI_GATEWAY_API_KEY`, `OPENROUTER_API_KEY`, `MINIMAX_CN_API_KEY` + `MINIMAX_CN_BASE_URL`, `OLLAMA_BASE_URL`. A model with none of its providers configured fails with a message saying so. |
 | `WORKER_STUB_MODEL` | Tests only. `true` makes the Python agent service answer background tasks with canned text, without a model. Leave empty: anything other than `true`, `false` or empty stops the service at startup. |
-| `ANTHROPIC_BASE_URL` | Override the Anthropic base URL. Useful for self-hosted gateways. |
-| `AGENT_DEFAULT_MODEL` | Model the agent services (Python + TypeScript) use when a request names none, and for follow-up suggestions. Default `anthropic/claude-haiku-4.5`. The agent services only accept the `anthropic/*` models in `config/models.json`; picking any other model with an agent backend selected returns an "unknown model" error. |
+| `ANTHROPIC_BASE_URL` | Override the base URL of the Python agent service's direct Anthropic calls (a proxy). Empty means Anthropic's own API. |
+| `AGENT_DEFAULT_MODEL` | Model the agent services (Python + TypeScript) use when a request names none, and for follow-up suggestions. Default `anthropic/claude-haiku-4.5`. The Python agent service runs every model in `config/models.json` it has a provider for; the TypeScript one only the `anthropic/*` models. The model picker offers only what the selected backend runs. |
 | `MODELS_CONFIG_PATH` | Python agent service only: where to read `config/models.json` from. Leave empty outside Docker. |
 
 ## Tips & gotchas

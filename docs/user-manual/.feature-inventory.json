@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-25T05:42:24Z",
+  "generatedAt": "2026-11-26T06:27:18Z",
   "panels": [
     {
       "id": "agents-dialog",
@@ -458,7 +458,7 @@
     },
     {
       "id": "AI_GATEWAY_API_KEY",
-      "description": "AI Gateway (Vercel) — referenced by the `gateway` provider in config/providers.json. Required for real chat & editor AI on the default model set. When unset, the chat panel falls back to a clearly labeled mock response.",
+      "description": "AI Gateway (Vercel) — referenced by the `gateway` provider in config/providers.json. Required for real chat & editor AI on the default model set. When unset, the chat panel falls back to a clearly labeled mock response. The Python agent service (services/agent-py/) reads the same provider variables — this one, MINIMAX_CN_*, OLLAMA_*, OPENROUTER_API_KEY, and ANTHROPIC_API_KEY below — and serves each catalog model on its provider in the Anthropic Messages format (wave 10; services/agent-py/README.md § Models and providers).",
       "required": true,
       "sourceFile": ".env.example"
     },
@@ -470,7 +470,7 @@
     },
     {
       "id": "ANTHROPIC_BASE_URL",
-      "description": "Optional Anthropic base-URL override. Empty → SDK default (https://api.anthropic.com). Set to point the Python service's `AsyncAnthropic` client at any Anthropic-compatible endpoint: - a proxy or self-hosted gateway, - a region-specific upstream (Minimax's `/anthropic/v1` host, etc.), - a local model serving the Anthropic messages API. Mirrors the TS side's `MINIMAX_CN_BASE_URL` override pattern. Has no effect when `ANTHROPIC_API_KEY` is empty.",
+      "description": "Optional Anthropic base-URL override for the Python service's direct Anthropic route (`anthropic/*` models with ANTHROPIC_API_KEY set). Empty → Anthropic's own API (https://api.anthropic.com, passed explicitly). Set to point that route at a proxy. Other providers have their own variables (Minimax: MINIMAX_CN_*). Has no effect when ANTHROPIC_API_KEY is empty.",
       "required": true,
       "sourceFile": ".env.example"
     },

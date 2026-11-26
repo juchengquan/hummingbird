@@ -548,6 +548,29 @@ route's by `app/api/ai/command/stream.fixture.test.ts`.
 
 ---
 
+## Models (agent-py) — `GET /v1/models`
+
+Public (no token), contract 0.7.0, operation `listModels` (wave 10,
+Q119). The `config/models.json` ids agent-py has a provider for, in
+catalog order:
+
+```ts
+{
+  models: { id: string; tasks: boolean }[]  // tasks: background tasks run on it (it calls tools)
+  defaultModel: string                       // AGENT_DEFAULT_MODEL
+  auto: boolean                              // `auto` runs on /v1/runs (both models of the routing pair served)
+}
+```
+
+Every catalog id is still valid on agent-py's other endpoints; one
+missing here answers 503 instead of running. The browser reads it once
+per page (`lib/client/api/served-models.ts` → `lib/shared/served-models.ts`)
+and the model picker, the switch note, the task models and the editor's
+list follow it; until it arrives, or when it can't be read, they keep
+the built-in `anthropic/*` list.
+
+---
+
 ## Direct Supabase calls (not part of this contract)
 
 The frontend talks directly to Supabase for:

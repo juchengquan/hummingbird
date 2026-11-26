@@ -67,8 +67,10 @@ board: tasks need an account. `/research` says so.
   failed or was cancelled).
 
 ## Models
-Tasks run only models the agent service can run (the Anthropic models in
-the model list), and not **Auto**.
+Tasks run only models the Python agent service can run tasks on — the
+models it has a provider key for that can call tools (with only an
+Anthropic key, the Anthropic models; with a MiniMax key, the MiniMax ones
+too) — and not **Auto**.
 - With **Task** on, the model picker lists only those. A selected model
   that can't run tasks is switched, with a note; pick again after turning
   **Task** off to chat with another model.
