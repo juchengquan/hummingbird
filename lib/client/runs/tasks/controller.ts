@@ -208,6 +208,9 @@ export class TasksController {
   /** Answers accepted from here that the list doesn't show yet. */
   private answered = new Set<string>()
   private launchingInFlight = new Set<string>()
+  /** Starts the server accepted that no list has shown yet: never resent —
+   *  a list read before the start landed may answer after it. */
+  private accepted = new Set<string>()
   private deliveringNow = new Set<string>()
   private pulledAt = 0
   private pulling: Promise<PullResult> | null = null
@@ -368,7 +371,10 @@ export class TasksController {
     // Launches the server has listed are no longer "launching".
     const pointers = this.deps.pointers
     for (const task of pointers.launching()) {
-      if (this.rows.has(task.runId)) pointers.removeLaunching(task.runId)
+      if (this.rows.has(task.runId)) {
+        pointers.removeLaunching(task.runId)
+        this.accepted.delete(task.runId)
+      }
     }
 
     await Promise.all([this.readChildren(), this.readDeadBranches()])
@@ -610,6 +616,7 @@ export class TasksController {
       for (let attempt = 0; ; attempt++) {
         try {
           await this.deps.api.start(record.body)
+          this.accepted.add(record.runId)
           if (record.projectTaskId) this.deps.launch.linkCard(record.projectTaskId, record.runId)
           return { ok: true, rootRunId: record.runId }
         } catch (err) {
@@ -639,8 +646,10 @@ export class TasksController {
       if (this.rows.has(record.runId) || this.launchingInFlight.has(record.runId)) continue
       if (this.now() - Date.parse(record.startedAt) > LAUNCH_GIVE_UP_MS) {
         this.deps.pointers.removeLaunching(record.runId)
+        this.accepted.delete(record.runId)
         continue
       }
+      if (this.accepted.has(record.runId)) continue
       await this.send(record, { first: false })
     }
   }

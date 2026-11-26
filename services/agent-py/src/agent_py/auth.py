@@ -2,8 +2,14 @@
 
 Every authenticated endpoint depends on `get_current_user`, which
 extracts the `Authorization: Bearer <jwt>` header, verifies the
-signature against `SUPABASE_JWT_SECRET` (HS256 — the algorithm Supabase
-issues by default), and returns the decoded `{ sub, role, ... }` claims.
+signature and returns the decoded `{ sub, role, ... }` claims. The key
+follows the token's `alg` header (wave 9, Q106):
+
+  - `HS256` → `SUPABASE_JWT_SECRET` (the legacy project secret);
+  - `ES256` / `RS256` → the key its `kid` names in the project's JWKS
+    (`jwks.py`: `SUPABASE_JWKS_URL`, else derived from `SUPABASE_URL`),
+    and only with that key's own algorithm;
+  - anything else (`none`, `HS512`, `ES384`, …) → 401.
 
 A valid signature alone is NOT enough: the legacy Supabase anon key is
 itself an HS256 JWT signed with the same project secret (role `anon`,
@@ -28,6 +34,7 @@ import jwt
 import structlog
 from fastapi import Depends, Header, HTTPException, status
 
+from . import jwks
 from .settings import Settings, get_settings
 
 logger = structlog.get_logger(__name__)
@@ -54,6 +61,45 @@ def _is_uuid(value: object) -> bool:
     return True
 
 
+def auth_configured(settings: Settings) -> bool:
+    """Whether a token can be verified at all: the HS256 secret or a JWKS."""
+    return bool(settings.SUPABASE_JWT_SECRET or jwks.jwks_url(settings))
+
+
+def _verification_key(token: str, settings: Settings) -> tuple[object, str]:
+    """The key and the one algorithm `token` must verify with."""
+    try:
+        header = jwt.get_unverified_header(token)
+    except jwt.PyJWTError as exc:
+        logger.info("auth.token_rejected", reason=type(exc).__name__, error=str(exc))
+        raise _unauthorized("Invalid token.") from exc
+    alg = header.get("alg")
+    if alg == "HS256":
+        if not settings.SUPABASE_JWT_SECRET:
+            logger.info("auth.token_rejected", reason="hs256_without_secret")
+            raise _unauthorized("Invalid token.")
+        return settings.SUPABASE_JWT_SECRET, "HS256"
+    if alg not in jwks.ASYMMETRIC_ALGORITHMS:
+        logger.info("auth.token_rejected", reason="alg", alg=str(alg))
+        raise _unauthorized("Invalid token.")
+    url = jwks.jwks_url(settings)
+    kid = header.get("kid")
+    if not url or not isinstance(kid, str) or not kid:
+        logger.info("auth.token_rejected", reason="kid" if url else "no_jwks")
+        raise _unauthorized("Invalid token.")
+    try:
+        key = jwks.cache_for(url).key_for(kid)
+    except jwks.JwksUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "unavailable", "message": "Auth keys unavailable. Try again shortly."},
+        ) from exc
+    if key is None or key.alg != alg:
+        logger.info("auth.token_rejected", reason="unknown_kid" if key is None else "alg_mismatch")
+        raise _unauthorized("Invalid token.")
+    return key.key, alg
+
+
 def get_current_user(
     authorization: Annotated[str | None, Header()] = None,
     settings: Annotated[Settings, Depends(get_settings)] = None,  # type: ignore[assignment]
@@ -63,8 +109,9 @@ def get_current_user(
     Failure modes:
         - No header → 401.
         - Header doesn't start with `Bearer ` → 401.
-        - `SUPABASE_JWT_SECRET` unset → 503 (configuration error, distinct
-          from auth failure so monitoring can alert on it separately).
+        - Neither `SUPABASE_JWT_SECRET` nor a JWKS URL → 503 (configuration
+          error, distinct from auth failure so monitoring can alert on it
+          separately); the JWKS unreadable with no keys cached → 503.
         - Signature / expiry / audience / format invalid → 401.
         - `role` not `authenticated`, or `sub` missing / not a UUID → 401.
 
@@ -74,7 +121,7 @@ def get_current_user(
     if settings is None:  # defensive — FastAPI always populates the Depends
         settings = get_settings()
 
-    if not settings.SUPABASE_JWT_SECRET:
+    if not auth_configured(settings):
         # Distinct from 401 so /healthz alerts can fire on misconfig.
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -86,11 +133,12 @@ def get_current_user(
     if not authorization or not authorization.startswith("Bearer "):
         raise _unauthorized("Missing or malformed Authorization header.")
     token = authorization.removeprefix("Bearer ").strip()
+    key, alg = _verification_key(token, settings)
     try:
         claims = jwt.decode(
             token,
-            settings.SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
+            key,  # type: ignore[arg-type]
+            algorithms=[alg],
             audience=settings.SUPABASE_JWT_AUDIENCE,
             options={"require": ["exp", "sub", "aud"]},
         )

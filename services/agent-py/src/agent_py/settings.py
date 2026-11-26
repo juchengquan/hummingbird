@@ -42,8 +42,15 @@ class Settings(BaseSettings):
     is fine; /readyz will just report `supabase: not configured`."""
 
     SUPABASE_JWT_SECRET: str = ""
-    """Required for auth-protected endpoints. When empty, JWT middleware
-    refuses every request with 503."""
+    """The legacy HS256 project secret. With neither it nor a JWKS URL
+    (`SUPABASE_JWKS_URL` / `SUPABASE_URL`), auth-protected endpoints
+    answer 503."""
+
+    SUPABASE_JWKS_URL: str = ""
+    """The project's public signing keys (ES256 / RS256 access tokens,
+    wave 9). Empty → `<SUPABASE_URL>/auth/v1/.well-known/jwks.json` when
+    `SUPABASE_URL` is set. Read only for a token whose `alg` is
+    asymmetric; an HS256 token goes to `SUPABASE_JWT_SECRET`."""
 
     SUPABASE_JWT_AUDIENCE: str = "authenticated"
     """Required `aud` claim on incoming user JWTs. Supabase stamps
@@ -296,8 +303,8 @@ class Settings(BaseSettings):
     `lib/server/auth/require-ai-auth.ts`: `true` / `false` / `1` / `0`
     (case-insensitive, whitespace ignored), unset / empty = off; any other
     value fails every anonymous run start with a 500 (never silently
-    open). Inert while `SUPABASE_JWT_SECRET` is unset: without it nobody
-    can sign in, so there is nothing to require (as in Next.js without
+    open). Inert while no token can be verified (no `SUPABASE_JWT_SECRET`
+    and no JWKS URL): then nobody can sign in, so there is nothing to require (as in Next.js without
     Supabase). Parsed by `agent_py.runs.access.require_auth_for_ai`."""
 
     RUNS_STUB_HARNESS: bool = False

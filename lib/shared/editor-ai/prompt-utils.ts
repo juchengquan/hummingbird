@@ -1,10 +1,36 @@
-import type { ChatMessage } from '@/components/editor/use-chat';
-import type { UIMessage } from 'ai';
+/**
+ * Pure helpers of the editor AI prompts (`./prompt/`): structured prompt
+ * sections and the message history. No Plate: the document arrives as
+ * text (`EditorAiDocument`, built from the editor by
+ * `components/editor/ai/editor-ai-document.ts`) — in the browser for
+ * agent-py, in the Next route for itself (Q101). agent-py's port:
+ * `services/agent-py/src/agent_py/editor_ai/prompts.py`, pinned by
+ * `prompt/prompts.parity.test.ts`.
+ */
 
-import { getMarkdown } from '@platejs/ai';
-import { serializeMd } from '@platejs/markdown';
 import dedent from 'dedent';
-import { type SlateEditor, KEYS, RangeApi } from 'platejs';
+
+/** The parts of an AI SDK `UIMessage` the prompts read. */
+export type EditorAiMessage = {
+  role: string;
+  parts: { type: string; text?: string }[];
+};
+
+/** The document as the prompts need it (Q101). `null` where the
+ *  selection doesn't call for it. */
+export type EditorAiDocument = {
+  /** The selection is expanded (a range, not a caret). */
+  isSelecting: boolean;
+  /** `generate`'s `<context>` when selecting: the selected blocks'
+   *  markdown, `<Selection>` marked inside one block. */
+  generateContext: string | null;
+  /** `edit`, when selecting: which edit prompt and its `<context>`. */
+  edit: { kind: EditKind; context: string } | null;
+  /** `comment`'s `<context>`: the blocks with their ids. */
+  commentContext: string;
+};
+
+export type EditKind = 'multi-block' | 'selection' | 'table';
 
 /**
  * Tag content split by newlines
@@ -153,10 +179,10 @@ export const buildStructuredPrompt = ({
   ]);
 };
 
-export function getTextFromMessage(message: UIMessage): string {
+export function getTextFromMessage(message: EditorAiMessage): string {
   return message.parts
     .filter((part) => part.type === 'text')
-    .map((part) => part.text)
+    .map((part) => part.text ?? '')
     .join('');
 }
 
@@ -165,7 +191,7 @@ export function getTextFromMessage(message: UIMessage): string {
  * formats as ROLE: text. Returns empty string if only one message (no history needed).
  */
 export function formatTextFromMessages(
-  messages: ChatMessage[],
+  messages: EditorAiMessage[],
   options?: { limit?: number }
 ): string {
   // No history needed if no messages or only one message
@@ -192,7 +218,7 @@ export function formatTextFromMessages(
 /**
  * Get the last user message text from messages array.
  */
-export function getLastUserInstruction(messages: ChatMessage[]): string {
+export function getLastUserInstruction(messages: EditorAiMessage[]): string {
   if (!messages || messages.length === 0) return '';
 
   const lastUserMessage = [...messages]
@@ -203,91 +229,3 @@ export function getLastUserInstruction(messages: ChatMessage[]): string {
 
   return getTextFromMessage(lastUserMessage).trim();
 }
-
-const SELECTION_START = '<Selection>';
-const SELECTION_END = '</Selection>';
-
-export const addSelection = (editor: SlateEditor) => {
-  if (!editor.selection) return;
-  if (editor.api.isExpanded()) {
-    const [start, end] = RangeApi.edges(editor.selection);
-
-    editor.tf.withoutNormalizing(() => {
-      editor.tf.insertText(SELECTION_END, {
-        at: end,
-      });
-
-      editor.tf.insertText(SELECTION_START, {
-        at: start,
-      });
-    });
-  }
-};
-
-const removeEscapeSelection = (editor: SlateEditor, text: string) => {
-  let newText = text
-    .replace(`\\${SELECTION_START}`, SELECTION_START)
-    .replace(`\\${SELECTION_END}`, SELECTION_END);
-
-  // If the selection is on a void element, inserting the placeholder will fail, and the string must be replaced manually.
-  if (!newText.includes(SELECTION_END)) {
-    const [, end] = RangeApi.edges(editor.selection!);
-
-    const node = editor.api.block({ at: end.path });
-
-    if (!node) return newText;
-    if (editor.api.isVoid(node[0])) {
-      const voidString = serializeMd(editor, { value: [node[0]] });
-
-      const idx = newText.lastIndexOf(voidString);
-
-      if (idx !== -1) {
-        newText =
-          newText.slice(0, idx) +
-          voidString.trimEnd() +
-          SELECTION_END +
-          newText.slice(idx + voidString.length);
-      }
-    }
-  }
-
-  return newText;
-};
-
-/** Check if the current selection fully covers all top-level blocks. */
-export const isMultiBlocks = (editor: SlateEditor) => {
-  const blocks = editor.api.blocks({ mode: 'lowest' });
-
-  return blocks.length > 1;
-};
-
-/** Get markdown with selection markers */
-export const getMarkdownWithSelection = (editor: SlateEditor) =>
-  removeEscapeSelection(editor, getMarkdown(editor, { type: 'block' }));
-
-/** Check if the current selection is inside a table cell */
-export const isSelectionInTable = (editor: SlateEditor): boolean => {
-  if (!editor.selection) return false;
-
-  const tableEntry = editor.api.block({
-    at: editor.selection,
-    match: { type: KEYS.table },
-  });
-
-  return !!tableEntry;
-};
-
-/** Check if selection is within a single table cell */
-export const isSingleCellSelection = (editor: SlateEditor): boolean => {
-  if (!editor.selection) return false;
-
-  // Get all td blocks in selection
-  const cells = Array.from(
-    editor.api.nodes({
-      at: editor.selection,
-      match: { type: KEYS.td },
-    })
-  );
-
-  return cells.length === 1;
-};

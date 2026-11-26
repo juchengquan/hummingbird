@@ -1,26 +1,20 @@
-import type { ChatMessage } from '@/components/editor/use-chat';
-import type { SlateEditor } from 'platejs';
 
 import dedent from 'dedent';
 
 import {
-  addSelection,
+  type EditKind,
+  type EditorAiMessage,
   buildStructuredPrompt,
   formatTextFromMessages,
   getLastUserInstruction,
-  getMarkdownWithSelection,
-  isMultiBlocks,
-  isSelectionInTable,
-  isSingleCellSelection,
-} from '../utils';
+} from '../prompt-utils';
 
 import { buildEditTableMultiCellPrompt } from './getEditTablePrompt';
 import { commonEditRules } from './common';
 function buildEditMultiBlockPrompt(
-  editor: SlateEditor,
-  messages: ChatMessage[]
+  selectingMarkdown: string,
+  messages: EditorAiMessage[]
 ) {
-  const selectingMarkdown = getMarkdownWithSelection(editor);
 
   return buildStructuredPrompt({
     context: selectingMarkdown,
@@ -85,12 +79,9 @@ function buildEditMultiBlockPrompt(
 }
 
 function buildEditSelectionPrompt(
-  editor: SlateEditor,
-  messages: ChatMessage[]
+  selectingMarkdown: string,
+  messages: EditorAiMessage[]
 ) {
-  addSelection(editor);
-
-  const selectingMarkdown = getMarkdownWithSelection(editor);
   const endIndex = selectingMarkdown.indexOf('<Selection>');
   const prefilledResponse =
     endIndex === -1 ? '' : selectingMarkdown.slice(0, endIndex);
@@ -219,22 +210,25 @@ function buildEditSelectionPrompt(
   });
 }
 
-export function getEditPrompt(
-  editor: SlateEditor,
-  { isSelecting, messages }: { isSelecting: boolean; messages: ChatMessage[] }
-): [string, 'table' | 'multi-block' | 'selection'] {
-  if (!isSelecting)
-    throw new Error('Edit tool is only available when selecting');
-
+/** The edit prompt for `EditorAiDocument.edit` (selecting only). */
+export function getEditPrompt({
+  context,
+  kind,
+  messages,
+}: {
+  context: string;
+  kind: EditKind;
+  messages: EditorAiMessage[];
+}): string {
   // Handle selection inside table cell
-  if (isSelectionInTable(editor) && !isSingleCellSelection(editor)) {
-    return [buildEditTableMultiCellPrompt(editor, messages), 'table'];
+  if (kind === 'table') {
+    return buildEditTableMultiCellPrompt({ context, messages });
   }
   // Handle multi-block selection
-  if (isMultiBlocks(editor)) {
-    return [buildEditMultiBlockPrompt(editor, messages), 'multi-block'];
+  if (kind === 'multi-block') {
+    return buildEditMultiBlockPrompt(context, messages);
   }
 
   // Handle single block with selection
-  return [buildEditSelectionPrompt(editor, messages), 'selection'];
+  return buildEditSelectionPrompt(context, messages);
 }

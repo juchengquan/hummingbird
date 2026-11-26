@@ -19,8 +19,10 @@ const PUBLIC_V1_OPERATIONS = new Set(["getShare", "reportCspViolation"])
 /** `/v1` operations that take a bearer token OR no credential at all
  *  (`security: [{ bearerAuth: [] }, {}]`). Same bar as above.
  *  - startRun: anonymous callers may start interactive runs (Q2/Q16/Q20);
- *    the run's `X-Run-Token` is their credential afterwards. */
-const ANONYMOUS_ALLOWED_V1_OPERATIONS = new Set(["startRun"])
+ *    the run's `X-Run-Token` is their credential afterwards.
+ *  - editorAiCommand / editorAiComplete: the editor's AI, as on Next
+ *    (Q105; `REQUIRE_AUTH_FOR_AI` refuses anonymous callers). */
+const ANONYMOUS_ALLOWED_V1_OPERATIONS = new Set(["startRun", "editorAiCommand", "editorAiComplete"])
 
 /** The operations an anonymous run's `runToken` authorises — only the
  *  ones addressing that one run. */

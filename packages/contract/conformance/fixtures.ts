@@ -56,6 +56,15 @@ export const validRequestBodies: Record<string, unknown> = {
     messages: [{ id: "m1", role: "user", content: "Conformance probe: say hi." }],
     forwardedProps: { mode: "background", goal: "Conformance probe", maxSteps: 1 },
   },
+  // --- editor (0.6.0, Q104) ---
+  // Both admit anonymous callers, so only the malformed / non-Bearer token
+  // cases apply (`ANONYMOUS_OK` in auth.test.ts).
+  editorAiCommand: {
+    messages: [{ role: "user", parts: [{ type: "text", text: "Conformance probe: say hi." }] }],
+    document: { isSelecting: false, generateContext: null, edit: null, commentContext: "" },
+    toolName: "generate",
+  },
+  editorAiComplete: { blockText: "Conformance probe" },
   // In-place answer to a sub-agent run's question (0.5.0, Q59).
   answerRun: {
     resume: [{ interruptId: "conformance-question", status: "resolved", payload: { approved: false } }],

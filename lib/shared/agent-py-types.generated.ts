@@ -715,6 +715,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/ai/command": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ai Command
+         * @description Plate's AI menu: generate, edit or comment, streamed as the AI SDK
+         *     UI message stream (`editor_ai.command`).
+         */
+        post: operations["ai_command_v1_ai_command_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ai Complete
+         * @description Ghost-text autocomplete: a short continuation of `blockText`, as text.
+         */
+        post: operations["ai_complete_v1_ai_complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1097,6 +1138,68 @@ export interface components {
             /** Metadata */
             metadata?: unknown | null;
         };
+        /** EditorAiCommandRequest */
+        EditorAiCommandRequest: {
+            /** Messages */
+            messages: components["schemas"]["EditorAiMessage"][];
+            document: components["schemas"]["EditorAiDocument"];
+            toolName?: components["schemas"]["EditorAiToolName"] | null;
+            /** Model */
+            model?: string | null;
+        };
+        /** EditorAiCompleteRequest */
+        EditorAiCompleteRequest: {
+            /** Blocktext */
+            blockText: string;
+            /** Prefix */
+            prefix?: string | null;
+            /** Model */
+            model?: string | null;
+        };
+        /**
+         * EditorAiDocument
+         * @description The editor document as the prompts read it (Q101), rendered by the
+         *     browser from the Plate value and selection.
+         */
+        EditorAiDocument: {
+            /** Isselecting */
+            isSelecting: boolean;
+            /** Generatecontext */
+            generateContext: string | null;
+            edit: components["schemas"]["EditorAiEdit"] | null;
+            /** Commentcontext */
+            commentContext: string;
+        };
+        /** EditorAiEdit */
+        EditorAiEdit: {
+            kind: components["schemas"]["EditorAiEditKind"];
+            /** Context */
+            context: string;
+        };
+        /** @enum {string} */
+        EditorAiEditKind: "selection" | "multi-block" | "table";
+        /**
+         * EditorAiMessage
+         * @description An AI SDK UI message; only `role` and the text parts are read.
+         */
+        EditorAiMessage: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "system" | "user" | "assistant";
+            /** Parts */
+            parts: components["schemas"]["EditorAiMessagePart"][];
+        };
+        /** EditorAiMessagePart */
+        EditorAiMessagePart: {
+            /** Type */
+            type: string;
+            /** Text */
+            text?: string | null;
+        };
+        /** @enum {string} */
+        EditorAiToolName: "generate" | "edit" | "comment";
         /** EmbedRequest */
         EmbedRequest: {
             /** Fileid */
@@ -3381,6 +3484,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Run"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ai_command_v1_ai_command_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditorAiCommandRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ai_complete_v1_ai_complete_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditorAiCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
                 };
             };
             /** @description Validation Error */

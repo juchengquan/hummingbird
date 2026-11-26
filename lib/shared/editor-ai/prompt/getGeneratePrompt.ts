@@ -1,19 +1,15 @@
-import type { ChatMessage } from '@/components/editor/use-chat';
-import type { SlateEditor } from 'platejs';
 
 import dedent from 'dedent';
 
 import {
-  addSelection,
+  type EditorAiMessage,
   buildStructuredPrompt,
   formatTextFromMessages,
   getLastUserInstruction,
-  getMarkdownWithSelection,
-  isMultiBlocks,
-} from '../utils';
+} from '../prompt-utils';
 import { commonGenerateRules } from './common';
 
-function buildGenerateFreeformPrompt(messages: ChatMessage[]) {
+function buildGenerateFreeformPrompt(messages: EditorAiMessage[]) {
   return buildStructuredPrompt({
     examples: [
       dedent`
@@ -58,14 +54,9 @@ function buildGenerateFreeformPrompt(messages: ChatMessage[]) {
 }
 
 function buildGenerateContextPrompt(
-  editor: SlateEditor,
-  messages: ChatMessage[]
+  selectingMarkdown: string,
+  messages: EditorAiMessage[]
 ) {
-  if (!isMultiBlocks(editor)) {
-    addSelection(editor);
-  }
-
-  const selectingMarkdown = getMarkdownWithSelection(editor);
 
   return buildStructuredPrompt({
     context: selectingMarkdown,
@@ -146,14 +137,19 @@ function buildGenerateContextPrompt(
   });
 }
 
-export function getGeneratePrompt(
-  editor: SlateEditor,
-  { isSelecting, messages }: { isSelecting: boolean; messages: ChatMessage[] }
-) {
+/** `context`: `EditorAiDocument.generateContext` (`null` when nothing
+ *  is selected). */
+export function getGeneratePrompt({
+  context,
+  messages,
+}: {
+  context: string | null;
+  messages: EditorAiMessage[];
+}) {
   // Freeform generation: open-ended creation without context
-  if (!isSelecting) {
+  if (context === null) {
     return buildGenerateFreeformPrompt(messages);
   }
   // Context-based generation: use selected text as context
-  return buildGenerateContextPrompt(editor, messages);
+  return buildGenerateContextPrompt(context, messages);
 }

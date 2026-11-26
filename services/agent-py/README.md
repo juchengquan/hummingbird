@@ -379,11 +379,49 @@ else the tool is simply absent (no mock), and the reason is logged once.
   files / 20 MB mounted, 20 files / 10 MB read back). Interactive calls
   take one unit of the per-IP web-tool budget, as on Next.
 
+## Editor AI (`/v1/ai/command`, `/v1/ai/complete`, wave 9)
+
+The rich-text editor's AI — Plate's AI menu and its ghost-text
+completion — ported from the Next routes (`app/api/ai/command/handler.ts`,
+`app/api/ai/complete/route.ts`; Phase 4, Q101–Q105). Plain streaming
+endpoints in the formats Plate reads: the AI SDK UI message stream (v1,
+`x-vercel-ai-ui-message-stream: v1`) and a text stream.
+
+- **The browser renders the document.** The body carries
+  `document: EditorAiDocument` — the selection's markdown, the edit kind
+  and context, the blocks with their ids — built by
+  `components/editor/ai/editor-ai-document.ts`; agent-py never sees a
+  Plate value.
+- **The prompts** are `editor_ai/prompts.py`, a byte-for-byte port of
+  `lib/shared/editor-ai/` (including the npm `dedent` 1.0.0 algorithm,
+  `editor_ai/js_text.py`), pinned by `tests/fixtures/editor_ai_parity.json`;
+  text streams through `editor_ai/markdown_joiner.py` as on Next.
+- **The model calls.** Without a `toolName`, one forced `json` tool call
+  classifies the instruction (`data-toolName` opens the stream); comments
+  and table-cell edits are a forced `json` tool call whose
+  `{"elements": [...]}` input streams out one `data-comment` /
+  `data-table` part per finished element (`editor_ai/elements.py`).
+  `tests/test_editor_ai_route.py` replays the Next route's recorded
+  streams (`tests/fixtures/editor_ai_streams.json`): same prompts, same
+  parts, minus the route's `tool-*` parts (the client ignores them).
+- **Gates.** A bad bearer is 401; an anonymous caller is refused under
+  `REQUIRE_AUTH_FOR_AI` and its commands share the runs' anonymous per-IP
+  windows (`RUNS_ANONYMOUS_RATE_PER_MINUTE`, `RUNS_ANONYMOUS_DAILY_BUDGET`);
+  every completion is limited to 60 a minute per IP. Models: the
+  allowlist (`400 unknown_model`), absent → `AGENT_DEFAULT_MODEL`. No
+  `ANTHROPIC_API_KEY` → `503 auth` (the editor then shows its demo
+  stream). Body caps 32 MiB / 256 KiB, as on Next.
+
+After changing a TS prompt, regenerate the fixtures and port the change:
+`EDITOR_AI_PARITY_WRITE=1 bun test components/editor/ai/editor-ai.parity.test.ts`
+and `EDITOR_AI_STREAMS_WRITE=1 bun test app/api/ai/command/stream.fixture.test.ts`.
+
 ## Configuration
 
 | Env var | Required? | What it does |
 |---|---|---|
-| `SUPABASE_JWT_SECRET` | Yes for auth endpoints | The JWT secret from your Supabase project's API settings. Without it, every protected endpoint returns 503. |
+| `SUPABASE_JWT_SECRET` | For HS256 tokens | The legacy JWT secret from your Supabase project's API settings; verifies HS256 access tokens. |
+| `SUPABASE_JWKS_URL` | No | The public keys for ES256 / RS256 access tokens (Supabase's asymmetric signing keys). Empty → `<SUPABASE_URL>/auth/v1/.well-known/jwks.json`. Cached 10 min; an unknown `kid` re-reads it at most every 30 s; unreadable with nothing cached → 503. A token is checked with the key its `alg` names and nothing else (`none` and other algorithms → 401). With neither this nor the secret, every protected endpoint returns 503. |
 | `SUPABASE_DB_URL` | Yes to enable the poller | Direct Postgres connection string. Must be the **direct** connection (`db.<project>.supabase.co:5432`), NOT the pooler (`*.pooler.supabase.com:6543`) — `FOR UPDATE SKIP LOCKED` needs an open transaction. Empty → poller no-ops. |
 | `WORKER_DRY_RUN` | No | Default `true` (claim + log + release only). Set `false` in every deployment that should run tasks — agent-py is the only executor. |
 | `POLL_INTERVAL_SECONDS` | No | Default `5.0`. |
@@ -393,7 +431,7 @@ else the tool is simply absent (no mock), and the reason is logged once.
 | `SHUTDOWN_GRACE_SECONDS` | No | Default `8`. On shutdown the in-flight job may finish within this window; after it, the job is cancelled and handed back (lease expired on the spot) for the next worker. Keep it under the container stop timeout (Docker's default is 10 s). The stop starts on SIGTERM itself (the server's signal handler is chained), not after uvicorn has drained open SSE streams; the image also runs uvicorn with `--timeout-graceful-shutdown 8` so the lifespan (which closes the DB pool) isn't held past the stop timeout by a chat stream. `/readyz` reports `poller_alive` / `poller_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
 | `SCHEDULER_ENABLED` | No | Default `false`. Run the schedule dispatcher loop (`scheduler.py`) in this process: it fires due `task_schedules` rows exactly like the Vercel Cron's `/api/tasks/jobs/tick`. Needs `SUPABASE_DB_URL`. Safe alongside that cron and on several replicas — see [Scheduled tasks](#scheduled-tasks-replacing-the-vercel-cron). `/readyz` reports `scheduler_alive` / `scheduler_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
 | `SCHEDULER_INTERVAL_SECONDS` | No | Default `60` (the Vercel Cron's cadence). Seconds between dispatcher ticks. |
-| `REQUIRE_AUTH_FOR_AI` | No | Default off. `true` / `1` (with `SUPABASE_JWT_SECRET` set) refuses anonymous runs with `401 auth_required`. Strict values (`true` / `false` / `1` / `0`); anything else fails anonymous starts with 500 — never silently open. Same variable as the Next.js routes. |
+| `REQUIRE_AUTH_FOR_AI` | No | Default off. `true` / `1` (with `SUPABASE_JWT_SECRET` or a JWKS URL set) refuses anonymous runs with `401 auth_required`. Strict values (`true` / `false` / `1` / `0`); anything else fails anonymous starts with 500 — never silently open. Same variable as the Next.js routes. |
 | `RUNS_STUB_HARNESS` | No | Default `false` (runs use the native harness and `ANTHROPIC_API_KEY`; without a key every run fails `unavailable`). `true` runs every run on the model-free stub (`runs/stub_harness.py`, steered by `forwardedProps.conformance`) — for the contract conformance suite only. |
 | `RUNS_LEASE_SECONDS` / `RUNS_HEARTBEAT_SECONDS` | No | Defaults `60` / `5`. An executing interactive run's lease and how often it is extended (also the latency of a cancel served by another replica). |
 | `RUNS_REAPER_INTERVAL_SECONDS` | No | Default `15`. Runs maintenance loop: reap lapsed interactive runs, drop expired in-memory runs and their logs (the Postgres retention sweep runs every 10 min regardless). |

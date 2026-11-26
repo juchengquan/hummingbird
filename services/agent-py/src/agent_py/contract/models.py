@@ -382,6 +382,93 @@ class DocumentPart(BaseModel):
     """
 
 
+class EditorAiCommandRequest(BaseModel):
+    messages: Annotated[list[EditorAiMessage], Field(max_length=1000, min_length=1)]
+    """
+    The editor's AI chat so far; the last user message is the instruction.
+    """
+    document: EditorAiDocument
+    toolName: EditorAiToolName | None = None
+    """
+    The menu's action; absent or null lets the model choose. `edit` needs a selection.
+    """
+    model: Annotated[str | None, Field(max_length=100)] = None
+    """
+    A catalog model id; absent or null means the backend's default.
+    """
+
+
+class EditorAiCompleteRequest(BaseModel):
+    blockText: Annotated[str, Field(max_length=4000)]
+    """
+    The current block's text (markdown); the completion continues it.
+    """
+    prefix: Annotated[str | None, Field(max_length=32000)] = None
+    """
+    The preceding document (markdown); its last 8000 characters are used.
+    """
+    model: Annotated[str | None, Field(max_length=100)] = None
+    """
+    A catalog model id; absent means the backend's default.
+    """
+
+
+class EditorAiDocument(BaseModel):
+    """
+    The editor document as the prompts read it (Q101), rendered by the
+    browser from the Plate value and selection.
+
+    """
+
+    isSelecting: bool
+    """
+    The selection is a range, not a caret.
+    """
+    generateContext: str | None
+    """
+    `generate`'s context while selecting (the selected blocks' markdown); null otherwise.
+    """
+    edit: EditorAiEdit | None
+    """
+    The edit prompt's kind and context while selecting; null otherwise.
+    """
+    commentContext: str
+    """
+    `comment`'s context: the blocks as `<block id="…">` markdown.
+    """
+
+
+class EditorAiEdit(BaseModel):
+    kind: EditorAiEditKind
+    context: str
+
+
+type EditorAiEditKind = Literal["selection", "multi-block", "table"]
+"""
+Which edit prompt: a span inside one block (`selection`, marked with
+`<Selection>` tags), several blocks (`multi-block`), or several table
+cells (`table`, answered with `data-table` cell updates).
+
+"""
+
+
+class EditorAiMessage(BaseModel):
+    """
+    An AI SDK UI message; only `role` and the text parts are read.
+    """
+
+    role: Literal["system", "user", "assistant"]
+    parts: Annotated[list[EditorAiMessagePart], Field(max_length=100)]
+
+
+class EditorAiMessagePart(BaseModel):
+    type: Annotated[str, Field(max_length=100)]
+    text: Annotated[str | None, Field(max_length=200000)] = None
+
+
+type EditorAiToolName = Literal["generate", "edit", "comment"]
+
+
 class EmbedRequest(BaseModel):
     fileId: Annotated[str, Field(max_length=64, min_length=1)]
     """

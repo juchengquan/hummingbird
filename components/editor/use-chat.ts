@@ -20,6 +20,10 @@ import { toast } from 'sonner';
 
 import { aiChatPlugin } from '@/components/editor/plugins/ai-kit';
 import { apiUrls } from '@/client/api-client';
+import { resolveEditorAiTarget } from '@/client/api/backend-resolver';
+import { getChatModel } from '@/shared/models';
+
+import { agentPyCommand, agentPyInit } from './ai/agent-py-body';
 import { notifyAuthRequired } from '@/client/auth/auth-required';
 import { isAuthRequiredError } from '@/shared/api-errors';
 
@@ -53,6 +57,19 @@ export type MessageDataPart = {
 
 export type Chat = UseChatHelpers<ChatMessage>;
 
+const notedSwitches = new Set<string>();
+
+/** Q102: the settings' model isn't one agent-py runs — say so, once per
+ *  model and session, rather than failing every request. */
+function noteModelSwitch(from: string, to: string | null | undefined) {
+  if (notedSwitches.has(from)) return;
+  notedSwitches.add(from);
+  const label = (id: string) => getChatModel(id)?.label ?? id;
+  toast.info(
+    `${label(from)} isn't available for editor AI on agent-py. Using ${to ? label(to) : 'its default model'}.`
+  );
+}
+
 export type ChatMessage = UIMessage<{}, MessageDataPart>;
 
 export const useChat = () => {
@@ -83,10 +100,23 @@ export const useChat = () => {
           ...bodyOptions,
         };
 
-        const res = await fetch(input, {
-          ...init,
-          body: JSON.stringify(body),
-        });
+        // agent-py serves the editor where it serves chat, unless the
+        // settings hold an AI Gateway key (only Next can bill it) — Q103/Q105.
+        const target = await resolveEditorAiTarget(Boolean(body.apiKey));
+        let res: Response;
+        if (target) {
+          const command = agentPyCommand(body);
+          if (command.switchedFrom) noteModelSwitch(command.switchedFrom, command.body.model);
+          res = await fetch(
+            `${target.baseUrl}/v1/ai/command`,
+            agentPyInit(init, target.authToken, command.body)
+          );
+        } else {
+          res = await fetch(input, {
+            ...init,
+            body: JSON.stringify(body),
+          });
+        }
 
         if (!res.ok) {
           // Peek at the response body to see if the chat overhaul's

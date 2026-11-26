@@ -51,6 +51,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/ai/command": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate, edit or comment on the editor document (streamed)
+         * @description Plate's AI menu (Q101–Q105). Mirrors `app/api/ai/command/handler.ts`,
+         *     with the document rendered by the browser
+         *     (`components/editor/ai/editor-ai-document.ts`).
+         *
+         *     Without `toolName` the model first classifies the last instruction as
+         *     `generate`, `edit` (only while selecting) or `comment`, and the
+         *     stream opens with a `data-toolName` part. Then:
+         *
+         *     * `generate` / `edit` (not of `kind: table`) — text, streamed as
+         *       `text-start` / `text-delta` / `text-end` (deltas grouped so a
+         *       markdown construct is never split);
+         *     * `comment` — one `data-comment` part per comment
+         *       (`{ comment: { blockId, comment, content }, status: "streaming" }`),
+         *       then `{ comment: null, status: "finished" }`;
+         *     * `edit` of `kind: table` — `data-table` parts likewise
+         *       (`{ cellUpdate: { content, id } }`).
+         *
+         *     The stream is the AI SDK UI message stream (v1): SSE `data:` lines
+         *     each holding one JSON part — `start`, `start-step`, the parts above,
+         *     `finish-step` — ending `data: [DONE]`; a failure after the stream
+         *     opened is an `error` part (`errorText`). Each comment / cell part has
+         *     its own `id`. Unknown parts are ignored by the client.
+         *
+         *     Signed in (bearer) or anonymous: an anonymous caller is refused
+         *     under `REQUIRE_AUTH_FOR_AI` (`401 auth_required`) and shares the
+         *     anonymous per-IP limits of runs (`429 rate_limit`). Models: the
+         *     backend's allowlist; absent means its default. Spends model budget.
+         */
+        post: operations["editorAiCommand"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ghost-text completion of the current block (streamed text)
+         * @description The editor's inline autocomplete. Mirrors `app/api/ai/complete/route.ts`:
+         *     a short continuation of `blockText` (up to the next punctuation mark,
+         *     ~60 tokens), streamed as plain text; `0` means "nothing sensible".
+         *     Every caller is rate limited per client IP (60 a minute,
+         *     `429 rate_limit`); anonymous callers as for `/v1/ai/command`. A
+         *     failure after the stream opened ends it early.
+         */
+        post: operations["editorAiComplete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/csp-report": {
         parameters: {
             query?: never;
@@ -977,6 +1048,60 @@ export interface components {
              */
             type: "document";
         };
+        EditorAiCommandRequest: {
+            document: components["schemas"]["EditorAiDocument"];
+            /** @description The editor's AI chat so far; the last user message is the instruction. */
+            messages: components["schemas"]["EditorAiMessage"][];
+            /** @description A catalog model id; absent or null means the backend's default. */
+            model?: string | null;
+            /** @description The menu's action; absent or null lets the model choose. `edit` needs a selection. */
+            toolName?: components["schemas"]["EditorAiToolName"] | null;
+        };
+        EditorAiCompleteRequest: {
+            /** @description The current block's text (markdown); the completion continues it. */
+            blockText: string;
+            /** @description A catalog model id; absent means the backend's default. */
+            model?: string;
+            /** @description The preceding document (markdown); its last 8000 characters are used. */
+            prefix?: string;
+        };
+        /**
+         * @description The editor document as the prompts read it (Q101), rendered by the
+         *     browser from the Plate value and selection.
+         */
+        EditorAiDocument: {
+            /** @description `comment`'s context: the blocks as `<block id="…">` markdown. */
+            commentContext: string;
+            /** @description The edit prompt's kind and context while selecting; null otherwise. */
+            edit: components["schemas"]["EditorAiEdit"] | null;
+            /** @description `generate`'s context while selecting (the selected blocks' markdown); null otherwise. */
+            generateContext: string | null;
+            /** @description The selection is a range, not a caret. */
+            isSelecting: boolean;
+        };
+        EditorAiEdit: {
+            context: string;
+            kind: components["schemas"]["EditorAiEditKind"];
+        };
+        /**
+         * @description Which edit prompt: a span inside one block (`selection`, marked with
+         *     `<Selection>` tags), several blocks (`multi-block`), or several table
+         *     cells (`table`, answered with `data-table` cell updates).
+         * @enum {string}
+         */
+        EditorAiEditKind: "selection" | "multi-block" | "table";
+        /** @description An AI SDK UI message; only `role` and the text parts are read. */
+        EditorAiMessage: {
+            parts: components["schemas"]["EditorAiMessagePart"][];
+            /** @enum {string} */
+            role: "system" | "user" | "assistant";
+        };
+        EditorAiMessagePart: {
+            text?: string;
+            type: string;
+        };
+        /** @enum {string} */
+        EditorAiToolName: "generate" | "edit" | "comment";
         EmbedRequest: {
             /** @description Id of the caller's `files` row the sections belong to. */
             fileId: string;
@@ -2688,6 +2813,14 @@ export type DataSource = components['schemas']['DataSource'];
 export type DeleteScheduleResponse = components['schemas']['DeleteScheduleResponse'];
 export type DeveloperMessage = components['schemas']['DeveloperMessage'];
 export type DocumentPart = components['schemas']['DocumentPart'];
+export type EditorAiCommandRequest = components['schemas']['EditorAiCommandRequest'];
+export type EditorAiCompleteRequest = components['schemas']['EditorAiCompleteRequest'];
+export type EditorAiDocument = components['schemas']['EditorAiDocument'];
+export type EditorAiEdit = components['schemas']['EditorAiEdit'];
+export type EditorAiEditKind = components['schemas']['EditorAiEditKind'];
+export type EditorAiMessage = components['schemas']['EditorAiMessage'];
+export type EditorAiMessagePart = components['schemas']['EditorAiMessagePart'];
+export type EditorAiToolName = components['schemas']['EditorAiToolName'];
 export type EmbedRequest = components['schemas']['EmbedRequest'];
 export type EmbedResponse = components['schemas']['EmbedResponse'];
 export type ErrorResponse = components['schemas']['ErrorResponse'];
@@ -2864,6 +2997,68 @@ export interface operations {
                     "application/json": components["schemas"]["ReadinessResponse"];
                 };
             };
+        };
+    };
+    editorAiCommand: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditorAiCommandRequest"];
+            };
+        };
+        responses: {
+            /** @description The AI SDK UI message stream. */
+            200: {
+                headers: {
+                    /** @description `v1` — the stream protocol version. */
+                    "x-vercel-ai-ui-message-stream"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    editorAiComplete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditorAiCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description The continuation, as a text stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     reportCspViolation: {

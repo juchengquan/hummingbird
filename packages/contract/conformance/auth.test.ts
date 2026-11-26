@@ -13,6 +13,18 @@ import { beforeAll, describe, expect, test } from "bun:test"
 import { validRequestBodies } from "./fixtures"
 import { call, Contract, env, loadSpec, operations, type Exchange } from "./harness"
 
+/**
+ * Operations an anonymous caller may use (`security` lists `{}`) whose
+ * fixture body is still refused without a token. Any other such operation
+ * skips the "no token" case — there is nothing to refuse (the editor AI
+ * routes, 0.6.0) — but a malformed or non-Bearer token is still a 401.
+ */
+const ANONYMOUS_REFUSED_BY_FIXTURE = new Set(["startRun"])
+
+function anonymousOk(op: { raw: { security?: Record<string, string[]>[] } }): boolean {
+  return (op.raw.security ?? []).some((req) => Object.keys(req).length === 0)
+}
+
 // Discovered up front so each operation gets its own named test.
 const secured = env.baseUrl ? operations(await loadSpec()).filter((op) => op.secured) : []
 
@@ -43,7 +55,8 @@ describe.skipIf(!env.baseUrl)(`conformance: bearer auth @ ${env.baseUrl}`, () =>
     const skip = env.skipOperations.has(op.operationId) || op.planned !== null
     const body = validRequestBodies[op.operationId]
 
-    test.skipIf(skip)(`${op.operationId}: no token → 401 + error body`, async () => {
+    const noTokenApplies = !anonymousOk(op) || ANONYMOUS_REFUSED_BY_FIXTURE.has(op.operationId)
+    test.skipIf(skip || !noTokenApplies)(`${op.operationId}: no token → 401 + error body`, async () => {
       const ex = await call(op, { body })
       expect401(ex, op.operationId)
       contract.assertConforms(op.operationId, ex)

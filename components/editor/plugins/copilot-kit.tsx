@@ -6,6 +6,9 @@ import { CopilotPlugin } from '@platejs/ai/react';
 import { serializeMd, stripMarkdown } from '@platejs/markdown';
 
 import { apiUrls } from '@/client/api-client';
+import { resolveEditorAiTarget } from '@/client/api/backend-resolver';
+import { agentPyInit } from '@/components/editor/ai/agent-py-body';
+import { asPlateCompletion } from '@/components/editor/ai/plate-completion';
 import { notifyAuthRequired } from '@/client/auth/auth-required';
 import { useStore } from '@/client/hooks/use-store';
 import { isAuthRequiredError } from '@/shared/api-errors';
@@ -97,20 +100,33 @@ export const CopilotKit = [
         // `{ prefix, blockText, model? }` schema before forwarding to
         // the route. Plate puts our serialised payload into `prompt`
         // (see `getPrompt` below); we just unwrap it here.
-        fetch: ((input, init) => {
+        fetch: (async (input, init) => {
           try {
             const raw = init?.body;
             const parsed =
               typeof raw === 'string'
-                ? (JSON.parse(raw) as { prompt?: string })
+                ? (JSON.parse(raw) as { apiKey?: string; prompt?: string })
                 : null;
             const payloadString = parsed?.prompt;
             if (payloadString) {
               const payload = JSON.parse(payloadString) as CompleteRequestInput;
+              // agent-py where it serves chat, unless the settings hold a
+              // gateway key (Q103/Q105) — `/v1/ai/complete`, same body.
+              const target = await resolveEditorAiTarget(Boolean(parsed?.apiKey));
+              if (target) {
+                return fetch(
+                  `${target.baseUrl}/v1/ai/complete`,
+                  agentPyInit(init, target.authToken, payload)
+                )
+                  .then(noticeAuthRequired)
+                  .then(asPlateCompletion);
+              }
               return fetch(input, {
                 ...init,
                 body: JSON.stringify(payload),
-              }).then(noticeAuthRequired);
+              })
+                .then(noticeAuthRequired)
+                .then(asPlateCompletion);
             }
           } catch {
             // Fall through to the unmodified POST — the route will

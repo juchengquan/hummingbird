@@ -23,6 +23,9 @@ now builds and runs on its own (see [Vendored code](#vendored-code)).
   within hours, so an answer can name a dead link (Q98). Next and
   agent-py give it a stored link or "shown to the user" (Q86). agent-ts
   goes in Phase 5.
+- Only HS256 access tokens verify (`SUPABASE_JWT_SECRET`); a project on
+  Supabase's asymmetric signing keys gets 401s here. agent-py also reads
+  the project's JWKS (wave 9, Q106).
 
 ---
 

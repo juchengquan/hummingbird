@@ -24,6 +24,7 @@ import re
 import secrets
 from dataclasses import dataclass
 
+from ..auth import auth_configured
 from ..rate_limit import RateLimitVerdict, SlidingWindow
 from ..settings import Settings
 
@@ -77,13 +78,13 @@ def parse_require_auth_flag(raw: str | None) -> bool:
 
 def require_auth_for_ai(settings: Settings) -> bool:
     """True when anonymous runs must be refused: the flag is on **and**
-    sign-in is possible (`SUPABASE_JWT_SECRET` set — the agent-py
-    counterpart of "Supabase configured"). Raises
+    sign-in is possible (a token can be verified: `SUPABASE_JWT_SECRET`
+    or a JWKS URL — the agent-py counterpart of "Supabase configured"). Raises
     `RequireAuthConfigError` on an invalid flag even when it would be
     inert, like `isAiAuthRequired`."""
     if not parse_require_auth_flag(settings.REQUIRE_AUTH_FOR_AI):
         return False
-    return bool(settings.SUPABASE_JWT_SECRET)
+    return auth_configured(settings)
 
 
 # --- Anonymous limits ------------------------------------------------------------
@@ -152,6 +153,19 @@ class AnonymousLimits:
         verdict = self.anonymous_budget.consume(client_key)
         if not verdict.allowed:
             return _refusal("Daily limit for anonymous runs reached. Sign in to continue.", verdict)
+        return None
+
+    def check_anonymous_call(self, client_key: str) -> LimitRefusal | None:
+        """An anonymous editor AI command (wave 9, Q105): the anonymous
+        per-minute and daily windows, shared with anonymous runs."""
+        verdict = self.anonymous_rate.consume(client_key)
+        if not verdict.allowed:
+            return _refusal("Too many AI requests. Slow down, or sign in.", verdict)
+        verdict = self.anonymous_budget.consume(client_key)
+        if not verdict.allowed:
+            return _refusal(
+                "Daily limit for anonymous AI requests reached. Sign in to continue.", verdict
+            )
         return None
 
 

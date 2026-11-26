@@ -193,6 +193,41 @@ describe("launch", () => {
     ])
   })
 
+  test("a list read before the start landed, answering after it: the accepted start isn't sent again", async () => {
+    const server = new FakeRunsServer()
+    const api = server.api()
+    let releaseList!: () => void
+    const listHeld = new Promise<void>((resolve) => (releaseList = resolve))
+    let heldOnce = false
+    const t = tab({
+      server,
+      overrides: {
+        api: {
+          ...api,
+          list: async (query) => {
+            // Read now (no run yet), answered only once the start is accepted.
+            const page = await api.list(query)
+            if (!heldOnce) {
+              heldOnce = true
+              await listHeld
+            }
+            return page
+          },
+        },
+      },
+    })
+    const reading = t.controller.refreshNow()
+    const res = await t.controller.launch(INPUT)
+    expect(res.ok).toBe(true)
+    releaseList()
+    await reading
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(server.calls.filter((c) => c.op === "start")).toHaveLength(1)
+    // The next read lists it: no longer launching.
+    await t.controller.refreshNow()
+    expect(t.pointers.launching()).toEqual([])
+  })
+
   test("signed out or not on runs: refused before anything is kept", async () => {
     const server = new FakeRunsServer()
     for (const [availability, code] of [

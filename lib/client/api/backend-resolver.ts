@@ -32,6 +32,7 @@ import {
 } from "@/client/api-client"
 import { useStore } from "@/client/hooks/use-store"
 import type { RunsTarget } from "@/client/runs/types"
+import { editorAiBackend } from "@/shared/editor-ai/routing"
 
 export interface RemoteBackendContext {
   /** `'python'` / `'python-runs'` → agent-py, `'ts-service'` → agent-ts. Never `'ts'`. */
@@ -138,4 +139,32 @@ export async function resolveTasksTarget(): Promise<RunsTarget | null> {
   const session = await sessionAccessToken()
   if (!session.ok || !session.token) return null
   return { baseUrl: AGENT_PY_BASE_URL, authToken: session.token, getAuthToken: currentAccessToken }
+}
+
+/** Where the editor's AI requests go when agent-py serves them. */
+export interface EditorAiTarget {
+  baseUrl: string
+  /** `null`: anonymous (only on `python-runs`, as chat on runs). */
+  authToken: string | null
+}
+
+/**
+ * Where the editor's AI goes (wave 9, Q102–Q105): agent-py's
+ * `/v1/ai/command` + `/v1/ai/complete` where agent-py serves chat
+ * (`editorAiBackend`), else `null` — the Next routes. `ownKey`: the editor
+ * settings hold an AI Gateway key, which only the Next route can bill (Q103).
+ */
+export async function resolveEditorAiTarget(ownKey: boolean): Promise<EditorAiTarget | null> {
+  const chatBackend = useStore.getState().chatBackend
+  if (ownKey || !isAgentPyConfigured()) return null
+  if (chatBackend !== "python" && chatBackend !== "python-runs") return null
+  const session = await sessionAccessToken()
+  const authToken = session.ok ? session.token : null
+  const backend = editorAiBackend({
+    agentPyConfigured: true,
+    chatBackend,
+    ownKey,
+    signedIn: authToken !== null,
+  })
+  return backend === "agent-py" ? { baseUrl: AGENT_PY_BASE_URL, authToken } : null
 }

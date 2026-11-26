@@ -1,0 +1,368 @@
+import type {
+  ChatMessage,
+  ToolName,
+} from '@/components/editor/use-chat';
+import type { NextRequest } from 'next/server';
+
+import {
+  type LanguageModel,
+  type UIMessageStreamWriter,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  generateObject,
+  streamObject,
+  streamText,
+  tool,
+} from 'ai';
+import { NextResponse } from 'next/server';
+import { type Value, nanoid } from 'platejs';
+import { z } from 'zod';
+
+import { buildEditorAiDocument } from '@/components/editor/ai/editor-ai-document';
+import { markdownJoinerTransform } from '@/shared/markdown-joiner-transform';
+import { categorizeError } from '@/shared/api-errors';
+import { requireAiAuth } from '@/server/auth/require-ai-auth';
+import { AiCommandRequestSchema } from '@/shared/api-schemas';
+import {
+  ProviderUnavailableError,
+  rejectUnknownModel,
+  selectModel,
+} from '@/server/model-provider';
+
+import {
+  buildEditTableMultiCellPrompt,
+  getChooseToolPrompt,
+  getCommentPrompt,
+  getEditPrompt,
+  getGeneratePrompt,
+} from '@/shared/editor-ai/prompt';
+import type { EditorAiDocument } from '@/shared/editor-ai/prompt-utils';
+import { jsonBodyError, readJsonCapped } from '@/server/read-body-capped';
+
+/** Body cap: ≤ 1000 UI messages + an editor of ≤ 50,000 blocks. Generous
+ *  — a very large document — but bounded. */
+const AI_COMMAND_BODY_MAX = 32 * 1024 * 1024;
+
+/** The model picker the handler calls (`selectModel`, or a test's mock). */
+export type PickModel = (
+  id: string,
+  options: { gatewayApiKeyOverride?: string }
+) => LanguageModel;
+
+/**
+ * `POST /api/ai/command` (`route.ts`), with the model picker injectable so
+ * a test can drive the whole stream with a mock model
+ * (`stream.fixture.test.ts`, the fixtures agent-py's `/v1/ai/command` is
+ * checked against — Q104).
+ */
+export async function handleAiCommand(
+  req: NextRequest,
+  deps: { selectModel: PickModel } = { selectModel }
+) {
+  // REQUIRE_AUTH_FOR_AI gate — before the body is read or any model
+  // work starts. Applies even with a BYO `apiKey` (the server still
+  // does the work). No-op when the flag is off / Supabase is unset.
+  const aiAuth = await requireAiAuth();
+  if (!aiAuth.ok) return aiAuth.response;
+  const read = await readJsonCapped(req, AI_COMMAND_BODY_MAX);
+  if (!read.ok) return jsonBodyError(read);
+  const raw = read.value;
+  const parsed = AiCommandRequestSchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      {
+        code: 'invalid_request',
+        message: parsed.error.issues[0]?.message ?? 'Invalid request body.',
+      },
+      { status: 400 }
+    );
+  }
+  const { apiKey: rawKey, ctx, model } = parsed.data;
+  // The schema validates exactly the fields the prompt builders read
+  // (role + parts[].type/text); the rest of the AI SDK UIMessage shape
+  // passes through untouched, so the cast is sound for our use.
+  const messagesRaw = parsed.data.messages as unknown as ChatMessage[];
+  const key = rawKey || undefined;
+
+  // Model selection happens inside the stream below, where a throw would
+  // surface as a stream error rather than a status code — so reject an
+  // unknown model id up front (400 `unknown_model`). A BYO `apiKey`
+  // lifts the restriction: the gateway call is billed to that key.
+  if (model) {
+    const unknownModel = rejectUnknownModel(String(model), {
+      gatewayApiKeyOverride: key,
+    });
+    if (unknownModel) return unknownModel;
+  }
+
+  const { children, selection, toolName: toolNameParam } = ctx;
+
+  // The prompts' inputs (Q101) — the same text the browser sends agent-py.
+  const editorDoc = buildEditorAiDocument(children as Value, selection ?? null);
+  const { isSelecting } = editorDoc;
+
+  // Honour the per-request gateway key from the editor settings dialog.
+  // `selectModel` falls back to the server-side gateway provider config
+  // (env var) when this isn't set, and surfaces `ProviderUnavailableError`
+  // — which we translate to 401 below — when neither is available.
+  const pickModel = (id: string) =>
+    deps.selectModel(id, { gatewayApiKeyOverride: key });
+
+  try {
+    const stream = createUIMessageStream<ChatMessage>({
+      execute: async ({ writer }) => {
+        let toolName = toolNameParam;
+
+        if (!toolName) {
+          const prompt = getChooseToolPrompt({
+            isSelecting,
+            messages: messagesRaw,
+          });
+
+          const enumOptions: ToolName[] = isSelecting
+            ? ['generate', 'edit', 'comment']
+            : ['generate', 'comment'];
+          const modelId = model || 'google/gemini-2.5-flash';
+
+          // ai@5 has no `Output.choice` (it threw "is not a function"
+          // before wave 9): an enum object is the v5 way.
+          const { object: AIToolName } = await generateObject({
+            enum: enumOptions,
+            model: pickModel(modelId),
+            output: 'enum',
+            prompt,
+          });
+
+          writer.write({
+            data: AIToolName,
+            type: 'data-toolName',
+          });
+
+          toolName = AIToolName;
+        }
+
+        const stream = streamText({
+          experimental_transform: markdownJoinerTransform(),
+          model: pickModel(model || 'openai/gpt-5.5'),
+          // Not used
+          prompt: '',
+          tools: {
+            comment: getCommentTool(editorDoc, {
+              messagesRaw,
+              model: pickModel(model || 'google/gemini-2.5-flash'),
+              writer,
+            }),
+            table: getTableTool(editorDoc, {
+              messagesRaw,
+              model: pickModel(model || 'google/gemini-2.5-flash'),
+              writer,
+            }),
+          },
+          prepareStep: async (step) => {
+            if (toolName === 'comment') {
+              return {
+                ...step,
+                toolChoice: { toolName: 'comment', type: 'tool' },
+              };
+            }
+
+            if (toolName === 'edit') {
+              if (!editorDoc.edit)
+                throw new Error('Edit tool is only available when selecting');
+              const editType = editorDoc.edit.kind;
+              const editPrompt = getEditPrompt({
+                ...editorDoc.edit,
+                messages: messagesRaw,
+              });
+
+              // Table editing uses the table tool
+              if (editType === 'table') {
+                return {
+                  ...step,
+                  toolChoice: { toolName: 'table', type: 'tool' },
+                };
+              }
+
+              return {
+                ...step,
+                activeTools: [],
+                model:
+                  editType === 'selection'
+                    ? //The selection task is more challenging, so we chose to use Gemini 2.5 Flash.
+                      pickModel(model || 'google/gemini-2.5-flash')
+                    : pickModel(model || 'openai/gpt-5.5'),
+                messages: [
+                  {
+                    content: editPrompt,
+                    role: 'user',
+                  },
+                ],
+              };
+            }
+
+            if (toolName === 'generate') {
+              const generatePrompt = getGeneratePrompt({
+                context: editorDoc.generateContext,
+                messages: messagesRaw,
+              });
+
+              return {
+                ...step,
+                activeTools: [],
+                messages: [
+                  {
+                    content: generatePrompt,
+                    role: 'user',
+                  },
+                ],
+                model: pickModel(model || 'openai/gpt-5.5'),
+              };
+            }
+          },
+        });
+
+        writer.merge(stream.toUIMessageStream({ sendFinish: false }));
+      },
+    });
+
+    return createUIMessageStreamResponse({ stream });
+  } catch (error) {
+    if (error instanceof ProviderUnavailableError) {
+      return NextResponse.json(
+        { code: 'auth', message: error.message },
+        { status: 401 }
+      );
+    }
+    const { status, code, message } = categorizeError(error);
+    return NextResponse.json({ code, message }, { status });
+  }
+}
+
+const getCommentTool = (
+  editorDoc: EditorAiDocument,
+  {
+    messagesRaw,
+    model,
+    writer,
+  }: {
+    messagesRaw: ChatMessage[];
+    model: LanguageModel;
+    writer: UIMessageStreamWriter<ChatMessage>;
+  }
+) =>
+  tool({
+    description: 'Comment on the content',
+    // @ts-expect-error AI SDK v5 rejects empty Zod input schemas on tool()
+    inputSchema: z.object({}),
+    strict: true,
+    // @ts-expect-error AI SDK v5 expects undefined execute when no inputSchema; runtime is correct
+    execute: async () => {
+      const commentSchema = z.object({
+        blockId: z
+          .string()
+          .describe(
+            'The id of the starting block. If the comment spans multiple blocks, use the id of the first block.'
+          ),
+        comment: z
+          .string()
+          .describe('A brief comment or explanation for this fragment.'),
+        content: z
+          .string()
+          .describe(
+            String.raw`The original document fragment to be commented on.It can be the entire block, a small part within a block, or span multiple blocks. If spanning multiple blocks, separate them with two \n\n.`
+          ),
+      });
+
+      // ai@5 has no `Output.array` (it threw "is not a function" before
+      // wave 9): `streamObject` in array mode yields each finished element.
+      const { elementStream } = streamObject({
+        model,
+        output: 'array',
+        prompt: getCommentPrompt({
+          context: editorDoc.commentContext,
+          messages: messagesRaw,
+        }),
+        schema: commentSchema,
+      });
+
+      for await (const comment of elementStream) {
+        writer.write({
+          id: nanoid(),
+          data: {
+            comment,
+            status: 'streaming',
+          },
+          type: 'data-comment',
+        });
+      }
+
+      writer.write({
+        id: nanoid(),
+        data: {
+          comment: null,
+          status: 'finished',
+        },
+        type: 'data-comment',
+      });
+    },
+  });
+
+const getTableTool = (
+  editorDoc: EditorAiDocument,
+  {
+    messagesRaw,
+    model,
+    writer,
+  }: {
+    messagesRaw: ChatMessage[];
+    model: LanguageModel;
+    writer: UIMessageStreamWriter<ChatMessage>;
+  }
+) =>
+  tool({
+    description: 'Edit table cells',
+    // @ts-expect-error see Comment-tool annotation above
+    inputSchema: z.object({}),
+    strict: true,
+    // @ts-expect-error see Comment-tool annotation above
+    execute: async () => {
+      const cellUpdateSchema = z.object({
+        content: z
+          .string()
+          .describe(
+            String.raw`The new content for the cell. Can contain multiple paragraphs separated by \n\n.`
+          ),
+        id: z.string().describe('The id of the table cell to update.'),
+      });
+
+      const { elementStream } = streamObject({
+        model,
+        output: 'array',
+        prompt: buildEditTableMultiCellPrompt({
+          context: editorDoc.edit?.context ?? '',
+          messages: messagesRaw,
+        }),
+        schema: cellUpdateSchema,
+      });
+
+      for await (const cellUpdate of elementStream) {
+        writer.write({
+          id: nanoid(),
+          data: {
+            cellUpdate,
+            status: 'streaming',
+          },
+          type: 'data-table',
+        });
+      }
+
+      writer.write({
+        id: nanoid(),
+        data: {
+          cellUpdate: null,
+          status: 'finished',
+        },
+        type: 'data-table',
+      });
+    },
+  });

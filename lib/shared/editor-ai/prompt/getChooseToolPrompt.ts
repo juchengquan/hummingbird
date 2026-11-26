@@ -1,19 +1,19 @@
-import type { ChatMessage } from '@/components/editor/use-chat';
 
 import dedent from 'dedent';
 
 import {
+  type EditorAiMessage,
   buildStructuredPrompt,
   formatTextFromMessages,
   getLastUserInstruction,
-} from '../utils';
+} from '../prompt-utils';
 
 export function getChooseToolPrompt({
   isSelecting,
   messages,
 }: {
   isSelecting: boolean;
-  messages: ChatMessage[];
+  messages: EditorAiMessage[];
 }) {
   const generateExamples = [
     dedent`
