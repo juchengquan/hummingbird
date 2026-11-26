@@ -60,6 +60,12 @@ ELEMENTS_MAX_TOKENS = 4096
 CHOOSE_MAX_TOKENS = 64
 #: `/api/ai/complete`'s `maxOutputTokens` / `temperature`.
 COMPLETE_MAX_TOKENS = 60
+#: Extra output tokens for a model that thinks before it answers (MiniMax M3 /
+#: M3.1 Flash always do): its thinking counts against `max_tokens`.
+COMPLETE_THINKING_ROOM = 1024
+#: The ghost text's length, ~`COMPLETE_MAX_TOKENS` tokens of text, cut at a
+#: word — the cap `max_tokens` alone no longer gives once there is room.
+COMPLETE_MAX_CHARS = 240
 COMPLETE_TEMPERATURE = 0.2
 
 STRUCTURED_TOOL = "json"
@@ -342,19 +348,29 @@ async def complete_text(
     model: str,
     block_text: str,
     prefix: str | None,
+    thinking_room: int = 0,
 ) -> AsyncIterator[str]:
     """The ghost-text continuation; a failure ends the text (the editor
-    swallows completion errors)."""
+    swallows completion errors). `thinking_room`: extra tokens for a model
+    that may think first; the text is cut at `COMPLETE_MAX_CHARS`, at a word."""
+    sent = 0
     try:
         async with client.messages.stream(
             model=model,
-            max_tokens=COMPLETE_MAX_TOKENS,
+            max_tokens=COMPLETE_MAX_TOKENS + thinking_room,
             temperature=COMPLETE_TEMPERATURE,
             messages=[
                 {"role": "user", "content": complete_prompt(block_text=block_text, prefix=prefix)}
             ],
         ) as stream:
             async for chunk in stream.text_stream:
+                if sent + len(chunk) > COMPLETE_MAX_CHARS:
+                    room = chunk[: COMPLETE_MAX_CHARS - sent]
+                    cut = room.rfind(" ")
+                    if cut > 0:
+                        yield room[:cut]
+                    return
+                sent += len(chunk)
                 yield chunk
     except Exception as exc:
         logger.warning("editor_ai.complete_failed", error=str(exc), kind=type(exc).__name__)

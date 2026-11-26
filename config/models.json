@@ -82,6 +82,7 @@
       "label": "MiniMax M2.7",
       "provider": "MiniMax",
       "contextWindow": 204800,
+      "thinksUnprompted": true,
       "routes": [
         { "via": "minimax-cn", "upstreamId": "minimax-m2.7" },
         { "via": "gateway" }
@@ -94,6 +95,7 @@
       "contextWindow": 512000,
       "supportsReasoningEffort": true,
       "supportsVision": true,
+      "thinksUnprompted": true,
       "routes": [{ "via": "minimax-cn", "upstreamId": "MiniMax-M3.1-Flash" }]
     },
     {
@@ -103,6 +105,7 @@
       "contextWindow": 512000,
       "supportsReasoningEffort": true,
       "supportsVision": true,
+      "thinksUnprompted": true,
       "routes": [
         { "via": "minimax-cn", "upstreamId": "MiniMax-M3" },
         { "via": "gateway" }

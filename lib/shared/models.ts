@@ -56,6 +56,15 @@ const ChatModelSchema = z.object({
    *  the extractor only renders + sends page images to models flagged
    *  here. Absent / false → text-only extraction. */
   supportsVision: z.boolean().optional(),
+  /** When false, the model can't call tools: agent-py runs it without
+   *  tools and never as a background task (wave 10, Q116 / Q117). Absent →
+   *  it can. */
+  supportsTools: z.boolean().optional(),
+  /** When true, the model may think before it answers without being asked
+   *  (MiniMax M2.7 / M3 / M3.1 Flash), and its thinking counts against the
+   *  call's output tokens: agent-py gives a tight call (ghost text) room for
+   *  it. Absent → it thinks only when asked. */
+  thinksUnprompted: z.boolean().optional(),
   /** Which tokenizer the context meter uses to estimate this model's
    *  token count. `tiktoken-o200k` (modern OpenAI), `tiktoken-cl100k`
    *  (older OpenAI; also a within-a-few-% proxy for Anthropic). Absent →

@@ -103,6 +103,10 @@ class ModelAllowlist:
     vision: frozenset[str] = frozenset()
     """Catalog ids flagged `supportsVision`."""
 
+    thinks_unprompted: frozenset[str] = frozenset()
+    """Catalog ids flagged `thinksUnprompted`: their thinking counts against
+    a call's output tokens even when none was asked for (ghost text)."""
+
     no_tools: frozenset[str] = frozenset()
     """Catalog ids flagged `supportsTools: false`: chat only — no tools on
     runs, not offered for tasks (Q116 / Q117)."""
@@ -126,6 +130,10 @@ class ModelAllowlist:
         """Whether the catalog flags `model_id` (absent / empty → the
         default model) as supporting native structured output."""
         return (model_id or self.default_model) in self.structured_output
+
+    def thinks_first(self, model_id: str | None) -> bool:
+        """Whether `model_id` (absent → the default) is flagged `thinksUnprompted`."""
+        return (model_id or self.default_model) in self.thinks_unprompted
 
     def supports_tools(self, model_id: str | None) -> bool:
         return (model_id or self.default_model) not in self.no_tools
@@ -213,6 +221,7 @@ def parse_allowlist(
         "reasoning": set(),
         "vision": set(),
         "no_tools": set(),
+        "thinks": set(),
     }
     for entry in models:
         if not isinstance(entry, dict):
@@ -240,6 +249,8 @@ def parse_allowlist(
             flags["vision"].add(model_id)
         if entry.get("supportsTools") is False:
             flags["no_tools"].add(model_id)
+        if entry.get("thinksUnprompted") is True:
+            flags["thinks"].add(model_id)
     if not targets:
         raise ModelConfigError(f"{source}: no models — nothing to serve")
     if default_model not in targets:
@@ -254,6 +265,7 @@ def parse_allowlist(
         reasoning_effort=frozenset(flags["reasoning"]),
         vision=frozenset(flags["vision"]),
         no_tools=frozenset(flags["no_tools"]),
+        thinks_unprompted=frozenset(flags["thinks"]),
         routing=_routing_pair(raw.get("routing"), targets),
         providers=configured,
         labels=labels,

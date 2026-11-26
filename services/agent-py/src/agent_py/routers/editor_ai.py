@@ -27,7 +27,12 @@ from fastapi.responses import StreamingResponse
 from ..auth import get_current_user
 from ..chat import resolve_anthropic_client
 from ..contract import models
-from ..editor_ai.command import CommandInput, command_frames, complete_text
+from ..editor_ai.command import (
+    COMPLETE_THINKING_ROOM,
+    CommandInput,
+    command_frames,
+    complete_text,
+)
 from ..editor_ai.prompts import EditorDocument, EditorMessage, EditTarget
 from ..model_allowlist import UnknownModelError, get_model_allowlist, resolve_optional_target
 from ..model_routes import ModelTarget
@@ -196,7 +201,14 @@ async def ai_complete(
     client = _client(target)
     return StreamingResponse(
         complete_text(
-            client=client, model=target.api_id, block_text=body.blockText, prefix=body.prefix
+            client=client,
+            model=target.api_id,
+            block_text=body.blockText,
+            prefix=body.prefix,
+            # A model that thinks unprompted needs room for it (`thinksUnprompted`).
+            thinking_room=COMPLETE_THINKING_ROOM
+            if get_model_allowlist().thinks_first(body.model)
+            else 0,
         ),
         media_type="text/plain; charset=utf-8",
     )
