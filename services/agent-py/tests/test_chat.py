@@ -373,7 +373,8 @@ def test_resolve_client_builds_with_api_key(monkeypatch: pytest.MonkeyPatch) -> 
         m.setitem(sys.modules, "anthropic", MagicMock(AsyncAnthropic=fake))
         client = resolve_anthropic_client()
     assert client is fake.return_value
-    fake.assert_called_once_with(api_key="sk-test")
+    # Blank → Anthropic's own API, passed explicitly (test_anthropic_client.py).
+    fake.assert_called_once_with(api_key="sk-test", base_url="https://api.anthropic.com")
 
 
 def test_resolve_client_passes_base_url_override(monkeypatch: pytest.MonkeyPatch) -> None:

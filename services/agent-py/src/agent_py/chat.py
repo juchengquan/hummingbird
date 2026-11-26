@@ -474,12 +474,9 @@ def resolve_anthropic_client() -> AsyncAnthropicClient | None:
     api_key = settings.ANTHROPIC_API_KEY.strip()
     if not api_key:
         return None
-    from anthropic import AsyncAnthropic
+    from .anthropic_client import make_anthropic_client
 
-    base_url = settings.ANTHROPIC_BASE_URL.strip()
-    if base_url:
-        return AsyncAnthropic(api_key=api_key, base_url=base_url)  # type: ignore[return-value]
-    return AsyncAnthropic(api_key=api_key)  # type: ignore[return-value]
+    return make_anthropic_client(api_key=api_key, base_url=settings.ANTHROPIC_BASE_URL)  # type: ignore[no-any-return]
 
 
 # --- Follow-up suggestions (PLAN-useChat-adoption.md Phase B.1d) -------

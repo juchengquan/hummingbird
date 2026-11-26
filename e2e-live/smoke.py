@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import os
+import sys
 import uuid
 
 import asyncpg
@@ -183,6 +184,7 @@ async def main():
         )
     ok &= status.get("status") == "succeeded"
     print("SMOKE", "PASS" if ok else "FAIL")
+    return ok
 
 
-asyncio.run(main())
+sys.exit(0 if asyncio.run(main()) else 1)
