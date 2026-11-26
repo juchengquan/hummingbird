@@ -23,13 +23,19 @@ import {
   modelSwitchFor,
   resolveModelBackend,
   TASK_MODEL_BACKEND,
+  usesAgentPyList,
   type ModelBackend,
 } from "@/shared/backend-models"
 import { getChatModel, isAutoModel } from "@/shared/models"
+import { servedModelsSettled, subscribeServedModels } from "@/shared/served-models"
+
+import { useServedModels } from "./use-served-models"
 
 export function useModelBackend(): ModelBackend {
   const chatBackend = useStore((s) => s.chatBackend)
   const { status } = useAuth()
+  // Loads agent-py's `/v1/models` and re-renders the picker when it arrives.
+  useServedModels()
   return resolveModelBackend(chatBackend, status === "signed-in", {
     agentPy: isAgentPyConfigured(),
     agentTs: isAgentTsConfigured(),
@@ -75,8 +81,13 @@ export function useModelBackendGuard(backend: ModelBackend, hydrated: boolean): 
   const { kind, name } = backend
   const focused = useSyncExternalStore(onFocusChange, () => document.hasFocus(), () => true)
   const waitsForFocus = name === TASK_MODEL_BACKEND.name && !focused
+  // agent-py's list decides what it accepts (wave 10): until its first read
+  // answers, a model the built-in list lacks may be served — keep it.
+  const served = useServedModels()
+  const settled = useSyncExternalStore(subscribeServedModels, servedModelsSettled, () => false)
+  const waitsForList = usesAgentPyList(kind) && isAgentPyConfigured() && !settled
   useEffect(() => {
-    if (!hydrated || waitsForFocus) return
+    if (!hydrated || waitsForFocus || waitsForList) return
     const next = modelSwitchFor({ kind, name }, chatModel)
     if (!next) {
       // An accepted model is showing: a later switch is a new one to say.
@@ -88,5 +99,5 @@ export function useModelBackendGuard(backend: ModelBackend, hydrated: boolean): 
     if (lastNote.current === note) return
     lastNote.current = note
     toast.info(modelSwitchNote({ kind, name }, chatModel, next))
-  }, [kind, name, chatModel, hydrated, waitsForFocus])
+  }, [kind, name, chatModel, hydrated, waitsForFocus, waitsForList, served])
 }

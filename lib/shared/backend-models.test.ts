@@ -80,7 +80,7 @@ describe("resolveModelBackend (Q40)", () => {
   test("python / ts-service reach their service only when signed in", () => {
     expect(resolveModelBackend("python", true, both)).toEqual({ kind: "agent-service", name: "agent-py" })
     expect(resolveModelBackend("python", false, both).kind).toBe("any")
-    expect(resolveModelBackend("ts-service", true, both)).toEqual({ kind: "agent-service", name: "agent-ts" })
+    expect(resolveModelBackend("ts-service", true, both)).toEqual({ kind: "agent-ts", name: "agent-ts" })
     expect(resolveModelBackend("ts-service", false, both).kind).toBe("any")
   })
 

@@ -118,28 +118,57 @@ def test_an_openai_provider_needs_a_key_unless_it_is_a_local_one(
 @pytest.mark.parametrize(
     "raw",
     [
-        # Only a provider marked `allowInsecureBaseUrl` may use http.
-        {
-            "x": {
-                "type": "openai",
-                "baseURL": "http://h.example/v1",
-                "apiKeyEnv": "AI_GATEWAY_API_KEY",
-            }
-        },
-        {
-            "x": {
-                "type": "anthropic",
-                "baseURL": "ftp://h.example",
-                "apiKeyEnv": "AI_GATEWAY_API_KEY",
-            }
-        },
         {"x": {"type": "bedrock", "apiKeyEnv": "AI_GATEWAY_API_KEY"}},
         {"x": "not an object"},
     ],
 )
-def test_a_bad_provider_fails_boot(monkeypatch: pytest.MonkeyPatch, raw: dict[str, Any]) -> None:
+def test_a_malformed_provider_fails_boot(
+    monkeypatch: pytest.MonkeyPatch, raw: dict[str, Any]
+) -> None:
     with pytest.raises(ProviderConfigError):
         configured_providers(raw, _settings(monkeypatch, AI_GATEWAY_API_KEY="gw"))
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://h.example/v1",  # only `allowInsecureBaseUrl` may use http
+        "ftp://h.example",
+        "not a url",
+        "https://localhost/v1",
+        "https://127.0.0.1:8443",
+        "https://10.1.2.3",
+        "https://192.168.0.9",
+        "https://172.20.0.1",
+        "https://box.local",
+        "https://svc.internal",
+        "https://0.0.0.0",
+        "https://[::1]",
+    ],
+)
+def test_an_unsafe_base_url_skips_the_provider_as_on_next(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    """`isSafeBaseUrl` in `lib/server/providers-config.ts`: the key never goes
+    to a plain-http, loopback or private host; the provider is skipped."""
+    raw = {"x": {"type": "anthropic", "baseURL": url, "apiKeyEnv": "AI_GATEWAY_API_KEY"}}
+    assert configured_providers(raw, _settings(monkeypatch, AI_GATEWAY_API_KEY="gw")) == {}
+
+
+def test_a_local_provider_may_use_a_private_http_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    raw = {
+        "o": {
+            "type": "openai",
+            "baseURL": "http://192.168.1.5:11434/v1",
+            "allowInsecureBaseUrl": True,
+        }
+    }
+    assert (
+        configured_providers(raw, _settings(monkeypatch))["o"].base_url
+        == "http://192.168.1.5:11434"
+    )
+    bad = {"o": {"type": "openai", "baseURL": "nope", "allowInsecureBaseUrl": True}}
+    assert configured_providers(bad, _settings(monkeypatch)) == {}
 
 
 # --- routes -----------------------------------------------------------------

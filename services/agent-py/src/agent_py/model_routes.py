@@ -21,14 +21,19 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import structlog
+
 from .anthropic_client import ANTHROPIC_DEFAULT_BASE_URL, make_anthropic_client
 from .settings import Settings
+
+logger = structlog.get_logger(__name__)
 
 #: The pseudo-provider of Q115: Anthropic's API (or `ANTHROPIC_BASE_URL`).
 ANTHROPIC_DIRECT = "anthropic"
@@ -38,8 +43,8 @@ GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh"
 
 
 class ProviderConfigError(RuntimeError):
-    """`config/providers.json` is malformed, or a configured provider's URL
-    is unusable. Raised at boot."""
+    """`config/providers.json` is malformed. Raised at boot. (A provider whose
+    URL can't take its key is skipped with a warning instead, as on Next.)"""
 
 
 @dataclass(frozen=True)
@@ -87,16 +92,48 @@ def _messages_base(url: str) -> str:
     return url[: -len("/v1")] if url.endswith("/v1") else url
 
 
-def _check_url(name: str, url: str, *, allow_insecure: bool) -> None:
+def _parseable(url: str) -> bool:
+    """An http(s) URL with a host (`isParseableHttpUrl` in
+    `lib/server/providers-config.ts`)."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    return parts.scheme in ("http", "https") and bool(parts.hostname)
+
+
+_PRIVATE_172 = re.compile(r"^172\.(1[6-9]|2[0-9]|3[01])\.")
+
+
+def _safe(url: str) -> bool:
+    """`isSafeBaseUrl` there: https and a public host — never send a key to a
+    plain-http, loopback or private one."""
+    if not _parseable(url):
+        return False
     parts = urlsplit(url)
-    secure = parts.scheme == "https" or (parts.scheme == "http" and allow_insecure)
-    if secure and parts.hostname:
-        return
-    raise ProviderConfigError(
-        f'provider "{name}": base URL must be https'
-        + (" (or http with allowInsecureBaseUrl)" if not allow_insecure else "")
-        + f", got {url!r}"
+    host = (parts.hostname or "").lower()
+    return not (
+        parts.scheme != "https"
+        or host in ("localhost", "0.0.0.0", "::1")
+        or host.endswith((".local", ".internal"))
+        or host.startswith(("127.", "10.", "192.168."))
+        or _PRIVATE_172.match(host)
     )
+
+
+def _usable(name: str, url: str, *, allow_insecure: bool) -> bool:
+    """Whether `url` may receive the provider's key; a provider with one that
+    can't is skipped with a warning, as on Next."""
+    ok = _parseable(url) if allow_insecure else _safe(url)
+    if not ok:
+        logger.warning(
+            "model_routes.provider_url_refused",
+            provider=name,
+            reason="must be an https URL with a public host"
+            if not allow_insecure
+            else "not a parseable http(s) URL",
+        )
+    return ok
 
 
 def configured_providers(raw: Mapping[str, Any], settings: Settings) -> dict[str, Provider]:
@@ -132,15 +169,15 @@ def configured_providers(raw: Mapping[str, Any], settings: Settings) -> dict[str
         if kind == "anthropic":
             if not key:
                 continue
-            _check_url(name, url, allow_insecure=allow_insecure)
-            out[name] = Provider(name, base_url=_messages_base(url), api_key=key)
+            if _usable(name, url, allow_insecure=allow_insecure):
+                out[name] = Provider(name, base_url=_messages_base(url), api_key=key)
         else:  # "openai"
             # A key is required unless the provider is a local one that
             # takes none (Ollama: `allowInsecureBaseUrl`, as on Next).
             if not key and not allow_insecure:
                 continue
-            _check_url(name, url, allow_insecure=allow_insecure)
-            out[name] = Provider(name, base_url=_messages_base(url), auth_token=key or name)
+            if _usable(name, url, allow_insecure=allow_insecure):
+                out[name] = Provider(name, base_url=_messages_base(url), auth_token=key or name)
     return out
 
 

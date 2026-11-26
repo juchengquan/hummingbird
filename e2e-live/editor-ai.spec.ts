@@ -9,6 +9,7 @@
  */
 import { expect, test, type Page } from "@playwright/test"
 
+import catalog from "../config/models.json"
 import { STORE_VERSION } from "../lib/client/hooks/store/migrate"
 
 const SUPA = "http://127.0.0.1:54871", FAKE = "http://127.0.0.1:8172"
@@ -114,9 +115,10 @@ test("settings: agent-py's models, and an own gateway key keeps the Next route",
   await page.locator("button:has(svg.lucide-settings)").click()
   await expect(page.getByTestId("editor-ai-agent-py-note")).toBeVisible()
   await page.locator("#select-model").click()
-  const offered = await page.getByRole("option").allTextContents()
-  expect(offered.length).toBeGreaterThan(0)
-  expect(offered.every((label) => /Claude/.test(label))).toBe(true)
+  // Exactly what agent-py serves (`GET /v1/models`, wave 10), in catalog order.
+  const served = (await (await fetch("http://127.0.0.1:8171/v1/models")).json()).models.map((m: { id: string }) => m.id)
+  const labels = catalog.models.filter((m) => served.includes(m.id)).map((m) => m.label)
+  await expect.poll(() => page.getByRole("option").allTextContents()).toEqual(labels)
   await page.keyboard.press("Escape")
   await page.getByLabel("AI Gateway API Key").fill("own-gateway-key")
   await expect(page.getByTestId("editor-ai-agent-py-note")).toBeHidden()
