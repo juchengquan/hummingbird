@@ -40,6 +40,13 @@ describe("parseServedModels", () => {
     expect(s.auto).toBe(false)
   })
 
+  test("an empty list keeps the built-in one", () => {
+    // A deploy with no provider key (or the e2e stub harness) serves nothing:
+    // its calls fail 503 either way, and an empty picker would leave no model
+    // to pick — so behave as before wave 10.
+    expect(parseServedModels({ models: [], defaultModel: "anthropic/claude-haiku-4.5", auto: false })).toBeNull()
+  })
+
   test("anything else is unreadable", () => {
     for (const bad of [null, {}, { models: "x" }, { models: [{ id: 1 }], defaultModel: "a", auto: false }]) {
       expect(parseServedModels(bad)).toBeNull()

@@ -57,7 +57,9 @@ export function subscribeServedModels(listener: () => void): () => void {
   }
 }
 
-/** A `/v1/models` body, or null when it isn't one. */
+/** A `/v1/models` body, or null when it isn't one — or lists nothing: a
+ *  deploy without any provider key (or on the stub harness) runs nothing,
+ *  and the built-in list keeps the picker usable, as before wave 10. */
 export function parseServedModels(body: unknown): ServedModels | null {
   if (typeof body !== "object" || body === null) return null
   const { models, defaultModel, auto } = body as Record<string, unknown>
@@ -71,5 +73,6 @@ export function parseServedModels(body: unknown): ServedModels | null {
     ids.push(id)
     if (runsTasks) tasks.push(id)
   }
+  if (ids.length === 0) return null
   return { ids: new Set(ids), tasks: new Set(tasks), defaultModel, auto }
 }
