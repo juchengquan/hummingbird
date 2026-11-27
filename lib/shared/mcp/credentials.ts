@@ -20,31 +20,14 @@ export interface McpCredentials {
 }
 
 /**
- * Wire format used between the browser and `/api/mcp/*` for local-
- * mode credentials. Decoded on the server with `decodeCredentialHeader`
- * below; never persisted server-side.
+ * Wire format for a local-mode credential the browser hands the backend
+ * (base64 of the credential's JSON, sent as `credentialHeader`); never
+ * persisted server-side.
  */
-export const MCP_CRED_HEADER = "x-mcp-credentials"
-
 export function encodeCredentialHeader(cred: McpCredentials): string {
   const json = JSON.stringify(cred)
   if (typeof window === "undefined") {
     return Buffer.from(json, "utf8").toString("base64")
   }
   return window.btoa(unescape(encodeURIComponent(json)))
-}
-
-export function decodeCredentialHeader(value: string | null): McpCredentials | null {
-  if (!value) return null
-  try {
-    const json =
-      typeof window === "undefined"
-        ? Buffer.from(value, "base64").toString("utf8")
-        : decodeURIComponent(escape(window.atob(value)))
-    const parsed = JSON.parse(json) as unknown
-    if (!parsed || typeof parsed !== "object") return null
-    return parsed as McpCredentials
-  } catch {
-    return null
-  }
 }

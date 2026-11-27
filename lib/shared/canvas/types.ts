@@ -151,8 +151,3 @@ export function parseCanvasState(value: unknown): CanvasState | null {
 
   return { nodes, edges, viewport }
 }
-
-/** True when the canvas has no nodes (edges can't exist without nodes). */
-export function isCanvasEmpty(state: CanvasState | null | undefined): boolean {
-  return !state || state.nodes.length === 0
-}

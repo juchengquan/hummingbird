@@ -59,16 +59,3 @@ export function matchPromptMentions(
   }
   return [...slugPrefix, ...nameMatch].slice(0, MAX_MENTION_MATCHES)
 }
-
-/**
- * Resolve a complete `@slug` token to its prompt. Used if we ever
- * parse a typed-out mention at send time; exact, case-insensitive
- * slug match against live prompts. Returns null when nothing matches.
- */
-export function findPromptBySlug(
-  slug: string,
-  prompts: Prompt[]
-): Prompt | null {
-  const s = slug.toLowerCase()
-  return prompts.find((p) => !p.deletedAt && p.slug.toLowerCase() === s) ?? null
-}

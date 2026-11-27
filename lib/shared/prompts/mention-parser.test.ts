@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
 import {
-  findPromptBySlug,
   isTypingPromptMention,
   matchPromptMentions,
   MAX_MENTION_MATCHES,
@@ -91,20 +90,5 @@ describe("matchPromptMentions", () => {
       p({ slug: `prompt${i}`, name: `Prompt ${i}` })
     )
     expect(matchPromptMentions("prompt", many).length).toBe(MAX_MENTION_MATCHES)
-  })
-})
-
-describe("findPromptBySlug", () => {
-  test("exact case-insensitive match", () => {
-    expect(findPromptBySlug("PERSONA", PROMPTS)?.slug).toBe("persona")
-  })
-  test("prefix is not a match (exact only)", () => {
-    expect(findPromptBySlug("pers", PROMPTS)).toBeNull()
-  })
-  test("ignores soft-deleted", () => {
-    expect(findPromptBySlug("gone", PROMPTS)).toBeNull()
-  })
-  test("unknown slug → null", () => {
-    expect(findPromptBySlug("nope", PROMPTS)).toBeNull()
   })
 })

@@ -63,21 +63,6 @@ export function isHttpUrl(value: string): boolean {
   }
 }
 
-/** Coerce a cell's string value to a sortable scalar for `type`.
- *  - "number" → Number.parseFloat(value), or NaN if not finite
- *  - "text" → raw string (passthrough)
- *  Empty string yields NaN for number and "" for text. Never throws. */
-export function parseCellValue(value: string, type: ColumnType): number | string {
-  if (type === "number") {
-    const n = Number.parseFloat(value)
-    return Number.isFinite(n) ? n : NaN
-  }
-  if (type === "date") {
-    return parseIsoDate(value) ?? NaN
-  }
-  return value
-}
-
 /** Return a warning message when the cell value doesn't fit the
  *  declared type, or null when it does. Returns null for empty /
  *  missing cells (no warning to show for an empty cell). */

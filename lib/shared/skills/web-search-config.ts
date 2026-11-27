@@ -44,7 +44,7 @@ export const TAVILY_SEARCH_DEPTHS: ReadonlyArray<TavilySearchDepth> = [
   "basic",
   "advanced",
 ]
-export const DEFAULT_TAVILY_SEARCH_DEPTH: TavilySearchDepth = "basic"
+const DEFAULT_TAVILY_SEARCH_DEPTH: TavilySearchDepth = "basic"
 
 export interface TavilyConfig {
   enabled?: boolean
@@ -60,7 +60,7 @@ export const BRAVE_FRESHNESSES: ReadonlyArray<BraveFreshness> = [
   "pm",
   "py",
 ]
-export const DEFAULT_BRAVE_FRESHNESS: BraveFreshness = "any"
+const DEFAULT_BRAVE_FRESHNESS: BraveFreshness = "any"
 /** User-facing labels for the freshness select. */
 export const BRAVE_FRESHNESS_LABELS: Record<BraveFreshness, string> = {
   any: "Any time",
@@ -88,7 +88,7 @@ export const EXA_SEARCH_TYPES: ReadonlyArray<ExaSearchType> = [
   "neural",
   "keyword",
 ]
-export const DEFAULT_EXA_SEARCH_TYPE: ExaSearchType = "auto"
+const DEFAULT_EXA_SEARCH_TYPE: ExaSearchType = "auto"
 /** User-facing labels for the search-type select. */
 export const EXA_SEARCH_TYPE_LABELS: Record<ExaSearchType, string> = {
   auto: "Auto (recommended)",

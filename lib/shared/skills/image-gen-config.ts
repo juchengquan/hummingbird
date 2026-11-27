@@ -9,8 +9,8 @@
  *
  * `maxCalls` is enforced at the tool level: one `generateImage`
  * invocation = one cap unit. (Each invocation can itself generate up
- * to N images via the tool's `count` input — that's bounded by
- * `MAX_IMAGES_PER_CALL` below, not by maxCalls.)
+ * to N images via the tool's `count` input — that's bounded by the
+ * tool's per-call cap, not by maxCalls.)
  *
  * Resolution order — for each scalar field — is conversation override
  * → workspace default → built-in default. Same cascade as web-search /
@@ -28,11 +28,6 @@ export const DEFAULT_MAX_IMAGE_GENERATIONS = IMAGE_GEN_MAX.DEFAULT
 export const MIN_MAX_IMAGE_GENERATIONS = IMAGE_GEN_MAX.MIN
 export const MAX_MAX_IMAGE_GENERATIONS = IMAGE_GEN_MAX.MAX
 export const clampMaxImageGenerations = IMAGE_GEN_MAX.clamp
-
-/** Max images the model can request in a single `generateImage` call.
- *  Matches Minimax's per-call upper bound; raise if their docs ever
- *  bump it. Independent from the per-turn cap above. */
-export const MAX_IMAGES_PER_CALL = 4
 
 // --- Aspect ratio ----------------------------------------------------------
 
