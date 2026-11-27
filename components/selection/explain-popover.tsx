@@ -30,8 +30,6 @@ interface ExplainPopoverProps {
   model?: string
   /** Workspace-level system prompt to forward. */
   workspaceSystemPrompt?: string
-  /** Skills to include (matches the chat route's payload shape). */
-  skills?: Array<{ id: string }>
   /** When set, the popover surfaces a Pin button + `⌘↵` shortcut.
    *  Called with the streamed content + captured tool-result rows.
    *  After pinning the popover closes via `onClose`. */
@@ -42,7 +40,7 @@ interface ExplainPopoverProps {
 /**
  * Desktop streamed-answer popover anchored to the right of the user's
  * selection (or left when there's no room). Dismisses on Esc or
- * click-away. Streaming + mock-on-401 lives in `useExplainStream`;
+ * click-away. Streaming lives in `useExplainStream`;
  * this file is layout only.
  */
 export function ExplainPopover({
@@ -51,7 +49,6 @@ export function ExplainPopover({
   contextMessages,
   model,
   workspaceSystemPrompt,
-  skills,
   onPin,
   onClose,
 }: ExplainPopoverProps) {
@@ -70,7 +67,6 @@ export function ExplainPopover({
     contextMessages,
     model: effectiveModel,
     workspaceSystemPrompt,
-    skills,
   })
 
   // Position the popover once, relative to the anchor rect. We don't

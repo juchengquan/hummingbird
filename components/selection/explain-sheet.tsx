@@ -21,7 +21,6 @@ interface ExplainSheetProps {
   contextMessages: Message[]
   model?: string
   workspaceSystemPrompt?: string
-  skills?: Array<{ id: string }>
   onPin?: (input: { content: string; results: ToolCallResult[] }) => void
   onClose: () => void
 }
@@ -32,7 +31,7 @@ interface ExplainSheetProps {
  * dismisses on tap-outside, swipe-down (via the Radix Dialog overlay)
  * or the close button.
  *
- * Streaming + mock-on-401 lives in `useExplainStream`; this file is
+ * Streaming lives in `useExplainStream`; this file is
  * layout only. Reuses MarkdownPreview + SourcesStrip so [N] citations
  * and source cards render the same as on desktop.
  */
@@ -41,7 +40,6 @@ export function ExplainSheet({
   contextMessages,
   model,
   workspaceSystemPrompt,
-  skills,
   onPin,
   onClose,
 }: ExplainSheetProps) {
@@ -54,8 +52,7 @@ export function ExplainSheet({
     contextMessages,
     model: effectiveModel,
     workspaceSystemPrompt,
-    skills,
-  })
+    })
 
   const canPin = !!onPin && done && !errorMsg && streamed.length > 0
   const handlePin = useCallback(() => {

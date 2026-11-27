@@ -18,31 +18,28 @@ import "client-only"
  *    stream `done`. Durable record gets persisted onto the message in
  *    `setMessageToolCalls`.
  *
- * Preserves the invariants `callChatAPI` had:
- *  - Per-conversation `AbortController` map → switching tabs mid-stream
- *    doesn't move the stream's UI state onto the wrong chat.
+ * A turn runs on agent-py's runs API (`lib/client/runs/chat-runner.ts`),
+ * the only chat path since wave 13 (Q121); a task turn launches a
+ * background run (the tasks interface, Q61). Preserves the invariants
+ * `callChatAPI` had:
+ *  - The conversation id is captured at send time → switching tabs
+ *    mid-stream doesn't move the stream's UI state onto the wrong chat.
  *  - `useStore.getState()` fresh reads for `chatModel`, MCP/URL state,
  *    `localFilesOnly` — so retry-after-model-change uses the new
  *    value without waiting for re-render.
  *  - `callChatAPIRef` latest-version pattern (moved internal to the
- *    hook) → the same instance can call back into itself for the
- *    1s auto-retry-once on transient errors.
+ *    hook) → `send` stays stable across renders.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { apiClient } from "@/client/api-client"
-import { useTaskRunContext } from "@/client/agent/task-run-context"
-import { toast } from "sonner"
 import { useTasks } from "@/client/runs/tasks/context"
-import { launchesOnRuns, launchTaskOnRuns } from "@/components/agent/tasks/launch"
+import { launchTaskOnRuns } from "@/components/agent/tasks/launch"
 import { autoArchiveCodeBlocks as autoArchiveCodeBlocksPure } from "@/client/chat/auto-archive-code-blocks"
-import { shouldAutoRetry } from "@/client/chat/auto-retry-decision"
 import { resolveSendTargetConversationId } from "@/client/chat/resolve-send-target"
 import { buildAttachments } from "@/client/chat/build-attachments"
 import { buildTransmittedMessages } from "@/client/chat/build-messages"
-import { toPersistedToolCalls } from "@/client/chat/tool-call-buffer"
-import { createTurnWriter } from "@/client/chat/turn-writer"
 import {
   buildSandboxFiles,
   type SandboxFileSource,
@@ -50,24 +47,19 @@ import {
 import { getFileImageDataUrls } from "@/client/files/blob-fields"
 import { getBlob } from "@/client/files/local-store"
 import { extractAfterTurn } from "@/client/memory/extract-after-turn"
-import { translateFrame } from "@/client/chat/sse-frame-translator"
 import { useStore } from "@/client/hooks/use-store"
 import { getLocalCred } from "@/client/mcp/local-creds"
 import type { LiveToolCall } from "@/components/skills/tool-call-strip"
 import { composeSystemPrompts } from "@/shared/agents/resolve"
 import { withUserSkillInstructions } from "@/shared/skills/user-skill-prompt"
-import type { ChatRequestInput, TaskRequestInput } from "@/shared/api-schemas"
-import { isAuthRequiredError } from "@/shared/api-errors"
+import type { TaskRequestInput } from "@/shared/api-schemas"
 import { modelSupportsReasoningEffort } from "@/shared/models"
 import { resolveEnabledSkills } from "@/shared/skills/resolve-enabled-skills"
 import type { SkillId } from "@/shared/skills/types"
-import type { Message, MessageError, MessageErrorCode } from "@/shared/types"
-import { toISO } from "@/shared/utils"
-import { abortStreamsOfDeletedConversations } from "@/client/chat/abort-deleted-streams"
+import type { Message } from "@/shared/types"
 import {
   attachedMcpResources,
   attachedUrlBookmarks,
-  hasSignedInSession,
 } from "@/client/chat/context-sources"
 import { runAttachmentsFor } from "@/client/runs/attachments"
 import { latestTurnPersona, resolveTurnPersona } from "@/shared/agents/turn-persona"
@@ -75,7 +67,6 @@ import { buildRunInput, fitSandboxFilesToRun } from "@/client/runs/build-input"
 import { localMcpForRun } from "@/client/runs/local-mcp"
 import { registerChatRunBridge } from "@/client/runs/chat-bridge"
 import { createChatRunner, type ChatRunner } from "@/client/runs/chat-runner"
-import { RUNS_CHAT_ENABLED } from "@/client/runs/config"
 
 export interface SendOptions {
   modelOverride?: string
@@ -136,32 +127,6 @@ function sandboxSourcesFor(
 }
 
 export function useChatSend(): UseChatSendResult {
-  // --- store mutators read internally (no panel-side dep array) ---
-  const addMessage = useStore((s) => s.addMessage)
-  const deleteMessage = useStore((s) => s.deleteMessage)
-  const appendToMessage = useStore((s) => s.appendToMessage)
-  const appendToMessageReasoning = useStore((s) => s.appendToMessageReasoning)
-  const setMessageError = useStore((s) => s.setMessageError)
-  const setMessageReasoningDuration = useStore(
-    (s) => s.setMessageReasoningDuration
-  )
-  const setMessageToolCalls = useStore((s) => s.setMessageToolCalls)
-  const setMessageSuggestions = useStore((s) => s.setMessageSuggestions)
-  const setMessageVerification = useStore((s) => s.setMessageVerification)
-  const setMessageRoutedModel = useStore((s) => s.setMessageRoutedModel)
-  const appendMessageGeneratedImages = useStore(
-    (s) => s.appendMessageGeneratedImages
-  )
-  const appendMessageGeneratedFiles = useStore(
-    (s) => s.appendMessageGeneratedFiles
-  )
-  const appendMessageCodeResult = useStore((s) => s.appendMessageCodeResult)
-  const appendMessageUiPart = useStore((s) => s.appendMessageUiPart)
-  const appendMessageMcpApp = useStore((s) => s.appendMessageMcpApp)
-  const setConversationTyping = useStore((s) => s.setConversationTyping)
-  const setConversationStreaming = useStore((s) => s.setConversationStreaming)
-  const createArtifact = useStore((s) => s.createArtifact)
-
   // Slices the pipeline reads when assembling the request. Subscribing
   // keeps the resolved messages array fresh between turns; `getState()`
   // is reserved for values that *must* be read at-send-time
@@ -180,12 +145,6 @@ export function useChatSend(): UseChatSendResult {
   // context). Subscribed so an edit takes effect on the next turn.
   const customInstructionsStyle = useStore((s) => s.customInstructionsStyle)
   const customInstructionsAbout = useStore((s) => s.customInstructionsAbout)
-  // Cross-conversation memory opt-in. Subscribed so toggling it takes
-  // effect on the next turn; read at finalization time to decide whether
-  // to fire the best-effort extraction. The server self-gates again on
-  // `profiles.memory_enabled`, so this is purely a "don't even ask" guard.
-  const memoryEnabled = useStore((s) => s.memoryEnabled)
-
   // --- own state / refs (used to live on the chat panel) ---
   // In-flight streams live in the store (not local state) so `useSync`
   // can hold per-token message diffs until each stream settles.
@@ -197,9 +156,6 @@ export function useChatSend(): UseChatSendResult {
   const [liveToolCalls, setLiveToolCalls] = useState<
     Record<string, LiveToolCall[]>
   >({})
-  // Per-conversation abort controllers. Stop on the active conv aborts
-  // *that* controller only; sibling conversations keep streaming.
-  const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
   // Chat on agent-py's runs API ("agent-py (runs)") — its sessions,
   // Stop → cancel, pointer, rejoin and the answer-card bridge
   // (`lib/client/runs/chat-runner.ts`). Reads the store fresh; the
@@ -210,9 +166,7 @@ export function useChatSend(): UseChatSendResult {
       setLiveToolCalls,
       loadSession: () => import("@/client/runs/session"),
       resolveTarget: async () =>
-        RUNS_CHAT_ENABLED
-          ? (await import("@/client/api/backend-resolver")).resolveRunsTarget()
-          : null,
+        (await import("@/client/api/backend-resolver")).resolveRunsTarget(),
       cancelRun: (runId, opts) => apiClient.runs.cancel(runId, opts),
       buildRunInput,
       autoArchive: (messageId, conversationId) => {
@@ -294,69 +248,16 @@ export function useChatSend(): UseChatSendResult {
     })
   )
 
-  // Long-running task mode. The provider owns the active run so the chat
-  // panel + Tasks panel share it. Ref so the pipeline can reach
-  // `startTask` without depending on the context's React identity.
-  const taskRun = useTaskRunContext()
-  const taskRunRef = useRef(taskRun)
-  useEffect(() => {
-    taskRunRef.current = taskRun
-  }, [taskRun])
-  // Tasks on runs (wave 6): when the tasks interface launches on runs,
-  // a task turn goes there instead (Q61).
+  // Tasks on runs (wave 6): a task turn launches a background run (Q61).
   const tasks = useTasks()
   const tasksRef = useRef(tasks)
   useEffect(() => {
     tasksRef.current = tasks
   }, [tasks])
 
-  // --- shared local helpers ---
-  const mockAIResponse = useCallback(
-    (userMessage: string, convId: string) => {
-      setConversationTyping(convId, true)
-      setTimeout(() => {
-        const reasoning = [
-          `User asked: "${userMessage}".`,
-          "",
-          "Step 1 — Parse the request: they want a brief explanation.",
-          "Step 2 — Consider whether any state is relevant. The mock path doesn't actually call a model, so I'll keep this short.",
-          "Step 3 — Draft a reply that makes the mock origin obvious so it isn't confused with real model output.",
-        ].join("\n")
-        const aiContent = `_Mock response (set \`AI_GATEWAY_API_KEY\` to enable real AI)_\n\nRegarding "${userMessage}": this is placeholder text.`
-        addMessage({ role: "assistant", content: aiContent, reasoning }, convId)
-        setConversationTyping(convId, false)
-      }, 300)
-    },
-    [setConversationTyping, addMessage]
-  )
-
-  // Auto-archive code blocks after a stream completes. Re-read the
-  // message from the store (the streaming loop's `Message` reference is
-  // stale because `appendToMessage` updates immutably) and hand it to
-  // the pure helper.
-  const autoArchiveCodeBlocks = useCallback(
-    (assistantMessageId: string, conversationId: string) => {
-      const conv = useStore
-        .getState()
-        .conversations.find((c) => c.id === conversationId)
-      const message = conv?.messages.find((m) => m.id === assistantMessageId)
-      if (!message) return
-      autoArchiveCodeBlocksPure(
-        {
-          content: message.content,
-          messageId: assistantMessageId,
-          conversationId,
-        },
-        createArtifact
-      )
-    },
-    [createArtifact]
-  )
-
-  // Latest-version ref so the hook can call back into itself (auto-
-  // retry-once) without becoming a stale closure across renders.
-  // Declared before `callChatAPI` (which reads it) and synced in an
-  // effect below, per react-hooks/immutability.
+  // Latest-version ref so `send` stays stable without becoming a stale
+  // closure across renders. Synced in an effect below, per
+  // react-hooks/immutability.
   const callChatAPIRef = useRef<
     ((history: Message[], options?: SendOptions) => Promise<void>) | null
   >(null)
@@ -423,7 +324,7 @@ export function useChatSend(): UseChatSendResult {
         mutedSkillIds: options?.mutedSkillIds,
       })
 
-      // Attachments + API-shaped message list via the pure helpers.
+      // Attachments via the pure helper.
       const { attachedFiles, attachedImageFiles } = buildAttachments({
         conversation: conv,
         files,
@@ -431,19 +332,14 @@ export function useChatSend(): UseChatSendResult {
       })
       // Image data URLs live in IndexedDB since store v32.
       const attachedImageUrls = await getFileImageDataUrls(attachedImageFiles)
-      const buildMessages = () =>
-        buildTransmittedMessages(history, attachedImageUrls)
 
-      // Task mode: hand off to the shared task runner (Tasks panel). It
-      // switches a model the worker can't run — a persona's, `auto`, the
-      // chat's own — for this launch, with a note (Q55).
-      // On runs (wave 6, Q71): the attached images go in the message (as
-      // here, by value), never `attachments`; `research` for `/research`;
-      // the persona's MCP allow-list; "store files locally". The tasks
-      // interface switches a model the worker can't run (Q55).
+      // Task mode (wave 6, Q71): a background run. The attached images go
+      // in the message (by value), never `attachments`; `research` for
+      // `/research`; the persona's MCP allow-list; "store files locally".
+      // The tasks interface switches a model the worker can't run (Q55).
       if (options?.asTask) {
         const taskInput: TaskRequestInput = {
-          messages: buildMessages() as TaskRequestInput["messages"],
+          messages: buildTransmittedMessages(history, attachedImageUrls) as TaskRequestInput["messages"],
           conversationId: targetConvId,
           model: modelForCall,
           workspaceSystemPrompt,
@@ -455,55 +351,32 @@ export function useChatSend(): UseChatSendResult {
           ...(allowedMcpServerIds ? { allowedMcpServerIds } : {}),
           ...(useStore.getState().localFilesOnly ? { localFilesOnly: true } : {}),
         }
+        // Still reading the session: no launch yet, and no refusal.
+        const { availability } = tasksRef.current
+        if (!availability.ok && availability.reason === "loading") return
         // The task is titled by its goal (the turn's text); the list shows
         // its conversation's name under it.
         const goal = [...history].reverse().find((m) => m.role === "user")?.content ?? ""
-        if (launchesOnRuns(tasksRef.current)) {
-          // runCode's files (Q93): a background run mounts cloud files only,
-          // by id — a local file can't reach the worker.
-          const sandboxFiles = enabledSkills.some((s) => s.id === "codeInterpreter")
-            ? attachedFiles
-                .filter((f) => f.storagePath)
-                .slice(0, 10)
-                .map((f) => ({ name: f.name, fileId: f.id }))
-            : []
-          await launchTaskOnRuns(
-            tasksRef.current,
-            sandboxFiles.length > 0 ? { ...taskInput, sandboxFiles } : taskInput,
-            { title: goal }
-          )
-          return
-        }
-        // The old path drives one task at a time: a resend of a task turn
-        // (bug 4) must not replace the one being watched.
-        if (taskRunRef.current.isRunning) {
-          toast.error("A task is already running. Cancel it first.")
-          return
-        }
-        // Still reading the session: neither path yet, and no refusal.
-        if (
-          tasksRef.current.availability.ok === false &&
-          tasksRef.current.availability.reason === "loading"
-        ) {
-          return
-        }
-        // Tasks need sign-in on this path too (bug 20): a resend can get here.
-        if (!(await hasSignedInSession())) {
-          toast.error("Sign in to run tasks.")
-          return
-        }
-        taskRunRef.current.startTask(taskInput, { title: goal })
+        // runCode's files (Q93): a background run mounts cloud files only,
+        // by id — a local file can't reach the worker.
+        const sandboxFiles = enabledSkills.some((s) => s.id === "codeInterpreter")
+          ? attachedFiles
+              .filter((f) => f.storagePath)
+              .slice(0, 10)
+              .map((f) => ({ name: f.name, fileId: f.id }))
+          : []
+        await launchTaskOnRuns(
+          tasksRef.current,
+          sandboxFiles.length > 0 ? { ...taskInput, sandboxFiles } : taskInput,
+          { title: goal }
+        )
         return
       }
 
-      // Chat on agent-py's runs API ("agent-py (runs)", Q33):
-      // `resolveRunsTarget()` is `null` unless that option is selected and
-      // agent-py configured — then the path below runs exactly as before.
-      // Signed-out users get a target too (anonymous runs, Q34), so no
-      // `authToken` / mock fallback here. An anonymous run's attached
-      // images go as the newest user message's parts (their data URLs, as
-      // `buildMessages` sends them), and the reasoning tier as `/v1/chat`
-      // sends it. The contract-0.4.0 options
+      // Chat on agent-py's runs API (Q33). Signed-out users get a target
+      // too (anonymous runs, Q34). An anonymous run's attached images go as
+      // the newest user message's parts (their data URLs), and the
+      // reasoning tier where the model has one. The contract-0.4.0 options
       // go too where they are at hand (the memory opt-out, citation
       // checks, `localFilesOnly`, the I2I reference, the persona's MCP
       // allow-list, the local MCP servers with their credentials in
@@ -513,507 +386,68 @@ export function useChatSend(): UseChatSendResult {
       // and an anonymous run's by value. With the code interpreter on, the
       // attached files `runCode` may mount go as `sandboxFiles` (wave 8):
       // cloud ones by id, local ones with their bytes while they fit.
-      const runsTarget = RUNS_CHAT_ENABLED
-        ? await (
-            await import("@/client/api/backend-resolver")
-          ).resolveRunsTarget()
-        : null
-      if (runsTarget) {
-        // Q35: a new message while a turn is paused cancels the paused run.
-        await runner.supersedeInterrupted(targetConvId, runsTarget)
-        await runner.send({
+      const runsTarget = await (
+        await import("@/client/api/backend-resolver")
+      ).resolveRunsTarget()
+      // Q35: a new message while a turn is paused cancels the paused run.
+      await runner.supersedeInterrupted(targetConvId, runsTarget)
+      await runner.send({
+        conversationId: targetConvId,
+        history,
+        target: runsTarget,
+        model: modelForCall,
+        isRetry,
+        body: buildRunInput({
           conversationId: targetConvId,
           history,
-          target: runsTarget,
           model: modelForCall,
-          isRetry,
-          body: buildRunInput({
-            conversationId: targetConvId,
-            history,
-            model: modelForCall,
-            systemPrompt: workspaceSystemPrompt,
-            skills: enabledSkills,
-            workspaceId: activeWorkspaceId || undefined,
-            // Signed in: the image files go by id (`attachments`).
-            images: runsTarget.authToken ? [] : attachedImageUrls,
-            attachments: runAttachmentsFor({
-              files: attachedFiles,
-              retrievalModes: conv?.fileRetrievalModes,
-              mcpResources: attachedMcpResources(conv, useStore.getState()),
-              bookmarks: attachedUrlBookmarks(conv, useStore.getState()),
-              cloud: runsTarget.authToken !== null,
-            }),
-            reasoningEffort: modelSupportsReasoningEffort(modelForCall)
-              ? useStore.getState().chatReasoningEffort ?? undefined
-              : undefined,
-            memoryBypass: conv?.memoryOff || undefined,
-            verifyCitations: useStore.getState().verifyCitations || undefined,
-            localFilesOnly: useStore.getState().localFilesOnly || undefined,
-            referenceImage: options?.referenceImage,
-            allowedMcpServerIds,
-            sandboxFiles: enabledSkills.some((s) => s.id === "codeInterpreter")
-              ? fitSandboxFilesToRun(
-                  await buildSandboxFiles(sandboxSourcesFor(attachedFiles))
-                )
-              : undefined,
-            // Local MCP servers (Q42/Q45) — the `/v1/chat` body's
-            // `mcpServersForRequest` below; credentials go in `state`.
-            ...localMcpForRun(
-              useStore.getState().mcpServers,
-              activeWorkspaceId,
-              getLocalCred,
-              { allowedMcpServerIds }
-            ),
+          systemPrompt: workspaceSystemPrompt,
+          skills: enabledSkills,
+          workspaceId: activeWorkspaceId || undefined,
+          // Signed in: the image files go by id (`attachments`).
+          images: runsTarget.authToken ? [] : attachedImageUrls,
+          attachments: runAttachmentsFor({
+            files: attachedFiles,
+            retrievalModes: conv?.fileRetrievalModes,
+            mcpResources: attachedMcpResources(conv, useStore.getState()),
+            bookmarks: attachedUrlBookmarks(conv, useStore.getState()),
+            cloud: runsTarget.authToken !== null,
           }),
-        })
-        return
-      }
-      // Off runs now: a turn paused on runs earlier can't be answered any
-      // more — forget it (local state only; nothing else changes here).
-      void runner.supersedeInterrupted(targetConvId, null)
-
-      const controller = new AbortController()
-      // If this conversation already has an in-flight controller
-      // (very rare — user double-clicks Send before the previous turn
-      // lands a placeholder), abort the old one first so we don't leak
-      // its event listener.
-      abortControllersRef.current.get(targetConvId)?.abort()
-      abortControllersRef.current.set(targetConvId, controller)
-      setConversationTyping(targetConvId, true)
-      setConversationStreaming(targetConvId, true)
-      // The stream's per-frame handling + local state (placeholder created
-      // on the first output frame, tool-call buffer, reasoning timers,
-      // `error` / `memory_tainted`) — `turn-writer.ts`, shared with chat
-      // on runs.
-      const writer = createTurnWriter(
-        {
-          addMessage,
-          setConversationTyping,
-          appendToMessage,
-          appendToMessageReasoning,
-          appendMessageGeneratedImages,
-          appendMessageGeneratedFiles,
-          appendMessageCodeResult,
-          appendMessageUiPart,
-          appendMessageMcpApp,
-          setMessageSuggestions,
-          setMessageVerification,
-          setMessageRoutedModel,
-          setMessageToolCalls,
-          createArtifact,
-          setLiveToolCalls,
-        },
-        { conversationId: targetConvId }
-      )
-
-      const surfaceError = (error: MessageError) => {
-        setConversationTyping(targetConvId, false)
-        const placeholder = writer.placeholder
-        if (placeholder) {
-          setMessageError(placeholder.id, error)
-        } else {
-          const created = addMessage(
-            { role: "assistant", content: "" },
-            targetConvId
-          )
-          setMessageError(created.id, error)
-        }
-      }
-
-      // MCP servers for this turn. Local-mode creds come straight from
-      // localStorage; cloud-mode rows stay out of the body (server looks
-      // them up via Supabase + pgcrypto).
-      const mcpStore = useStore.getState()
-      const mcpServersForRequest = mcpStore.mcpServers
-        .filter(
-          (s) =>
-            s.workspaceId === activeWorkspaceId &&
-            !s.deletedAt &&
-            s.enabled &&
-            s.credentialMode === "local" &&
-            // A blocked server's credential never leaves the browser.
-            (!allowedMcpServerIds || allowedMcpServerIds.includes(s.id)) &&
-            (s.capabilities?.tools?.length ?? 0) > 0
-        )
-        .map((s) => ({
-          id: s.id,
-          name: s.name,
-          url: s.url,
-          transport: s.transport,
-          enabled: s.enabled,
-          capabilities: s.capabilities,
-          credentials: getLocalCred(s.id) ?? undefined,
-        }))
-
-      // Unified attachments — files + MCP resources + URL bookmarks in
-      // one discriminated array. Workspace-ticked + conversation-pinned,
-      // de-duped per kind, tombstones filtered.
-      const attachmentsForRequest: ChatRequestInput["attachments"] = []
-
-      const retrievalModes = conv?.fileRetrievalModes ?? {}
-      // Signed in → the files are synced rows the server can search: send
-      // their ids (Q47; `searchFiles` takes a `fileId`).
-      const cloudFiles =
-        attachedFiles.length > 0 && (await hasSignedInSession())
-      for (const file of attachedFiles) {
-        const mode = retrievalModes[file.id] ?? "inline"
-        attachmentsForRequest.push({
-          kind: "file",
-          summary: {
-            ...(cloudFiles ? { id: file.id } : {}),
-            name: file.name,
-            size: file.size,
-            type: file.type,
-            // Suppress the inline body for RAG-mode attachments — the
-            // server renders a short "available via searchFiles" note
-            // instead of the full text. We still send `truncated` and
-            // `kind` so the meta block (filename / type / size) stays
-            // accurate. Setting `text` to undefined keeps the wire
-            // shape clean.
-            text: mode === "rag" ? undefined : file.extractedText,
-            truncated:
-              mode === "rag" ? undefined : file.extractionTruncated,
-            kind: file.extractedKind,
-            // Only emit the field when non-default to keep cache-hit
-            // friendliness — an unchanged prefix matters for the
-            // Vercel Gateway's auto-cache story.
-            ...(mode === "rag" ? { retrievalMode: "rag" as const } : {}),
-          },
-        })
-      }
-
-      for (const resource of attachedMcpResources(conv, mcpStore)) {
-        attachmentsForRequest.push({
-          kind: "mcp_resource",
-          ref: {
-            id: resource.id,
-            serverId: resource.serverId,
-            uri: resource.uri,
-            name: resource.name,
-            mimeType: resource.mimeType,
-          },
-        })
-      }
-
-      for (const bookmark of attachedUrlBookmarks(conv, mcpStore)) {
-        attachmentsForRequest.push({
-          kind: "url_bookmark",
-          bookmark: {
-            id: bookmark.id,
-            url: bookmark.url,
-            title: bookmark.title,
-            content: bookmark.content,
-            contentTruncated: bookmark.contentTruncated,
-            fetchedAt: toISO(bookmark.fetchedAt),
-          },
-        })
-      }
-
-      // Snapshot the user's local-files-only preference at send-time;
-      // the server routes generated images to Storage vs. data URLs
-      // based on this.
-      const localFilesOnly = useStore.getState().localFilesOnly
-      // Opt-in citation verification (account-menu toggle). Snapshotted
-      // at send-time; the server only acts on it for retrieval turns that
-      // produced cited claims. See PLAN-citation-verifiability.md.
-      const verifyCitations = useStore.getState().verifyCitations
-      // Phase 4-2 backend selector + Phase 5 of PLAN-agent-ts. The
-      // resolver reads `chatBackend` from the store + grabs the
-      // Supabase JWT lazily; null means "in-Next route, no token
-      // needed." Shared with the four non-chat endpoints in
-      // `apiClient.{summarize,mcp,url,images}.*` so divergence is
-      // impossible. `'python-runs'` ("agent-py (runs)") took the runs
-      // path above whenever it resolved a target; when it didn't
-      // (agent-py unconfigured) it is sent as `'python'` here.
-      const { resolveRemoteBackend } = await import(
-        "@/client/api/backend-resolver"
-      )
-      const remoteCtx = await resolveRemoteBackend()
-      const chatBackend = remoteCtx?.backend ?? "ts"
-      const authToken = remoteCtx?.authToken ?? null
-
-      // Code-interpreter mount manifest (PR-2). Only when the
-      // codeInterpreter skill is enabled for THIS send: map the same
-      // attached files used above into sources. Cloud files (with a
-      // `storagePath`) ride as bytes-less entries — the server
-      // downloads them by fileId under the user's RLS. Local-only files
-      // read their bytes from the IndexedDB blob cache (`getBlob`, the
-      // same store attachments use). Skipped entirely otherwise so the
-      // field stays absent on the wire.
-      let sandboxFiles: ChatRequestInput["sandboxFiles"]
-      if (enabledSkills.some((s) => s.id === "codeInterpreter")) {
-        const built = await buildSandboxFiles(sandboxSourcesFor(attachedFiles))
-        if (built.length > 0) sandboxFiles = built
-      }
-
-      try {
-        const result = await apiClient.chat.stream(
-          {
-            model: modelForCall,
-            messages: buildMessages() as ChatRequestInput["messages"],
-            workspaceSystemPrompt,
-            ...(conv?.memoryOff ? { memoryBypass: true } : {}),
-            workspaceId: activeWorkspaceId || undefined,
-            skills: enabledSkills,
-            mcpServers:
-              mcpServersForRequest.length > 0
-                ? mcpServersForRequest
-                : undefined,
-            // Q48: the persona's MCP allow-list, filtered server-side.
-            allowedMcpServerIds,
-            attachments:
-              attachmentsForRequest.length > 0
-                ? attachmentsForRequest
-                : undefined,
-            sandboxFiles,
-            referenceImage: options?.referenceImage,
-            localFilesOnly: localFilesOnly || undefined,
-            verifyCitations: verifyCitations || undefined,
-            // Only send the reasoning tier when the active model exposes
-            // the knob; harmless otherwise (the route maps it to {} for
-            // unsupported providers), but keeps the wire clean.
-            reasoningEffort: modelSupportsReasoningEffort(modelForCall)
-              ? useStore.getState().chatReasoningEffort ?? undefined
-              : undefined,
-          },
-          {
-            signal: controller.signal,
-            backend: chatBackend,
-            authToken,
-          }
-        )
-
-        if (!result.ok) {
-          // REQUIRE_AUTH_FOR_AI: the caller must sign in. Typed bubble
-          // with a Sign in action — never the no-key mock fallback below.
-          if (isAuthRequiredError(result.error)) {
-            surfaceError({
-              code: "auth_required",
-              status: result.status,
-              model: modelForCall,
-            })
-            return
-          }
-          if (result.status === 401) {
-            setConversationTyping(targetConvId, false)
-            setConversationStreaming(targetConvId, false)
-            const lastUser = [...history]
-              .reverse()
-              .find((m) => m.role === "user")
-            if (lastUser) mockAIResponse(lastUser.content, targetConvId)
-            return
-          }
-          surfaceError({
-            code: (result.error?.code as MessageErrorCode) || "unknown",
-            status: result.status,
-            model: modelForCall,
-            detail: result.error?.message,
-          })
-          return
-        }
-
-        if (!result.body) {
-          surfaceError({
-            code: "provider",
-            status: result.status,
-            model: modelForCall,
-            detail: "No response body.",
-          })
-          return
-        }
-
-        const reader = result.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ""
-
-        // SSE frames: `data: <json>\n\n`, each applied by the writer.
-        outer: while (true) {
-          const { value, done } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-
-          let nlIndex: number
-          while ((nlIndex = buffer.indexOf("\n\n")) !== -1) {
-            const frame = buffer.slice(0, nlIndex)
-            buffer = buffer.slice(nlIndex + 2)
-            if (!frame.startsWith("data:")) continue
-            const payload = frame.slice(5).trim()
-            if (!payload) continue
-            // AI SDK v5 UI message stream terminator. PLAN-useChat-
-            // adoption.md Phase B.2 — the consumer accepts both the
-            // custom format and the AI SDK shape side-by-side.
-            if (payload === "[DONE]") break outer
-            const translated = translateFrame(payload)
-            if (!translated) continue
-            if (writer.handleFrame(translated) === "stop") break outer
-          }
-        }
-
-        const { streamError, memoryTainted, toolCalls, reasoningStart, reasoningLast } =
-          writer
-        const placeholder = writer.placeholder
-        if (streamError) {
-          surfaceError({
-            code: (streamError.code as MessageErrorCode) || "unknown",
-            model: modelForCall,
-            detail: streamError.message,
-          })
-        } else if (writer.firstChunk) {
-          surfaceError({
-            code: "provider",
-            model: modelForCall,
-            detail: "The model returned an empty response.",
-          })
-        } else if (placeholder) {
-          const ph = placeholder as Message
-          // Pass the id, not the captured Message — the local reference
-          // is stale; auto-archive re-reads streamed content from the
-          // store. Conversation id is captured from targetConvId so a
-          // stream that finished while the user was on a different tab
-          // still archives into the originating conversation.
-          autoArchiveCodeBlocks(ph.id, targetConvId)
-          if (reasoningStart !== null && reasoningLast !== null) {
-            setMessageReasoningDuration(
-              ph.id,
-              Math.max(0, reasoningLast - reasoningStart)
-            )
-          }
-          // Flush live tool-call buffer onto the message so the pill
-          // survives reload. Drop the in-flight (running) entries:
-          // a tool that never returned doesn't belong in the durable
-          // record.
-          const persisted = toPersistedToolCalls(toolCalls)
-          if (persisted.length > 0) {
-            setMessageToolCalls(ph.id, persisted)
-          }
-
-          // Cross-conversation memory: best-effort, fire-and-forget
-          // extraction over THIS turn (latest user message + the
-          // just-finalized assistant reply). Gated on the opt-in flag so
-          // opted-out / anonymous users make zero calls; the route +
-          // `extractFacts` self-gate again on sign-in + memory_enabled.
-          // Read the assistant content fresh from the store — the
-          // `placeholder` reference is stale (appendToMessage is immutable).
-          const finalConv = useStore
-            .getState()
-            .conversations.find((c) => c.id === targetConvId)
-          if (memoryEnabled && !finalConv?.memoryOff) {
-            const assistantText =
-              finalConv?.messages.find((m) => m.id === ph.id)?.content ?? ""
-            const lastUserText =
-              [...history].reverse().find((m) => m.role === "user")?.content ??
-              ""
-            const turnText = [
-              lastUserText && `User: ${lastUserText}`,
-              assistantText && `Assistant: ${assistantText}`,
-            ]
-              .filter(Boolean)
-              .join("\n\n")
-            if (turnText.trim()) {
-              extractAfterTurn(turnText, targetConvId, { tainted: memoryTainted })
-            }
-          }
-        }
-      } catch (err) {
-        const aborted =
-          (err instanceof DOMException && err.name === "AbortError") ||
-          controller.signal.aborted
-        const ph = writer.placeholder
-        if (aborted) {
-          if (ph && ph.content === "") {
-            deleteMessage(ph.id)
-          }
-        } else {
-          // Distinguish offline from generic network failure.
-          const offline =
-            typeof navigator !== "undefined" && navigator.onLine === false
-          // Auto-retry-once decision is the pure policy in
-          // `auto-retry-decision.ts` so the rules can be unit-tested
-          // without a React + Zustand harness. The caller handles the
-          // 1 s timer + the `isRetry: true` flag + the surface-error
-          // fallback.
-          if (shouldAutoRetry({ isRetry, offline, placeholderEmpty: !ph || ph.content === "" })) {
-            if (ph) deleteMessage(ph.id)
-            setConversationTyping(targetConvId, false)
-            setConversationStreaming(targetConvId, false)
-            setTimeout(() => {
-              void callChatAPIRef.current?.(history, {
-                modelOverride: options?.modelOverride,
-                isRetry: true,
-              })
-            }, 1000)
-            return
-          }
-          const detail = offline
-            ? "You appear to be offline. Reconnect and click Retry."
-            : err instanceof Error
-              ? err.message
-              : "Network error"
-          surfaceError({
-            code: "network",
-            model: modelForCall,
-            detail,
-          })
-        }
-      } finally {
-        setConversationTyping(targetConvId, false)
-        // Drop live tool-call pills now that the stream is finished.
-        // The durable record lives on the message via setMessageToolCalls.
-        const ph = writer.placeholder
-        if (ph) {
-          setLiveToolCalls((prev) => {
-            if (!(ph.id in prev)) return prev
-            const next = { ...prev }
-            delete next[ph.id]
-            return next
-          })
-        }
-        // Clear this conv's controller entry only if it's still the
-        // one we set — guards against a follow-up send for the same
-        // conv overwriting the slot. Same guard for the streaming flag:
-        // a superseded stream must not end the hold `useSync` keeps on
-        // the newer stream's message diffs. Clearing it is what releases
-        // that hold, so the final message state (incl. the tool calls /
-        // reasoning duration stamped above) syncs exactly once here.
-        if (abortControllersRef.current.get(targetConvId) === controller) {
-          abortControllersRef.current.delete(targetConvId)
-          setConversationStreaming(targetConvId, false)
-        }
-      }
+          reasoningEffort: modelSupportsReasoningEffort(modelForCall)
+            ? useStore.getState().chatReasoningEffort ?? undefined
+            : undefined,
+          memoryBypass: conv?.memoryOff || undefined,
+          verifyCitations: useStore.getState().verifyCitations || undefined,
+          localFilesOnly: useStore.getState().localFilesOnly || undefined,
+          referenceImage: options?.referenceImage,
+          allowedMcpServerIds,
+          sandboxFiles: enabledSkills.some((s) => s.id === "codeInterpreter")
+            ? fitSandboxFilesToRun(
+                await buildSandboxFiles(sandboxSourcesFor(attachedFiles))
+              )
+            : undefined,
+          // Local MCP servers (Q42/Q45); credentials go in `state`.
+          ...localMcpForRun(
+            useStore.getState().mcpServers,
+            activeWorkspaceId,
+            getLocalCred,
+            { allowedMcpServerIds }
+          ),
+        }),
+      })
     },
     // Reads via getState() (chatModel, MCP state, localFilesOnly) and
-    // refs (taskRunRef, callChatAPIRef) intentionally don't appear in
-    // the deps — fresh-at-send-time / latest-version are the invariants.
+    // refs (tasksRef) intentionally don't appear in the deps —
+    // fresh-at-send-time / latest-version are the invariants.
     [
       activeConversationId,
       activeWorkspaceId,
-      addMessage,
-      appendMessageGeneratedImages,
-      appendMessageGeneratedFiles,
-      appendMessageCodeResult,
-      appendMessageUiPart,
-      appendToMessage,
-      appendMessageMcpApp,
-      appendToMessageReasoning,
-      autoArchiveCodeBlocks,
       conversationFiles,
       conversations,
-      createArtifact,
       customInstructionsAbout,
       customInstructionsStyle,
-      deleteMessage,
       files,
-      memoryEnabled,
-      mockAIResponse,
       runner,
-      setConversationStreaming,
-      setConversationTyping,
-      setMessageError,
-      setMessageReasoningDuration,
-      setMessageRoutedModel,
-      setMessageSuggestions,
-      setMessageVerification,
-      setMessageToolCalls,
       userSkills,
       workspaces,
     ]
@@ -1023,19 +457,14 @@ export function useChatSend(): UseChatSendResult {
     callChatAPIRef.current = callChatAPI
   }, [callChatAPI])
 
-  // A conversation deleted mid-stream — here, or in another tab (the
-  // cross-tab merge lets that delete win) — has its stream aborted, so
-  // it stops writing into a conversation that no longer exists.
+  // A conversation deleted mid-run — here, or in another tab (the
+  // cross-tab merge lets that delete win) — is detached from its run (the
+  // run goes on server-side, but nothing writes into a conversation
+  // that's gone); its pointers and paused turns are dropped.
   useEffect(
     () =>
       useStore.subscribe((state, prev) => {
         if (state.conversations === prev.conversations) return
-        abortStreamsOfDeletedConversations(
-          abortControllersRef.current,
-          state.conversations
-        )
-        // Runs: detach (the run goes on server-side, but nothing writes
-        // into a conversation that's gone), drop pointers + paused turns.
         runner.forgetDeleted(state.conversations, prev.conversations)
       }),
     [runner]
@@ -1072,9 +501,8 @@ export function useChatSend(): UseChatSendResult {
     // Stop only the *active* conv's stream. Other conversations
     // mid-stream stay running — each has its own controller.
     if (!activeConversationId) return
-    // Runs: Stop cancels the run on the server (Q36).
-    if (runner.stop(activeConversationId)) return
-    abortControllersRef.current.get(activeConversationId)?.abort()
+    // Stop cancels the run on the server (Q36).
+    runner.stop(activeConversationId)
   }, [activeConversationId, runner])
 
   const isStreaming = useCallback(
