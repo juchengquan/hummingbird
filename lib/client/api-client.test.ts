@@ -905,3 +905,134 @@ describe("python-runs — non-chat dispatch is identical to python", () => {
     expect(runs).toEqual(python)
   })
 })
+
+// --- wave 12: signed-out calls on agent-py + the extract dispatch -------------
+
+/** A signed-out `python-runs` browser's dispatch (Q123/Q134). */
+const ANONYMOUS: RemoteDispatch = {
+  backend: "python-runs",
+  baseUrl: "https://agent-py.example",
+  authToken: null,
+}
+
+describe("anonymous remote dispatch (no session) sends no Authorization", () => {
+  const bookmark = {
+    ok: true,
+    bookmark: { url: "https://e.test", title: "x", content: "", contentTruncated: false, contentHash: "0" },
+  }
+  const cases: [string, () => Promise<unknown>, unknown, string][] = [
+    ["url.fetch", () => apiClient.url.fetch("https://e.test", { dispatch: "remote", remote: ANONYMOUS }), bookmark, "/v1/url/fetch"],
+    [
+      "summarize.file",
+      () => apiClient.summarize.file({ mode: "file", text: "t" }, { dispatch: "remote", remote: ANONYMOUS }),
+      { summary: "s" },
+      "/v1/summarize",
+    ],
+    [
+      "mcp.proxy",
+      () =>
+        apiClient.mcp.proxy("discover", { server: { id: "s1" } }, { dispatch: "remote", remote: ANONYMOUS }),
+      { capabilities: {} },
+      "/v1/mcp/s1/discover",
+    ],
+    [
+      "artifacts.extractTable",
+      () =>
+        apiClient.artifacts.extractTable(
+          { reportText: "r", sources: [{ title: "t", url: "https://x.test", snippet: "s" }] },
+          { dispatch: "remote", remote: ANONYMOUS },
+        ),
+      { columns: [], rows: [], sources: [] },
+      "/v1/extract-table",
+    ],
+    [
+      "embed.file",
+      () => apiClient.embed.file({ fileId: "f", text: "t" }, { dispatch: "remote", remote: ANONYMOUS }),
+      { status: "skipped", sections: 0, reason: "not_signed_in" },
+      "/v1/embed",
+    ],
+  ]
+  for (const [name, run, jsonBody, path] of cases) {
+    test(`${name} → agent-py ${path}, no bearer`, async () => {
+      const log = installFetchStub({ jsonBody })
+      await run()
+      expect(log).toHaveLength(1)
+      expect(log[0].url).toBe(`https://agent-py.example${path}`)
+      expect(log[0].authorization).toBeUndefined()
+    })
+  }
+
+  test("embed.file reads the anonymous skip (not_signed_in) as a result, not a failure", async () => {
+    installFetchStub({ jsonBody: { status: "skipped", sections: 0, reason: "not_signed_in" } })
+    const res = await apiClient.embed.file({ fileId: "f", text: "t" }, { dispatch: "remote", remote: ANONYMOUS })
+    expect(res).toEqual({ status: "skipped", sections: 0, reason: "not_signed_in" })
+  })
+})
+
+describe("apiClient.extract — agent-py dispatch (wave 12)", () => {
+  interface FormCall {
+    url: string
+    authorization?: string
+    file?: File
+    signal?: AbortSignal | null
+  }
+  function installFormStub(jsonBody: unknown, status = 200): FormCall[] {
+    const log: FormCall[] = []
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>
+      const form = init?.body instanceof FormData ? init.body : null
+      log.push({
+        url: input.toString(),
+        authorization: headers["Authorization"],
+        file: (form?.get("file") as File | null) ?? undefined,
+        signal: init?.signal,
+      })
+      return new Response(JSON.stringify(jsonBody), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      })
+    }) as typeof fetch
+    return log
+  }
+  const file = new File(["hello"], "notes.txt", { type: "text/plain" })
+  const result = { kind: "text" as const, text: "hello", truncated: false, fullText: "hello and more" }
+
+  test("python → agent-py /v1/extract with the bearer, the file as multipart", async () => {
+    const log = installFormStub(result)
+    const res = await apiClient.extract(file, { dispatch: "remote", remote: REMOTE })
+    expect(res).toEqual(result)
+    expect(log).toHaveLength(1)
+    expect(log[0].url).toBe("https://agent-py.example/v1/extract")
+    expect(log[0].authorization).toBe("Bearer jwt-test-token")
+    expect(log[0].file?.name).toBe("notes.txt")
+  })
+
+  test("signed out on python-runs → agent-py /v1/extract, no bearer", async () => {
+    const log = installFormStub(result)
+    expect(await apiClient.extract(file, { dispatch: "remote", remote: ANONYMOUS })).toEqual(result)
+    expect(log[0].url).toBe("https://agent-py.example/v1/extract")
+    expect(log[0].authorization).toBeUndefined()
+  })
+
+  test("ts-service → the in-Next route, no bearer", async () => {
+    const log = installFormStub(result)
+    await apiClient.extract(file, { dispatch: "remote", remote: TS_SERVICE })
+    expect(log[0].url).toBe("/api/extract")
+    expect(log[0].authorization).toBeUndefined()
+  })
+
+  test("in-next → /api/extract; the abort signal is passed on", async () => {
+    const log = installFormStub(result)
+    const controller = new AbortController()
+    await apiClient.extract(file, { dispatch: "in-next", signal: controller.signal })
+    expect(log[0].url).toBe("/api/extract")
+    expect(log[0].signal).toBe(controller.signal)
+  })
+
+  test("a failure or an off-schema answer resolves null", async () => {
+    installFormStub({ code: "rate_limit", message: "slow" }, 429)
+    expect(await apiClient.extract(file, { dispatch: "remote", remote: REMOTE })).toBeNull()
+    installFormStub({ kind: "nope" })
+    expect(await apiClient.extract(file, { dispatch: "remote", remote: REMOTE })).toBeNull()
+  })
+})

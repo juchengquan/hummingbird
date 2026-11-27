@@ -89,8 +89,18 @@ import { notifyAuthRequired } from "@/client/auth/auth-required"
 export interface RemoteDispatch {
   backend: Exclude<ChatBackendOption, "ts">
   baseUrl: string
-  authToken: string
+  /** `null`: an anonymous call — signed out on `python-runs`, to one of
+   *  the endpoints agent-py serves signed out (wave 12, Q123/Q134). No
+   *  `Authorization` header is sent. */
+  authToken: string | null
 }
+
+/** Per-endpoint: whether agent-py serves it to a signed-out caller
+ *  (wave 12, Q123/Q134) — URL fetch, summarize, extract, extract-table,
+ *  the MCP proxy, embed. The account-bound ones (share, schedules, memory
+ *  extract, the stored-file links, cloud MCP) are not, and stay as they
+ *  were signed out. */
+type Anonymous = { anonymous?: boolean }
 
 /** Whether a backend choice is served by agent-py: `'python'` and
  *  `'python-runs'` ("agent-py (runs)", Q33) differ only in how a chat
@@ -145,6 +155,8 @@ export interface DispatchedFetchOptions<LocalBody, RemoteBody, T> {
   inflight?: Map<string, Promise<DispatchedFetchResult<T>>>
   dedupeKey?: string
   dispatch?: DispatchOption
+  /** The endpoint is served signed out (see `Anonymous`). */
+  anonymous?: boolean
 }
 
 /** Internal: turn a `DispatchOption` (or undefined) into a concrete
@@ -152,12 +164,13 @@ export interface DispatchedFetchOptions<LocalBody, RemoteBody, T> {
  *  Zustand store + Supabase client off any callgraph that doesn't
  *  actually need them. */
 async function resolveDispatch(
-  option: DispatchOption | undefined
+  option: DispatchOption | undefined,
+  scope?: Anonymous,
 ): Promise<RemoteDispatch | null> {
   if (option?.dispatch === "in-next") return null
   if (option?.dispatch === "remote") return option.remote
   const { resolveRemoteBackend } = await import("@/client/api/backend-resolver")
-  return resolveRemoteBackend()
+  return resolveRemoteBackend({ anonymous: scope?.anonymous === true })
 }
 
 /** For endpoints only agent-py implements (`/v1/extract-table`,
@@ -168,8 +181,9 @@ async function resolveDispatch(
  *  routes, so a `ts-service` account stays on the in-Next route. */
 async function agentPyOnlyDispatch(
   option: DispatchOption | undefined,
+  scope?: Anonymous,
 ): Promise<DispatchOption> {
-  const remote = await resolveDispatch(option)
+  const remote = await resolveDispatch(option, scope)
   return isAgentPyBackend(remote?.backend)
     ? { dispatch: "remote", remote }
     : { dispatch: "in-next" }
@@ -214,7 +228,9 @@ async function dispatchedFetch<LocalBody, RemoteBody, T>(
 
   const promise = (async (): Promise<DispatchedFetchResult<T>> => {
     try {
-      const remote = await resolveDispatch(options.dispatch)
+      const remote = await resolveDispatch(options.dispatch, {
+        anonymous: options.anonymous,
+      })
       const target = remote
         ? `${remote.baseUrl}${options.path}`
         : options.localUrl
@@ -223,7 +239,7 @@ async function dispatchedFetch<LocalBody, RemoteBody, T>(
       const headers: Record<string, string> = hasBody
         ? { "Content-Type": "application/json" }
         : {}
-      if (remote) headers.Authorization = `Bearer ${remote.authToken}`
+      if (remote?.authToken) headers.Authorization = `Bearer ${remote.authToken}`
       if (options.extraHeaders) {
         Object.assign(headers, options.extraHeaders)
       }
@@ -697,7 +713,9 @@ async function scheduleRequest(
     ? { "Content-Type": "application/json" }
     : {}
   if (dispatch.dispatch === "remote") {
-    headers.Authorization = `Bearer ${dispatch.remote.authToken}`
+    if (dispatch.remote.authToken) {
+      headers.Authorization = `Bearer ${dispatch.remote.authToken}`
+    }
     return { url: `${dispatch.remote.baseUrl}${remotePath}`, headers }
   }
   return { url: localUrl, headers }
@@ -804,20 +822,30 @@ async function schedulesDelete(
 // --- /api/extract -----------------------------------------------------------
 
 /**
- * Posts a file to /api/extract. Resolves to `null` on any failure —
+ * Posts a file for text extraction. Resolves to `null` on any failure —
  * callers (`runExtraction` in lib/extract.ts) treat that as a
  * pipeline failure and mark the file `failed`. We don't surface error
  * detail today because the file row's status badge carries that info.
+ *
+ * Goes to agent-py's `/v1/extract` on the agent-py backends — signed in,
+ * and signed out on `python-runs` (wave 12, Q123/Q134); agent-ts
+ * (frozen) and the in-Next backend keep `/api/extract`. Same multipart
+ * body and response on both.
  */
 async function extract(
   file: File,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal } & DispatchOption,
 ): Promise<ExtractionResponse | null> {
   const form = new FormData()
   form.append("file", file)
   try {
-    const res = await fetch(apiUrls.extract(), {
+    const dispatch = await agentPyOnlyDispatch(options, { anonymous: true })
+    const remote = dispatch.dispatch === "remote" ? dispatch.remote : null
+    const headers: Record<string, string> = {}
+    if (remote?.authToken) headers.Authorization = `Bearer ${remote.authToken}`
+    const res = await fetch(remote ? `${remote.baseUrl}/v1/extract` : apiUrls.extract(), {
       method: "POST",
+      headers,
       body: form,
       signal: options?.signal,
     })
@@ -855,7 +883,8 @@ async function embedFile(
     signal: options?.signal,
     // agent-py implements `/v1/embed`; agent-ts (frozen) does not, so a
     // `ts-service` account stays on the in-Next route instead of a 404.
-    dispatch: await agentPyOnlyDispatch(options),
+    // Signed out it is a no-op skip on agent-py (Q134).
+    dispatch: await agentPyOnlyDispatch(options, { anonymous: true }),
   })
   return result.ok ? result.data : null
 }
@@ -920,6 +949,7 @@ async function summarizePost<T>(
     schema,
     signal: options?.signal,
     dispatch: options,
+    anonymous: true,
   })
   // File summaries run in the background on upload; the rest are
   // user-initiated actions.
@@ -1202,6 +1232,9 @@ async function mcpProxyCall(
     extraHeaders,
     signal: options?.signal,
     dispatch: options,
+    // Local-mode servers only, signed out (agent-py never looks up a
+    // cloud-mode server for an anonymous caller).
+    anonymous: true,
   })
   if (!result.ok) {
     return {
@@ -1291,6 +1324,7 @@ async function urlFetchBookmark(
     localUrl: apiUrls.urlFetch(),
     bodyForLocal: { url },
     dispatch: options,
+    anonymous: true,
   })
   if (!result.ok) {
     return {
@@ -1327,9 +1361,10 @@ async function taskChildren(
 /**
  * Extract a structured citation table from a research report and its
  * source list. Goes to agent-py's `/v1/extract-table` when the account's
- * backend is agent-py (and its prerequisites resolve); everything else —
- * the in-Next backend, agent-ts (frozen, no such route), a missing
- * session — uses the in-Next route. Returns `null` on any failure —
+ * backend is agent-py (and its prerequisites resolve) — signed out too on
+ * `python-runs` (wave 12); everything else — the in-Next backend, agent-ts
+ * (frozen, no such route), a missing session on `python` — uses the
+ * in-Next route. Returns `null` on any failure —
  * callers treat a missing table as a degraded-but-safe outcome.
  */
 async function extractTable(
@@ -1346,7 +1381,7 @@ async function extractTable(
     bodyForLocal: body,
     schema: CitationTableSchema,
     signal: options?.signal,
-    dispatch: await agentPyOnlyDispatch(options),
+    dispatch: await agentPyOnlyDispatch(options, { anonymous: true }),
   })
   return result.ok ? result.data : failureResult(result)
 }

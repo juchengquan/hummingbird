@@ -101,6 +101,6 @@ describe.skipIf(!env.baseUrl)(`conformance: signed-out calls @ ${env.baseUrl}`, 
     const body = ex.body as { status: string; sections: number; reason?: string }
     expect(body.status).toBe("skipped")
     expect(body.sections).toBe(0)
-    expect(["not_configured", "not_signed_in"]).toContain(body.reason)
+    expect(["not_configured", "not_signed_in"]).toContain(String(body.reason))
   })
 })
