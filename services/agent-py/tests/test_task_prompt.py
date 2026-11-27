@@ -3,28 +3,22 @@
 
 from __future__ import annotations
 
-import re
+import json
 from pathlib import Path
-
-import pytest
 
 from agent_py.task_prompt import build_research_system_prompt
 
-TS_SOURCE = Path(__file__).resolve().parents[3] / "lib" / "server" / "agent" / "task-prompt.ts"
+# Frozen from the TypeScript original (deleted in wave 13, Q141):
+# `fixtures/research_prompt_parity.json`.
+FIXTURE = Path(__file__).parent / "fixtures" / "research_prompt_parity.json"
 
 
 def _ts_fragments() -> list[str]:
     """Every string literal of the TypeScript research prompt, in order."""
-    text = TS_SOURCE.read_text()
-    start = text.index("const RESEARCH_LOOP_BASE")
-    end = text.index("function buildResearchLoopPrompt")
-    return [
-        bytes(m, "utf-8").decode("unicode_escape").encode("latin-1").decode("utf-8")
-        for m in re.findall(r'"((?:[^"\\]|\\.)*)"', text[start:end])
-    ]
+    fragments: list[str] = json.loads(FIXTURE.read_text(encoding="utf-8"))["fragments"]
+    return fragments
 
 
-@pytest.mark.skipif(not TS_SOURCE.exists(), reason="needs the repo's lib/")
 def test_with_the_plan_tool_the_text_is_next_byte_for_byte() -> None:
     files = build_research_system_prompt(None, files_enabled=True, plan_tool=True)
     web = build_research_system_prompt(None, files_enabled=False, plan_tool=True)

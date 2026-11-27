@@ -9,7 +9,7 @@ import {
   shellReadyMessage,
 } from "@/shared/sandbox-frame"
 
-import { CSP_REPORT_PATH } from "./csp"
+import { BACKEND_CSP_REPORT_PATH } from "./csp"
 import {
   buildSandboxFrameCsp,
   buildSandboxFrameDirectives,
@@ -83,7 +83,7 @@ describe("buildSandboxFrameCsp", () => {
   test("doesn't report untrusted code's violations to the app's endpoint", () => {
     expect(d.has("report-uri")).toBe(false)
     expect(d.has("report-to")).toBe(false)
-    expect(buildSandboxFrameCsp()).not.toContain(CSP_REPORT_PATH)
+    expect(buildSandboxFrameCsp()).not.toContain(BACKEND_CSP_REPORT_PATH)
   })
 })
 

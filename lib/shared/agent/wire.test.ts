@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
 import type { TaskEvent } from "./events"
-import { RunEmitter } from "./emitter"
 import { projectRun } from "./project"
 import {
   AGENT_EVENT_PART_TYPE,
@@ -120,22 +119,27 @@ describe("TaskEventSchema — direct validation", () => {
   })
 })
 
-describe("wire codec ↔ full pipeline — emit → encode → decode → project", () => {
+/** A short run as the backend emits it: running, one step with reasoning,
+ *  a tool call and text, then done. */
+function runEvents(runId: string, maxSteps: number): TaskEvent[] {
+  const at = (n: number) => new Date(n).toISOString()
+  const base = (seq: number, step: number) => ({ runId, seq, step, createdAt: at(seq) })
+  return [
+    { ...base(1, 0), kind: "status", status: "running", maxSteps },
+    { ...base(2, 1), kind: "step_start" },
+    { ...base(3, 1), kind: "token", text: "Working", channel: "reasoning" },
+    { ...base(4, 1), kind: "tool_input", toolCallId: "t1", toolName: "webFetch", args: { url: "https://x" } },
+    { ...base(5, 1), kind: "tool_output", toolCallId: "t1", toolName: "webFetch", summary: "fetched" },
+    { ...base(6, 1), kind: "token", text: "Done." },
+    { ...base(7, 1), kind: "result", status: "done" },
+  ]
+}
+
+describe("wire codec ↔ full pipeline — encode → decode → project", () => {
   test("a run survives a full wire round-trip into a coherent view", () => {
-    const wireParts: AgentEventPartLike[] = []
-    let tick = 0
-    const em = new RunEmitter(
-      { runId: "r1", maxSteps: 3, now: () => new Date(++tick).toISOString() },
-      // Sink encodes to the wire immediately, as the route would.
-      (e) => wireParts.push(toDataPart(e) as AgentEventPartLike)
+    const wireParts: AgentEventPartLike[] = runEvents("r1", 3).map(
+      (e) => toDataPart(e) as AgentEventPartLike
     )
-    em.status("running")
-    em.startStep()
-    em.token("Working", "reasoning")
-    em.toolInput("t1", "webFetch", { url: "https://x" })
-    em.toolOutput("t1", "webFetch", "fetched")
-    em.token("Done.")
-    em.result("done")
 
     // Serialize through JSON to simulate the actual transport, then
     // decode + project on the "client".
