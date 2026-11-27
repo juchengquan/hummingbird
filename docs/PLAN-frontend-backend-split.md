@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Waves 1–11 shipped (#294–#311): Phases 0–4, chat and the tasks panel on runs, every catalog model on agent-py, and "agent-py (runs)" the default with the switch synced on the account (the Gateway and OpenRouter routes unverified live). Phase 5 (removal, Q121–Q139) runs as waves 12–15: wave 12 closes the last gaps without removing anything (in progress).** Decided in a design interview
+Status: **Waves 1–11 shipped (#294–#311): Phases 0–4, chat and the tasks panel on runs, every catalog model on agent-py, and "agent-py (runs)" the default with the switch synced on the account (the Gateway and OpenRouter routes unverified live). Phase 5 (removal, Q121–Q139) runs as waves 12–15: wave 12 closes the last gaps without removing anything (built).** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
@@ -198,7 +198,7 @@ three times. The goals:
 | Q136 | Explain runs live in agent-py's memory log (as anonymous runs do), never in `tasks`, flagged by a run option; signed in, they still count against the user's limits and use the deploy's keys |
 | Q137 | A deploy without `NEXT_PUBLIC_AGENT_PY_URL` still builds; the app shows a full-page "This deploy has no backend configured" screen pointing at the setup docs |
 | Q138 | Wave 13: store v37 drops `chatBackend`; a browser that had picked `ts` / `python` / `ts-service` gets one note that chat now runs on agent-py. `profiles.chat_backend` stays until wave 15 drops it with the reshape |
-| Q139 | Wave 12 is three parallel workstreams in their own worktrees — **A** signed-out calls (Q134), the `extract` dispatch, contract entries for `extract` / `mcp` / `summarize` / `url/fetch`; **B** Explain on memory-only runs (Q135, Q136), the editor key removed (Q124), the no-provider message (Q131); **C** old tasks on runs (Q126), the scheduler on (Q130) — then integration and the `/api/*` guard (Q133). It merges after the real-model smoke passes on its head (Q112), Explain included. `ts` keeps working until wave 13 |
+| Q139 | Wave 12 is three parallel workstreams in their own worktrees — **A** signed-out calls (Q134), the `extract` dispatch, contract entries for `extract` / `mcp` / `summarize` / `url/fetch`; **B** Explain on memory-only runs (Q135, Q136), the editor key removed (Q124), the no-provider message (Q131); **C** old tasks on runs (Q126), the scheduler on (Q130) — then integration and the `/api/*` guard (Q133). It merges after the real-model smoke passes on its head (Q112), Explain included. `ts` keeps working until wave 13 | **Built:** `e2e-live/guard.ts` fails a live test on any browser request to Next's `/api/*` (the `ts` task specs and one synced-choice test opt out until wave 13); `e2e-live/next-free.spec.ts` drives a signed-out bookmark fetch, uploads signed out and in, and Explain on the default backend. The real-model smoke (Anthropic + MiniMax M3.1 Flash) passed 12/12 with Explain's ephemeral runs, signed in and out
 
 ## Run contract (v1)
 
