@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Waves 1–11 shipped (#294–#311): Phases 0–4, chat and the tasks panel on runs, every catalog model on agent-py, and "agent-py (runs)" the default with the switch synced on the account (the Gateway and OpenRouter routes unverified live). Phase 5 (removal, Q121–Q139) runs as waves 12–15: wave 12 closes the last gaps without removing anything (built).** Decided in a design interview
+Status: **Waves 1–12 shipped (#294–#312): Phases 0–4, chat and the tasks panel on runs, every catalog model on agent-py, and "agent-py (runs)" the default with the switch synced on the account (the Gateway and OpenRouter routes unverified live). Phase 5 (removal, Q121–Q149) runs as waves 12–15: wave 12 closed the last gaps without removing anything (#312); wave 13 removes (Q140–Q149).** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
@@ -199,6 +199,17 @@ three times. The goals:
 | Q137 | A deploy without `NEXT_PUBLIC_AGENT_PY_URL` still builds; the app shows a full-page "This deploy has no backend configured" screen pointing at the setup docs |
 | Q138 | Wave 13: store v37 drops `chatBackend`; a browser that had picked `ts` / `python` / `ts-service` gets one note that chat now runs on agent-py. `profiles.chat_backend` stays until wave 15 drops it with the reshape |
 | Q139 | Wave 12 is three parallel workstreams in their own worktrees — **A** signed-out calls (Q134), the `extract` dispatch, contract entries for `extract` / `mcp` / `summarize` / `url/fetch`; **B** Explain on memory-only runs (Q135, Q136), the editor key removed (Q124), the no-provider message (Q131); **C** old tasks on runs (Q126), the scheduler on (Q130) — then integration and the `/api/*` guard (Q133). It merges after the real-model smoke passes on its head (Q112), Explain included. `ts` keeps working until wave 13 | **Built:** `e2e-live/guard.ts` fails a live test on any browser request to Next's `/api/*` (the `ts` task specs and one synced-choice test opt out until wave 13); `e2e-live/next-free.spec.ts` drives a signed-out bookmark fetch, uploads signed out and in, and Explain on the default backend. The real-model smoke (Anthropic + MiniMax M3.1 Flash) passed 12/12 with Explain's ephemeral runs, signed in and out
+| **Wave 13 (2026-11-28)** | |
+| Q140 | `/api/csp-report` goes: reports go only to agent-py's `/v1/csp-report`; with no agent-py URL the policy carries no `report-uri`. `instrumentation.ts`, `rate-limit.ts` and `read-body-capped.ts` go with it, leaving `lib/server` as `security/csp.ts` and `security/sandbox-frame.ts` |
+| Q141 | agent-py's parity fixtures are frozen as its own golden files (each with a header naming the commit it was generated at); the TypeScript generators, `scripts/gen-agent-py-parity.ts`, the editor AI parity / stream-fixture tests and the `lib/shared` modules only they used are deleted |
+| Q142 | Every surface reaches only agent-py: an account-bound call without a session goes tokenless and gets agent-py's `401 auth_required` ("Sign in required"); a deploy without `NEXT_PUBLIC_AGENT_PY_URL` shows the Q137 screen (share pages too), built in this wave; the no-key mock strings go. `localUrl`, the `in-next` dispatch and `DispatchOption` go |
+| Q143 | The Q133 check is three parts: `audit-bundle.sh` greps the bundle for every server secret's name, `AI_GATEWAY_API_KEY` included (a client package that bundles one loses its import, no exemptions); a check that Next's code reads no `process.env` outside `CSP_MODE`, `NODE_ENV`, `NEXT_RUNTIME`, `NEXT_DIST_DIR` and `NEXT_PUBLIC_*`; `stack.sh` and the Playwright configs pass Next nothing more. Splitting the shared `.env` waits for wave 14 |
+| Q144 | `@supabase/ssr` stays in the browser for now (plain supabase-js would move the session to localStorage and sign everyone out once); a revisit |
+| Q145 | Store v37 deletes `chatBackend` (with `chatBackendExplicit`, the in-memory `chatBackendMoved` and `mergePersistedState`); a stored `ts` / `python` / `ts-service` that survived v36 shows one note, "Chat now runs on agent-py. The backend setting was removed.", which replaces the v36 notice (one note, never two). The account menu loses its selector; `profiles.chat_backend` is neither read nor written, and stays until wave 15 |
+| Q146 | Each mocked e2e spec on the old path (`ts` + `/api/tasks` or `/api/chat` mocks) is moved onto the runs fake where no runs spec covers it, deleted where one does; the PR carries the coverage map. `tasks-old-path` and `e2e/support/tasks-backend.ts` are deleted |
+| Q147 | The `routes.py` scenarios and `smoke.py` steps on `/api/tasks*` are deleted (a `/v1/runs` twin added where none exists); the guard loses its `nextApi` opt-out and `tasks.spec.ts` goes; `routes.py` checks Next answers 404 on `/api/tasks` |
+| Q148 | `package.json` drops every dependency only the deleted server code used (each confirmed unimported); `serverExternalPackages` empties; the PR lists them with the lockfile diff |
+| Q149 | Wave 13 is three parallel workstreams in their own worktrees — **A** the client (Q145, Q142, the old task path, Explain's fallback, the no-backend screen, share pages, Q146); **B** Next's server (`app/api/**`, `lib/server` but CSP (Q140), `auth/callback` + the GoTrue allow-list, the cron + `vercel.json`, Q141, `run-tests.sh` roots, the lint / tsconfig fences, Q143, Q148); **C** the services (agent-ts + its CI job, agent-py's `/v1/chat` router + tests + codegen, Q147, the docs) — then integration. Merge is gated on every gate, the real-model smoke and the guard with no opt-outs |
 
 ## Run contract (v1)
 
@@ -331,7 +342,7 @@ has shipped behind the existing per-account backend switch.
 | 10 (Phase 3) | provider parity: every catalog model on agent-py through its route (Q114–Q118), `GET /v1/models` (Q119); starts with the provider probe (Q120) | Wave 9 merged (#309) |
 | 11 (Phase 3) | "agent-py (runs)" the default (Q110), the switch synced on `profiles` (Q111), gated on the real-model smoke (Q112) | Wave 10 merged |
 | 12 (Phase 5) | **A** signed-out calls on agent-py (Q134), `extract` dispatch, contract entries · **B** Explain on runs (Q135–Q136), the editor key removed (Q124), the no-provider message (Q131) · **C** old tasks on runs (Q126), the scheduler on (Q130); then the `/api/*` guard (Q133) | Wave 11 merged (#311) |
-| 13 (Phase 5) | removal (Q122, Q129, Q132, Q138) | Wave 12 merged |
+| 13 (Phase 5) | removal (Q122, Q129, Q132, Q138, Q140–Q149): **A** the client · **B** Next's server · **C** the services | Wave 12 merged (#312) |
 | 14 (Phase 5) | the Next app into `apps/web` | Wave 13 merged |
 | 15 (Phase 5) | the table reshape (Q27) | Wave 14 merged |
 
