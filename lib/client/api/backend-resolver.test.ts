@@ -68,13 +68,12 @@ describe("resolveExplainTarget (wave 12)", () => {
 })
 
 describe("resolveEditorAiTarget (wave 9)", () => {
-  test("the Next routes unless agent-py serves chat, is configured, and no own key", async () => {
+  test("the Next routes unless agent-py serves chat and is configured", async () => {
     const { resolveEditorAiTarget } = await import("./backend-resolver")
     for (const backend of ["ts", "python", "ts-service", "python-runs"] as const) {
       useStore.getState().setChatBackend(backend)
       // agent-py's URL is unset in tests: always the Next route.
-      expect(await resolveEditorAiTarget(false)).toBeNull()
-      expect(await resolveEditorAiTarget(true)).toBeNull()
+      expect(await resolveEditorAiTarget()).toBeNull()
     }
   })
 })

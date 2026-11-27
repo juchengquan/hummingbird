@@ -524,7 +524,7 @@ Plate's context and the editor settings:
     toolName?: 'generate' | 'edit' | 'comment' | null  // absent → model chooses
   }
   model?: string | null   // ≤ 100 chars; unknown ids → 400 unknown_model
-  apiKey?: string | null  // BYO AI Gateway key from the settings dialog
+  apiKey?: string | null  // BYO AI Gateway key — the browser no longer sends one (wave 12, Q124: the setting is gone)
   // other transport fields (id, trigger, messageId, …) are ignored
 }
 ```
@@ -540,8 +540,10 @@ The browser renders the document first — the command body is
 `{ messages, document: EditorAiDocument, toolName?, model? }`, built by
 `components/editor/ai/agent-py-body.ts`; agent-py never sees the Plate
 value. The editor goes there where agent-py serves chat (`python`
-signed in, `python-runs` signed in or out) unless its settings hold an
-AI Gateway key (`lib/shared/editor-ai/routing.ts`). The prompts live in
+signed in, `python-runs` signed in or out; `lib/shared/editor-ai/routing.ts`).
+The editor settings' own-gateway-key field was removed in wave 12 (Q124):
+agent-py never takes a user's key, and elsewhere the Next route bills the
+deploy's. The prompts live in
 `lib/shared/editor-ai/`; agent-py's port is pinned to them by
 `components/editor/ai/editor-ai.parity.test.ts`, and its streams to the
 route's by `app/api/ai/command/stream.fixture.test.ts`.

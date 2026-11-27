@@ -110,26 +110,31 @@ test("signed out on agent-py (runs): the editor still reaches agent-py", async (
   expect(toAgentPy).toContain("/v1/ai/command")
 })
 
-test("settings: agent-py's models, and an own gateway key keeps the Next route", async ({ page }) => {
+test("settings: agent-py's models, no own-key field (Q124), and the one-time note", async ({ page }) => {
   const { toAgentPy } = await openEditor(page, { signIn: true })
+  const note = page.getByText("The editor's AI now uses this deploy's models.", { exact: false })
   await page.locator("button:has(svg.lucide-settings)").click()
+  await expect(note).toBeVisible()
   await expect(page.getByTestId("editor-ai-agent-py-note")).toBeVisible()
+  await expect(page.getByLabel("AI Gateway API Key")).toHaveCount(0)
   await page.locator("#select-model").click()
   // Exactly what agent-py serves (`GET /v1/models`, wave 10), in catalog order.
   const served = (await (await fetch("http://127.0.0.1:8171/v1/models")).json()).models.map((m: { id: string }) => m.id)
   const labels = catalog.models.filter((m) => served.includes(m.id)).map((m) => m.label)
   await expect.poll(() => page.getByRole("option").allTextContents()).toEqual(labels)
   await page.keyboard.press("Escape")
-  await page.getByLabel("AI Gateway API Key").fill("own-gateway-key")
-  await expect(page.getByTestId("editor-ai-agent-py-note")).toBeHidden()
   await page.getByRole("button", { name: "Save changes" }).click()
 
   await page.locator('[data-slate-editor="true"]').first().click()
   await page.keyboard.press(`${MOD}+End`)
   await page.keyboard.press("Enter")
   const before = toAgentPy.length
-  const toNext = page.waitForRequest((req) => req.url().endsWith("/api/ai/command"))
-  await ask(page, "EDITOR:generate with my key")
-  await toNext
-  expect(toAgentPy.length).toBe(before)
+  await ask(page, "EDITOR:generate after saving")
+  await expect.poll(() => toAgentPy.length).toBeGreaterThan(before)
+
+  // The note is shown once per browser: not again after a reload.
+  await page.reload()
+  await page.locator("button:has(svg.lucide-settings)").click()
+  await expect(page.getByTestId("editor-ai-agent-py-note")).toBeVisible()
+  await expect(note).toHaveCount(0)
 })

@@ -170,19 +170,18 @@ export interface EditorAiTarget {
 /**
  * Where the editor's AI goes (wave 9, Q102–Q105): agent-py's
  * `/v1/ai/command` + `/v1/ai/complete` where agent-py serves chat
- * (`editorAiBackend`), else `null` — the Next routes. `ownKey`: the editor
- * settings hold an AI Gateway key, which only the Next route can bill (Q103).
+ * (`editorAiBackend`), else `null` — the Next routes, on the deploy's key
+ * (the own-key setting is gone, Q124).
  */
-export async function resolveEditorAiTarget(ownKey: boolean): Promise<EditorAiTarget | null> {
+export async function resolveEditorAiTarget(): Promise<EditorAiTarget | null> {
   const chatBackend = useStore.getState().chatBackend
-  if (ownKey || !isAgentPyConfigured()) return null
+  if (!isAgentPyConfigured()) return null
   if (chatBackend !== "python" && chatBackend !== "python-runs") return null
   const session = await sessionAccessToken()
   const authToken = session.ok ? session.token : null
   const backend = editorAiBackend({
     agentPyConfigured: true,
     chatBackend,
-    ownKey,
     signedIn: authToken !== null,
   })
   return backend === "agent-py" ? { baseUrl: AGENT_PY_BASE_URL, authToken } : null

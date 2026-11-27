@@ -154,7 +154,7 @@ function MessageTime({ timestamp }) {
 
 See `.env.example` for the full list. Two groups:
 
-- **AI Gateway** (`AI_GATEWAY_API_KEY`) — required for real chat/editor AI. Without it, the chat panel falls back to a clearly-labeled mock response. Only model ids declared in `config/models.json` are dispatched on this key; any other id is rejected with 400 `unknown_model` unless the request brings its own gateway key (the editor's BYO `apiKey`). See `selectModel` in `lib/server/model-provider.ts`.
+- **AI Gateway** (`AI_GATEWAY_API_KEY`) — required for real chat/editor AI. Without it, the chat panel falls back to a clearly-labeled mock response. Only model ids declared in `config/models.json` are dispatched on this key; any other id is rejected with 400 `unknown_model` unless the request brings its own gateway key (the route still reads a BYO `apiKey`, but the editor no longer has a setting for one — wave 12, Q124). See `selectModel` in `lib/server/model-provider.ts`.
 - **Trusted proxy hops** (`TRUSTED_PROXY_HOPS`, default `1`) — how many reverse proxies in front of Next.js append to `X-Forwarded-For`. `rateLimitKey` (`lib/server/rate-limit.ts`) takes the client IP from the entry that many positions from the right (left entries are client-spoofable); on Vercel (`VERCEL` set) the platform `x-real-ip` / `x-vercel-forwarded-for` headers win. `0` ignores XFF (all anonymous traffic shares one bucket). The same key, hashed, scopes anonymous callers in the summarize response cache. **A reverse proxy is required for per-IP limits** — `next start` only sets XFF when the client sent none, so with Next exposed directly clients pick their own key; production boot warns (`instrumentation.ts` → `warnOnProxyConfig`) when the var is unset or `0` outside a known platform. See `docs/SECURITY.md`.
 - **Minimax-CN override** (`MINIMAX_CN_BASE_URL`, `MINIMAX_CN_API_KEY`) — optional. When both are set, any `minimax/*` model id is dispatched through an OpenAI-compatible client at the configured base URL instead of going through the Vercel AI Gateway. Useful for the Minimax China endpoint or a self-hosted Minimax-compatible gateway. Either var unset → fallthrough to the gateway, as if the override didn't exist. See `lib/server/model-provider.ts`. The same key powers the `generateImage` skill; the image endpoint is derived from `MINIMAX_CN_BASE_URL`'s origin (image and chat share a host but live under different paths), falling back to `https://api.minimaxi.com/` when `MINIMAX_CN_BASE_URL` is unset. See `lib/server/skills/minimax-image-client.ts`.
 - **Ollama** (`OLLAMA_BASE_URL`, optional `OLLAMA_API_KEY`). When `OLLAMA_BASE_URL` is set (typically `http://localhost:11434/v1`), `ollama/*` models route through Ollama's OpenAI-compatible endpoint. The `ollama` provider in `config/providers.json` carries `allowInsecureBaseUrl: true` which relaxes two checks: the SSRF gate accepts `http://localhost` / loopback / private-network hosts, and the API key becomes optional (Ollama doesn't enforce auth). Only enable this for endpoints you control — by setting it you take responsibility for the upstream URL not being a credential-exfiltration sink. A malformed URL still fails at boot.
@@ -416,8 +416,8 @@ conformance suite (`CONTRACT_RUNS_STUB=1`) only.
 
 **Editor AI (`/v1/ai/command`, `/v1/ai/complete`, wave 9 / Phase 4).**
 agent-py serves the Plate editor's AI menu and ghost text where it
-serves chat (`python` signed in, `python-runs` signed in or out), unless
-the editor settings hold an AI Gateway key (`lib/shared/editor-ai/routing.ts`).
+serves chat (`python` signed in, `python-runs` signed in or out;
+`lib/shared/editor-ai/routing.ts` — the editor's own-key setting is gone, Q124).
 The browser renders the document to text (`components/editor/ai/`); the
 prompts live in `lib/shared/editor-ai/` and agent-py's port
 (`services/agent-py/src/agent_py/editor_ai/`) is pinned to them by
