@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 
+import { AGENT_PY_ORIGIN } from "./support/env"
 import { CREDENTIAL, SERVER, createPersona, openWithLocalServer, sendAsPersona } from "./support/persona"
 import { composer, isStartRequest, steerRuns, stopButton } from "./support/runs"
 
@@ -12,63 +13,53 @@ import { composer, isStartRequest, steerRuns, stopButton } from "./support/runs"
 const PROMPT = "Answer as the e2e persona."
 const MODEL = "anthropic/claude-haiku-4.5"
 
-type Backend = "ts" | "python-runs"
 type Reply = "ok" | "error" | "offline-once" | "card"
 
 interface Sent {
   allow: string[] | undefined
   prompt: string
-  /** Only on Next: `steerRuns` strips a run's model. */
-  model: string | undefined
   hasCredential: boolean
+  /** A resume of a paused run (an answered card). */
+  resume: boolean
 }
 
-const frames = (...items: object[]) => items.map((i) => `data: ${JSON.stringify(i)}\n\n`).join("")
-
-/** Stand in for both backends' replies and record every chat send. */
-async function backends(page: Page, reply: Reply): Promise<Sent[]> {
+/** Steer the stub harness and record every run start / resume. */
+async function runs(page: Page, reply: Reply): Promise<Sent[]> {
   const sent: Sent[] = []
   page.on("request", (request) => {
-    const next = request.method() === "POST" && request.url().endsWith("/api/chat")
-    if (!next && !isStartRequest(request)) return
+    if (!isStartRequest(request)) return
     const body = request.postDataJSON()
-    const options = next ? body : (body.forwardedProps ?? {})
+    const options = body.forwardedProps ?? {}
     sent.push({
       allow: options.allowedMcpServerIds,
-      prompt: (next ? options.workspaceSystemPrompt : options.systemPrompt) ?? "",
-      model: next ? options.model : undefined,
+      prompt: options.systemPrompt ?? "",
       hasCredential: (request.postData() ?? "").includes(CREDENTIAL),
+      resume: typeof options.previousRunId === "string",
     })
   })
-  await steerRuns(page, reply === "error" ? { outcome: "fail" } : {})
-  let calls = 0
-  await page.route("**/api/chat", async (route) => {
-    calls += 1
-    if (reply === "error") return route.fulfill({ status: 500, json: { code: "provider", message: "e2e" } })
-    if (reply === "offline-once" && calls === 1) return route.abort("failed")
-    const card = {
-      type: "data-ui",
-      data: {
-        id: "card-1",
-        kind: "choice",
-        props: { prompt: "Which one?", options: [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }] },
-      },
-    }
-    return route.fulfill({
-      status: 200,
-      contentType: "text/event-stream",
-      // The AI SDK UI message stream `/api/chat` speaks.
-      body: `${frames(
-        { type: "text-delta", id: "t1", delta: "Fake reply" },
-        ...(reply === "card" && calls === 1 ? [card] : []),
-      )}data: [DONE]\n\n`,
+  await steerRuns(
+    page,
+    reply === "error" ? { outcome: "fail" } : reply === "card" ? { outcome: "interrupt" } : {},
+    reply === "card" ? { resume: {} } : undefined,
+  )
+  if (reply === "offline-once") {
+    // Registered after `steerRuns`, so it is asked first: the first start
+    // never reaches agent-py (a network error); the rest go through.
+    let starts = 0
+    await page.route(`${AGENT_PY_ORIGIN}/v1/runs`, (route) => {
+      if (route.request().method() !== "POST") return route.fallback()
+      starts += 1
+      return starts === 1 ? route.abort("failed") : route.fallback()
     })
-  })
+  }
   return sent
 }
 
-async function personaTurn(page: Page, backend: Backend, sent: Sent[], allowServer = false) {
-  await openWithLocalServer(page, backend)
+/** What a resend must carry again: the persona's recipe, not the resume. */
+const recipe = ({ allow, prompt, hasCredential }: Sent) => ({ allow, prompt, hasCredential })
+
+async function personaTurn(page: Page, sent: Sent[], allowServer = false) {
+  await openWithLocalServer(page)
   await createPersona(page, { allowServer, systemPrompt: PROMPT, model: MODEL })
   await sendAsPersona(page)
   await expect.poll(() => sent.length).toBeGreaterThan(0)
@@ -95,47 +86,46 @@ const ACTIONS: { name: string; reply: Reply; run: (page: Page) => Promise<void> 
 ]
 
 test.describe("a resend keeps the turn's persona", () => {
-  for (const backend of ["ts", "python-runs"] as const) {
-    for (const action of ACTIONS) {
-      for (const allowServer of [false, true]) {
-        test(`${backend}: ${action.name} (${allowServer ? "server ticked" : "empty list"})`, async ({ page }) => {
-          const sent = await backends(page, action.reply)
-          await personaTurn(page, backend, sent, allowServer)
-          await action.run(page)
-          await expect.poll(() => sent.length).toBe(2)
-          const [original, again] = sent
-          expect(original.allow).toEqual(allowServer ? [SERVER.id] : [])
-          expect(original.prompt).toContain(PROMPT)
-          expect(again).toEqual(original)
-          expect(again.hasCredential).toBe(allowServer)
-        })
-      }
+  for (const action of ACTIONS) {
+    for (const allowServer of [false, true]) {
+      test(`${action.name} (${allowServer ? "server ticked" : "empty list"})`, async ({ page }) => {
+        const sent = await runs(page, action.reply)
+        await personaTurn(page, sent, allowServer)
+        await action.run(page)
+        await expect.poll(() => sent.length).toBe(2)
+        const [original, again] = sent
+        expect(original.allow).toEqual(allowServer ? [SERVER.id] : [])
+        expect(original.prompt).toContain(PROMPT)
+        expect(again).toEqual(original)
+        expect(again.hasCredential).toBe(allowServer)
+      })
     }
   }
 
-  test("ts: the automatic retry after a network error", async ({ page }) => {
-    const sent = await backends(page, "offline-once")
-    await personaTurn(page, "ts", sent)
+  test("the automatic retry after a network error", async ({ page }) => {
+    const sent = await runs(page, "offline-once")
+    await personaTurn(page, sent)
     await expect.poll(() => sent.length).toBe(2)
     expect(sent[1]).toEqual(sent[0])
     expect(sent[1].allow).toEqual([])
   })
 
-  test("ts: answering a card continues as the persona", async ({ page }) => {
-    const sent = await backends(page, "card")
-    await personaTurn(page, "ts", sent)
-    await page.getByRole("button", { name: "Alpha", exact: true }).click()
+  test("answering a card continues as the persona", async ({ page }) => {
+    const sent = await runs(page, "card")
+    await personaTurn(page, sent)
+    await page.getByRole("button", { name: "Approve", exact: true }).click()
     await expect.poll(() => sent.length).toBe(2)
-    expect(sent[1]).toEqual(sent[0])
+    expect(sent[1].resume).toBe(true)
+    expect(recipe(sent[1])).toEqual(recipe(sent[0]))
     expect(sent[1].allow).toEqual([])
   })
 
-  test("ts: the record survives a reload", async ({ page }) => {
-    const sent = await backends(page, "ok")
-    await personaTurn(page, "ts", sent)
+  test("the record survives a reload", async ({ page }) => {
+    const sent = await runs(page, "ok")
+    await personaTurn(page, sent)
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem("hummingbird-storage") ?? ""))
-      .toContain("Fake reply")
+      .toContain("Stub reply to:")
     await page.reload()
     await regenerate(page)
     await expect.poll(() => sent.length).toBe(2)
@@ -143,9 +133,9 @@ test.describe("a resend keeps the turn's persona", () => {
     expect(sent[1].allow).toEqual([])
   })
 
-  test("ts: a deleted persona's list still holds", async ({ page }) => {
-    const sent = await backends(page, "ok")
-    await personaTurn(page, "ts", sent)
+  test("a deleted persona's list still holds", async ({ page }) => {
+    const sent = await runs(page, "ok")
+    await personaTurn(page, sent)
     await composer(page).fill("/personas ")
     await composer(page).press("Enter")
     const dialog = page.getByRole("dialog")
@@ -161,9 +151,9 @@ test.describe("a resend keeps the turn's persona", () => {
     expect(sent[1].prompt).not.toContain(PROMPT)
   })
 
-  test("ts: a turn without a persona stays unrestricted", async ({ page }) => {
-    const sent = await backends(page, "ok")
-    await openWithLocalServer(page, "ts")
+  test("a turn without a persona stays unrestricted", async ({ page }) => {
+    const sent = await runs(page, "ok")
+    await openWithLocalServer(page)
     await composer(page).fill("hello")
     await composer(page).press("Enter")
     await expect.poll(() => sent.length).toBe(1)

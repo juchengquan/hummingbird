@@ -13,9 +13,13 @@
  *   (`Run` JSON) and streams served from agent-py's recorded background
  *   fixtures (`lib/client/runs/fixtures/agent-py/background/`), mapped
  *   per run id. Every request is recorded (`sent`).
+ * - `/v1/tasks/schedules[/{id}]`: agent-py's schedules routes over rows a
+ *   spec sets (`schedules`); saved or re-enabled without a model, a
+ *   schedule gets the default task model (Q73, Q80). Recorded as
+ *   `schedules`.
  * - `POST /__control`: `reset`, `runs` (rows), `streams` (run id →
  *   fixture path), `startAs` (the row a start creates, `{ status, … }`),
- *   `fault` (`{ op, status, body }` once), `sent`.
+ *   `schedules` (rows), `fault` (`{ op, status, body }` once), `sent`.
  */
 
 import { readFileSync } from "node:fs"
@@ -48,6 +52,7 @@ let streams = new Map<string, string>()
 let startAs: Row = {}
 let faults: { op: string; status: number; body?: unknown }[] = []
 let sent: Sent[] = []
+let schedules: Row[] = []
 
 function reset() {
   runs = new Map()
@@ -55,6 +60,7 @@ function reset() {
   startAs = {}
   faults = []
   sent = []
+  schedules = []
 }
 
 const json = (body: unknown, status = 200) =>
@@ -122,6 +128,7 @@ async function control(req: Request): Promise<Response> {
     for (const r of args.runs as Row[]) runs.set(r.id as string, run(r))
   } else if (action === "streams") streams = new Map(Object.entries(args.streams as Record<string, string>))
   else if (action === "startAs") startAs = args.row
+  else if (action === "schedules") schedules = args.schedules
   else if (action === "fault") faults.push(args)
   else if (action === "sent") return json(sent)
   else return refuse(400, "unknown_action", String(action))
@@ -165,6 +172,14 @@ async function handle(req: Request): Promise<Response> {
     if (req.method === "GET" || req.method === "HEAD") return json([])
     if (url.pathname.includes("/rpc/")) return json(null)
     return json([], 201)
+  }
+
+  // --- /v1/tasks/schedules ---
+  const sm = url.pathname.match(/^\/v1\/tasks\/schedules(?:\/([^/]+))?$/)
+  if (sm) {
+    record("schedules")
+    if (!bearerIsUser(req)) return refuse(401, "auth", "Missing bearer token.")
+    return scheduleRoute(req.method, sm[1] ? decodeURIComponent(sm[1]) : undefined, body as Row | undefined)
   }
 
   // --- /v1/runs ---
@@ -215,6 +230,43 @@ async function handle(req: Request): Promise<Response> {
     return new Response(null, { status: 204, headers: CORS })
   }
   return refuse(404, "not_found", url.pathname)
+}
+
+/** The schedules routes as agent-py answers them since Q73 / Q80: a
+ *  schedule saved without a model, or re-enabled without one, gets the
+ *  default task model (Haiku). */
+const DEFAULT_TASK_MODEL = "anthropic/claude-haiku-4.5"
+function scheduleRoute(method: string, id: string | undefined, body: Row | undefined): Response {
+  const now = new Date().toISOString()
+  if (!id && method === "GET") return json({ schedules })
+  if (!id && method === "POST") {
+    const created: Row = {
+      id: crypto.randomUUID(),
+      timezone: "UTC",
+      enabled: true,
+      systemPrompt: null,
+      maxSteps: null,
+      lastRunAt: null,
+      lastRunTaskId: null,
+      nextRunAt: now,
+      createdAt: now,
+      updatedAt: now,
+      ...body,
+      model: (body?.model as string | null | undefined) ?? DEFAULT_TASK_MODEL,
+    }
+    schedules = [...schedules, created]
+    return json(created, 201)
+  }
+  const found = schedules.find((s) => s.id === id)
+  if (!found) return refuse(404, "not_found", "Schedule not found.")
+  if (method === "DELETE") {
+    schedules = schedules.filter((s) => s !== found)
+    return json({ ok: true })
+  }
+  const next: Row = { ...found, ...body, updatedAt: now }
+  if (next.enabled && !next.model) next.model = DEFAULT_TASK_MODEL
+  schedules = schedules.map((s) => (s === found ? next : s))
+  return json(next)
 }
 
 function bearerIsUser(req: Request): boolean {

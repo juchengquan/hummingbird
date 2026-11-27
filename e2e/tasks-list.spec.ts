@@ -304,14 +304,6 @@ test("a task is titled by its goal's first line, with its conversation's name un
   await expect(item.locator("[data-task-conversation]")).toHaveText(conversation.title)
 })
 
-test("off runs the old single-task panel stays (Q61)", async ({ page }) => {
-  await openWithTasks(page, { availability: { ok: false, reason: "not_runs" } }, { chatBackend: "ts" }, { signedIn: true })
-  await expect(page.getByRole("button", { name: /^Open tasks panel/ })).toHaveCount(0)
-  await taskToggle(page).click()
-  await expect(taskToggle(page)).toHaveAttribute("aria-pressed", "true")
-  expect(await page.evaluate(() => window.__hummTasksFake!.state().runAsTask)).toBe(false)
-})
-
 test("signed out, tasks can't be launched and the panel says why (bug 20)", async ({ page }) => {
   await openWithTasks(page, { availability: { ok: false, reason: "signed_out" } })
   await expect(taskToggle(page)).toHaveCount(0)
@@ -344,3 +336,24 @@ for (const [size, viewport] of Object.entries({ desktop: DESKTOP, phone: PHONE }
     await page.screenshot({ path: info.outputPath(`tasks-list-${size}.png`), fullPage: false })
   })
 }
+
+// Moved from the old path's tasks-edges / tasks-children specs (Q146).
+
+test("a double click sends one answer", async ({ page }) => {
+  await openList(page)
+  const group = taskItem(page, "Ask the helpers").getByRole("group", {
+    name: "Question from sub-agent input-helper",
+  })
+  await group.getByRole("textbox").fill("blue")
+  await group.getByRole("button", { name: "Submit" }).dblclick()
+  await expect(group).toContainText("Answer sent")
+  expect(await calls(page, "answer")).toHaveLength(1)
+})
+
+test("a double click cancels once", async ({ page }) => {
+  await openList(page)
+  const item = taskItem(page, "Ask the helpers")
+  await item.getByRole("button", { name: "Cancel task" }).dblclick()
+  await expect(item.getByRole("status")).toHaveText("Cancelled")
+  expect(await calls(page, "cancel")).toHaveLength(1)
+})

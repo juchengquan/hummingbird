@@ -6,28 +6,14 @@ import { isStartRequest, steerRuns } from "./support/runs"
 /**
  * Q50: a persona's MCP allow-list filters local-mode servers as well as
  * cloud-mode ones (Q48), so `/personas` must offer both. Driven through
- * the dialog, down to what each chat backend is sent. Q51: a resume from
+ * the dialog, down to what the run is sent. Q51: a resume from
  * a page that didn't start the run (reload, other tab) keeps the list.
  */
 
 test.describe("persona MCP allow-list", () => {
-  test("Next chat: a ticked local server is in the allow-list", async ({ page }) => {
-    await page.route("**/api/chat", (route) =>
-      route.fulfill({ status: 500, json: { code: "provider", message: "e2e: not dispatched" } }),
-    )
-    await openWithLocalServer(page, "ts")
-    await createPersona(page, { allowServer: true })
-
-    const sent = page.waitForRequest((r) => r.method() === "POST" && r.url().endsWith("/api/chat"))
-    await sendAsPersona(page)
-    const body = (await sent).postDataJSON()
-    expect(body.allowedMcpServerIds).toEqual([SERVER.id])
-    expect(body.mcpServers.map((s: { id: string }) => s.id)).toEqual([SERVER.id])
-  })
-
   test("runs: a ticked local server is sent with the run", async ({ page }) => {
     const { starts } = await steerRuns(page, {})
-    await openWithLocalServer(page, "python-runs")
+    await openWithLocalServer(page)
     await createPersona(page, { allowServer: true })
 
     await sendAsPersona(page)
@@ -38,7 +24,7 @@ test.describe("persona MCP allow-list", () => {
 
   test("runs: an empty allow-list still means no MCP", async ({ page }) => {
     const { starts } = await steerRuns(page, {})
-    await openWithLocalServer(page, "python-runs")
+    await openWithLocalServer(page)
     await createPersona(page, { allowServer: false })
 
     await sendAsPersona(page)
@@ -54,7 +40,7 @@ test.describe("persona MCP allow-list", () => {
         context,
       }) => {
         await steerRuns(page, { outcome: "interrupt" })
-        await openWithLocalServer(page, "python-runs")
+        await openWithLocalServer(page)
         await createPersona(page, { allowServer })
         await sendAsPersona(page)
         await page.getByText("Approve the stub action?").waitFor()

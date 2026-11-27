@@ -196,7 +196,7 @@ export function question(
 }
 
 export interface FakeSetup {
-  availability?: { ok: true } | { ok: false; reason: "loading" | "signed_out" | "not_runs" }
+  availability?: { ok: true } | { ok: false; reason: "loading" | "signed_out" }
   tasks?: Json[]
   views?: Record<string, { runIds: string[]; view: TaskRunView; children: Json[]; connection: string }>
   activeLimit?: number
@@ -220,7 +220,7 @@ export async function openWithTasks(
       localStorage.setItem("hummingbird-storage", JSON.stringify({ state: seed, version }))
       localStorage.setItem("e2e-seeded", "1")
     },
-    { seed: { chatBackend: "python-runs", chatModel: HAIKU, ...state }, version: STORE_VERSION, fake },
+    { seed: { chatModel: HAIKU, ...state }, version: STORE_VERSION, fake },
   )
   await page.goto("/")
   if (newChat) await page.getByRole("button", { name: "New chat" }).click()
@@ -267,4 +267,9 @@ export const taskToggle = (page: Page): Locator => page.getByRole("button", { na
 export async function send(page: Page, text: string): Promise<void> {
   await composer(page).fill(text)
   await composer(page).press("Enter")
+}
+
+/** What the store has persisted (its writes are debounced by 100 ms). */
+export async function persisted(page: Page): Promise<{ chatModel: string } & Record<string, unknown>> {
+  return page.evaluate(() => JSON.parse(localStorage.getItem("hummingbird-storage") ?? "{}").state)
 }

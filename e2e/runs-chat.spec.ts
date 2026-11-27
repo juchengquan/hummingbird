@@ -3,8 +3,6 @@ import { expect, test, type APIRequestContext } from "@playwright/test"
 import { AGENT_PY_ORIGIN } from "./support/env"
 import {
   ERROR_TITLE,
-  RUNS_WIRED,
-  RUNS_WIRED_REASON,
   assistantBubbles,
   isCancelRequest,
   isRejoinRequest,
@@ -22,14 +20,9 @@ import {
  * cancel, reload → rejoin, interrupt → answer → resume. The stub harness
  * answers `Stub reply to: <text>` (+ ` (step N)` per extra step), steered
  * per run by `steerRuns` (lib/client/runs/README.md § "For wave 4b-C").
- *
- * Gated on `RUNS_WIRED` (= the app's `RUNS_CHAT_ENABLED`): until wave
- * 4b-A wires chat sending onto runs and 4b-B adds the answer cards, chat
- * doesn't reach `/v1/runs` and these are reported as fixme.
  */
 
 test.describe("chat on /v1/runs", () => {
-  test.fixme(!RUNS_WIRED, RUNS_WIRED_REASON)
 
   test("send: the stub's reply streams into the assistant bubble", async ({ page }) => {
     const { starts } = await steerRuns(page, { steps: 2 })

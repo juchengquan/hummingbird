@@ -2,7 +2,6 @@ import { expect, test } from "@playwright/test"
 
 import { AGENT_PY_ORIGIN } from "./support/env"
 import {
-  RUNS_WIRED,
   assistantBubbles,
   isStartRequest,
   openChat,
@@ -14,7 +13,7 @@ import {
  * Always on: the plumbing the runs specs stand on — both servers up,
  * agent-py reachable from the app's origin (CORS, `X-Run-Token` exposed),
  * the stub harness steerable through `page.route`, and the app booting
- * with "agent-py (runs)" selected and sending a turn.
+ * and sending a turn on `/v1/runs` (the only chat path, wave 13).
  */
 
 test("agent-py answers a stub run cross-origin, steered by the route", async ({ page }) => {
@@ -47,7 +46,7 @@ test("agent-py answers a stub run cross-origin, steered by the route", async ({ 
   expect(starts[0].forwardedProps).toEqual({ conformance: { steps: 2 } })
 })
 
-test("the app boots with agent-py (runs) selected and sends a turn", async ({ page }) => {
+test("the app boots and sends a turn on /v1/runs", async ({ page }) => {
   await steerRuns(page, {})
   const turnRequests: string[] = []
   page.on("request", (r) => {
@@ -58,18 +57,15 @@ test("the app boots with agent-py (runs) selected and sends a turn", async ({ pa
   })
   await openChat(page)
 
-  // The selection survived hydration + migrations.
-  const backend = await page.evaluate(
-    () => JSON.parse(window.localStorage.getItem("hummingbird-storage") ?? "{}").state?.chatBackend,
+  // There is no backend setting to persist any more (store v37, Q145).
+  const stored = await page.evaluate(
+    () => JSON.parse(window.localStorage.getItem("hummingbird-storage") ?? "{}").state ?? {},
   )
-  expect(backend).toBe("python-runs")
+  expect("chatBackend" in stored).toBe(false)
 
   await sendMessage(page, "hello from e2e")
   await expect(page.getByText("hello from e2e").first()).toBeVisible()
-  // Some assistant answer arrives: the stub's once chat is on runs; before
-  // that (signed out, no AI gateway key) the in-Next route's mock reply.
-  await expect(assistantBubbles(page).last()).not.toBeEmpty()
+  await expect(assistantBubbles(page).last()).toContainText("Stub reply to: hello from e2e")
 
-  expect(turnRequests.length).toBeGreaterThan(0)
-  if (RUNS_WIRED) expect(turnRequests[0]).toBe("/v1/runs")
+  expect(turnRequests).toEqual(["/v1/runs"])
 })
