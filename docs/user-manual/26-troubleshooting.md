@@ -6,18 +6,22 @@
 Common failure modes and how to recover. If a fix here doesn't
 work, check the GitHub issues for your Hummingbird version.
 
-## "Chat returns mock responses"
+## "This deploy has no backend configured"
 
-`AI_GATEWAY_API_KEY` is missing or invalid. Check
-[Environment variables](21-environment-variables.md) and confirm
-the key is set in `.env.local`. Restart `bun dev` after editing
-the file.
+The whole app shows this screen when the frontend was built without
+`NEXT_PUBLIC_AGENT_PY_URL`: every feature talks to the agent service
+(agent-py), and the frontend doesn't know where it is. Set
+`NEXT_PUBLIC_AGENT_PY_URL` (an absolute URL, or `/` behind a same-origin
+proxy - see [Environment variables](21-environment-variables.md) and
+[Installation](20-installation.md)) and rebuild / redeploy the frontend:
+`NEXT_PUBLIC_*` values are baked in at build time, so a restart alone
+isn't enough.
 
 ## "No model provider is configured on this deploy"
 
-On the agent-py backends the agent service has no model provider key
-at all, so nothing can answer: the model picker and the chat say so and
-sending is blocked (there is no mock answer there). Set a provider key
+The agent service has no model provider key at all, so nothing can
+answer: the model picker and the chat say so and sending is blocked
+(there is no mock answer). Set a provider key
 for agent-py — see [Model providers](23-model-providers.md) — and
 restart it, then reload the page.
 
@@ -31,18 +35,12 @@ out, but without the vision pass for scanned / layout-heavy PDFs.
 Operators: unset the variable (or set it to `false`) to allow
 anonymous use - see [Environment variables](21-environment-variables.md).
 
-## "Magic-link email never arrives"
-
-In dev: check the local inbox at <http://localhost:54324>. In hosted
-Supabase: check the project's auth email templates - the magic-
-link template must be enabled.
-
 ## "File upload stuck on extraction"
 
 The first extraction of a large file (PDF, code repo) can take
 several seconds. The row's extraction status badge shows progress.
-If it never finishes, check the server logs - extraction lives
-in `app/api/extract/`.
+If it never finishes, check the agent service's logs - extraction is
+agent-py's `/v1/extract`.
 
 ## "MCP cloud-mode returns 401 / decrypt failed"
 
@@ -63,13 +61,6 @@ misconfig).
 poller needs the **direct** connection (`db.<project>.supabase.co:5432`)
 because `FOR UPDATE SKIP LOCKED` needs an open transaction. See
 [Environment variables](21-environment-variables.md).
-
-## "Chat backend toggle is missing"
-
-The toggle only appears when `NEXT_PUBLIC_AGENT_PY_URL` (or
-`NEXT_PUBLIC_AGENT_TS_URL`) is set. Without either, every value
-of the internal `chatBackend` setting is silently treated as
-`ts`.
 
 ## `bun run check` fails
 

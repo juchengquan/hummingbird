@@ -1,5 +1,5 @@
 <!-- pages-for: panel:mcp-tab -->
-<!-- related: app/api/mcp/, lib/server/mcp/, lib/client/hooks/store/slices/mcp.ts, components/panels/mcp-tab.tsx -->
+<!-- related: services/agent-py/src/agent_py/routers/mcp.py, lib/client/hooks/store/slices/mcp.ts, components/panels/mcp-tab.tsx -->
 
 # MCP server config
 
@@ -33,15 +33,11 @@ encrypted with `MCP_ENCRYPTION_KEY` and stored in Postgres.
 | Visible to all workspaces | No - per-user, per-device | Yes - synced across devices |
 
 ## Tips & gotchas
-- On the default chat backend (**agent-py (runs)**) the MCP panel works
-  signed out too for local-mode servers: discovery, resource reads and
-  tool calls go to the Python agent service, which allows 120 calls per
-  minute per IP for signed-out visitors (with `REQUIRE_AUTH_FOR_AI` on
-  it refuses them with "Sign in required"). Cloud-mode servers always
-  need sign-in. On the other backends, when the server has Supabase
-  configured these calls require being signed in (the server proxies
-  them); a local-only install (no Supabase) keeps working anonymously,
-  limited to 120 calls per minute per user or per IP.
+- The MCP panel's discovery, resource reads and tool calls go through
+  the deploy's agent service (agent-py). When the deploy has accounts
+  (Supabase configured) they need sign-in ("Sign in required"
+  otherwise); a deploy without accounts serves them anonymously, up to
+  120 calls per minute per IP. Cloud-mode servers always need sign-in.
 - Rotating `MCP_ENCRYPTION_KEY` invalidates every existing
   cloud-mode credential. Users have to re-add their servers.
 - If a tool call returns a "permission denied" error from a
