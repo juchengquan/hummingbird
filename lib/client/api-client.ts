@@ -61,6 +61,7 @@ import {
 import { CitationTableSchema, type CitationTable } from "@/shared/artifacts/citation-table"
 import { isAuthRequiredError } from "@/shared/api-errors"
 import { resolveBackendBaseUrl } from "@/shared/backend-base-url"
+import { servedSignedOut } from "@/shared/signed-out-calls"
 
 import { narrowToRemoteBody } from "@/client/api/chat-marshalling"
 import {
@@ -95,12 +96,7 @@ export interface RemoteDispatch {
   authToken: string | null
 }
 
-/** Per-endpoint: whether agent-py serves it to a signed-out caller
- *  (wave 12, Q123/Q134) — URL fetch, summarize, extract, extract-table,
- *  the MCP proxy, embed. The account-bound ones (share, schedules, memory
- *  extract, the stored-file links, cloud MCP) are not, and stay as they
- *  were signed out. */
-type Anonymous = { anonymous?: boolean }
+
 
 /** Whether a backend choice is served by agent-py: `'python'` and
  *  `'python-runs'` ("agent-py (runs)", Q33) differ only in how a chat
@@ -155,8 +151,6 @@ export interface DispatchedFetchOptions<LocalBody, RemoteBody, T> {
   inflight?: Map<string, Promise<DispatchedFetchResult<T>>>
   dedupeKey?: string
   dispatch?: DispatchOption
-  /** The endpoint is served signed out (see `Anonymous`). */
-  anonymous?: boolean
 }
 
 /** Internal: turn a `DispatchOption` (or undefined) into a concrete
@@ -165,12 +159,15 @@ export interface DispatchedFetchOptions<LocalBody, RemoteBody, T> {
  *  actually need them. */
 async function resolveDispatch(
   option: DispatchOption | undefined,
-  scope?: Anonymous,
+  remotePath: string,
 ): Promise<RemoteDispatch | null> {
   if (option?.dispatch === "in-next") return null
   if (option?.dispatch === "remote") return option.remote
   const { resolveRemoteBackend } = await import("@/client/api/backend-resolver")
-  return resolveRemoteBackend({ anonymous: scope?.anonymous === true })
+  // The endpoints agent-py serves signed out (wave 12, Q123/Q134) still
+  // resolve without a session on `python-runs`; the account-bound ones
+  // don't (`servedSignedOut`, `remoteTargetFor`).
+  return resolveRemoteBackend({ anonymous: servedSignedOut(remotePath) })
 }
 
 /** For endpoints only agent-py implements (`/v1/extract-table`,
@@ -181,9 +178,9 @@ async function resolveDispatch(
  *  routes, so a `ts-service` account stays on the in-Next route. */
 async function agentPyOnlyDispatch(
   option: DispatchOption | undefined,
-  scope?: Anonymous,
+  remotePath: string,
 ): Promise<DispatchOption> {
-  const remote = await resolveDispatch(option, scope)
+  const remote = await resolveDispatch(option, remotePath)
   return isAgentPyBackend(remote?.backend)
     ? { dispatch: "remote", remote }
     : { dispatch: "in-next" }
@@ -228,9 +225,7 @@ async function dispatchedFetch<LocalBody, RemoteBody, T>(
 
   const promise = (async (): Promise<DispatchedFetchResult<T>> => {
     try {
-      const remote = await resolveDispatch(options.dispatch, {
-        anonymous: options.anonymous,
-      })
+      const remote = await resolveDispatch(options.dispatch, options.path)
       const target = remote
         ? `${remote.baseUrl}${options.path}`
         : options.localUrl
@@ -708,7 +703,7 @@ async function scheduleRequest(
   options: DispatchOption | undefined,
   hasBody: boolean,
 ): Promise<{ url: string; headers: Record<string, string> }> {
-  const dispatch = await agentPyOnlyDispatch(options)
+  const dispatch = await agentPyOnlyDispatch(options, remotePath)
   const headers: Record<string, string> = hasBody
     ? { "Content-Type": "application/json" }
     : {}
@@ -839,7 +834,7 @@ async function extract(
   const form = new FormData()
   form.append("file", file)
   try {
-    const dispatch = await agentPyOnlyDispatch(options, { anonymous: true })
+    const dispatch = await agentPyOnlyDispatch(options, "/v1/extract")
     const remote = dispatch.dispatch === "remote" ? dispatch.remote : null
     const headers: Record<string, string> = {}
     if (remote?.authToken) headers.Authorization = `Bearer ${remote.authToken}`
@@ -863,7 +858,8 @@ async function extract(
  * table (PLAN-local-rag.md PR 2). Goes to agent-py's `/v1/embed` when
  * the account's backend is agent-py, else the in-Next route. Best-effort:
  * resolves to the parsed status on success, or `null` on any failure
- * (anonymous → 401, network error, malformed response) — callers treat
+ * (anonymous on Next → 401, network error, malformed response; anonymous
+ * on agent-py is a `skipped / not_signed_in` result) — callers treat
  * indexing as background decoration that quietly no-ops when it can't
  * run.
  */
@@ -884,7 +880,7 @@ async function embedFile(
     // agent-py implements `/v1/embed`; agent-ts (frozen) does not, so a
     // `ts-service` account stays on the in-Next route instead of a 404.
     // Signed out it is a no-op skip on agent-py (Q134).
-    dispatch: await agentPyOnlyDispatch(options, { anonymous: true }),
+    dispatch: await agentPyOnlyDispatch(options, "/v1/embed"),
   })
   return result.ok ? result.data : null
 }
@@ -949,7 +945,6 @@ async function summarizePost<T>(
     schema,
     signal: options?.signal,
     dispatch: options,
-    anonymous: true,
   })
   // File summaries run in the background on upload; the rest are
   // user-initiated actions.
@@ -1022,7 +1017,7 @@ async function createShare(
     localUrl: apiUrls.share(),
     bodyForLocal: body,
     schema: CreateShareResponseSchema,
-    dispatch: await agentPyOnlyDispatch(options),
+    dispatch: await agentPyOnlyDispatch(options, "/v1/share"),
   })
   return result.ok
     ? { ok: true, status: result.status, data: result.data }
@@ -1100,7 +1095,7 @@ async function memoryExtract(
     localUrl: apiUrls.memoryExtract(),
     bodyForLocal: body,
     schema: MemoryExtractResponseSchema,
-    dispatch: await agentPyOnlyDispatch(options),
+    dispatch: await agentPyOnlyDispatch(options, "/v1/memory/extract"),
   })
   return result.ok
 }
@@ -1151,7 +1146,7 @@ async function refreshGeneratedFileUrl(
   // agent-py only; agent-ts accounts use the in-Next route. Same
   // camelCase body on both (agent-py mirrors the Zod schema here,
   // unlike its snake_case `/v1/images/refresh-url`).
-  const dispatch = await agentPyOnlyDispatch(options)
+  const dispatch = await agentPyOnlyDispatch(options, "/v1/files/refresh-url")
   const result = await dispatchedFetch<
     { storagePath: string },
     { storagePath: string },
@@ -1181,7 +1176,7 @@ async function revokeShare(
     localUrl: apiUrls.shareToken(token),
     bodyForLocal: undefined,
     schema: RevokeShareResponseSchema,
-    dispatch: await agentPyOnlyDispatch(options),
+    dispatch: await agentPyOnlyDispatch(options, `/v1/share/${encodeURIComponent(token)}`),
   })
   return result.ok
     ? { ok: true, status: result.status }
@@ -1231,10 +1226,9 @@ async function mcpProxyCall(
     bodyForLocal: body,
     extraHeaders,
     signal: options?.signal,
-    dispatch: options,
-    // Local-mode servers only, signed out (agent-py never looks up a
+    // Signed out: local-mode servers only (agent-py never looks up a
     // cloud-mode server for an anonymous caller).
-    anonymous: true,
+    dispatch: options,
   })
   if (!result.ok) {
     return {
@@ -1324,7 +1318,6 @@ async function urlFetchBookmark(
     localUrl: apiUrls.urlFetch(),
     bodyForLocal: { url },
     dispatch: options,
-    anonymous: true,
   })
   if (!result.ok) {
     return {
@@ -1381,7 +1374,7 @@ async function extractTable(
     bodyForLocal: body,
     schema: CitationTableSchema,
     signal: options?.signal,
-    dispatch: await agentPyOnlyDispatch(options, { anonymous: true }),
+    dispatch: await agentPyOnlyDispatch(options, "/v1/extract-table"),
   })
   return result.ok ? result.data : failureResult(result)
 }
