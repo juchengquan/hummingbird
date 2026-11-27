@@ -9,6 +9,7 @@ import {
   PERSISTED_THEME_PREFIX_RE,
 } from "@/shared/persisted-theme";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { NoBackendGate } from "@/components/no-backend-gate";
 
 // Runs before React hydrates so the initial paint already has the correct
 // theme class. Mirrors the resolver in components/theme-applier.tsx.
@@ -58,7 +59,11 @@ export default async function RootLayout({
       >
         <ThemeApplier />
         <CrossTabStoreSync />
-        <TooltipProvider delayDuration={150}>{children}</TooltipProvider>
+        {/* No `NEXT_PUBLIC_AGENT_PY_URL`: every page is the "no backend"
+            screen (Q137) — the app, the editor and share pages alike. */}
+        <NoBackendGate>
+          <TooltipProvider delayDuration={150}>{children}</TooltipProvider>
+        </NoBackendGate>
       </body>
     </html>
   );
