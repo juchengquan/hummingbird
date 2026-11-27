@@ -157,7 +157,34 @@ def _run_lifespan(monkeypatch: pytest.MonkeyPatch, **env: str) -> dict[str, Any]
 def test_lifespan_starts_the_scheduler_only_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # A dry-run worker (the default): no scheduler either.
+    monkeypatch.delenv("SCHEDULER_ENABLED", raising=False)
+    monkeypatch.delenv("WORKER_DRY_RUN", raising=False)
     seen = _run_lifespan(monkeypatch, SUPABASE_DB_URL="postgresql://localhost/fake")
+    assert seen["poller"] is True and seen["scheduler"] is False
+
+
+def test_lifespan_starts_the_scheduler_where_the_worker_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Q130: unset, the scheduler follows the worker — live worker + a
+    database → the loop runs, no `SCHEDULER_ENABLED` needed."""
+    monkeypatch.delenv("SCHEDULER_ENABLED", raising=False)
+    seen = _run_lifespan(
+        monkeypatch, SUPABASE_DB_URL="postgresql://localhost/fake", WORKER_DRY_RUN="false"
+    )
+    assert seen["poller"] is True and seen["scheduler"] is True
+
+
+def test_lifespan_explicit_false_keeps_the_scheduler_off_beside_a_live_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen = _run_lifespan(
+        monkeypatch,
+        SUPABASE_DB_URL="postgresql://localhost/fake",
+        WORKER_DRY_RUN="false",
+        SCHEDULER_ENABLED="false",
+    )
     assert seen["poller"] is True and seen["scheduler"] is False
 
 
@@ -180,7 +207,48 @@ def test_lifespan_skips_the_scheduler_without_a_database(monkeypatch: pytest.Mon
     assert seen["scheduler"] is False
 
 
-def test_scheduler_settings_defaults() -> None:
-    s = Settings()
+def test_scheduler_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in ("SCHEDULER_ENABLED", "WORKER_DRY_RUN", "SUPABASE_DB_URL"):
+        monkeypatch.delenv(key, raising=False)
+    s = Settings(_env_file=None)
     assert s.SCHEDULER_ENABLED is False
     assert s.SCHEDULER_INTERVAL_SECONDS == 60.0
+
+
+DSN = "postgresql://localhost/fake"
+
+
+@pytest.mark.parametrize(
+    ("dry_run", "dsn", "expected"),
+    [
+        (False, DSN, True),  # a live worker with a database: on
+        (True, DSN, False),  # a dry-run worker executes nothing: off
+        (False, "", False),  # no database: nothing to dispatch
+        (True, "", False),
+    ],
+)
+def test_unset_the_scheduler_follows_the_worker(
+    monkeypatch: pytest.MonkeyPatch, dry_run: bool, dsn: str, expected: bool
+) -> None:
+    """Q130: the default is where the worker runs."""
+    monkeypatch.delenv("SCHEDULER_ENABLED", raising=False)
+    s = Settings(_env_file=None, WORKER_DRY_RUN=dry_run, SUPABASE_DB_URL=dsn)
+    assert s.SCHEDULER_ENABLED is expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "dry_run", "expected"),
+    [
+        ("false", False, False),  # an explicit false wins over a live worker
+        ("true", True, True),  # …and an explicit true over a dry-run one
+        ("", False, True),  # empty (a compose `${VAR:-}`) is unset
+        ("", True, False),
+    ],
+)
+def test_an_explicit_setting_wins(
+    monkeypatch: pytest.MonkeyPatch, raw: str, dry_run: bool, expected: bool
+) -> None:
+    monkeypatch.setenv("SCHEDULER_ENABLED", raw)
+    monkeypatch.setenv("WORKER_DRY_RUN", "true" if dry_run else "false")
+    monkeypatch.setenv("SUPABASE_DB_URL", DSN)
+    assert Settings(_env_file=None).SCHEDULER_ENABLED is expected

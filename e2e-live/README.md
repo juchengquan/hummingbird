@@ -7,7 +7,7 @@ CI workflow `e2e-live`) runs the product as deployed, on one machine:
 |---|---|
 | Postgres, GoTrue, PostgREST | Supabase's own images, every migration applied |
 | `proxy.ts` | a stand-in for Kong: `/auth/v1` → GoTrue, `/rest/v1` → PostgREST, on :54871 |
-| agent-py | the real service and worker (`WORKER_DRY_RUN=false`, scheduler on), :8171 |
+| agent-py | the real service and worker (`WORKER_DRY_RUN=false`; the scheduler is on by following the worker, `SCHEDULER_ENABLED` left unset — Q130), :8171 |
 | Next | a production build pointed at that Supabase, :3171 |
 | `fakes.py` | a scripted Anthropic Messages server (:8172) that **refuses any request the real API would** — a null `system`, response-only block fields, unpaired tool results — and an MCP server (:8173) that counts every effect. agent-py reaches it as Anthropic and as its Ollama host (wave 10), so it serves an `ollama/*` model the built-in list lacks |
 

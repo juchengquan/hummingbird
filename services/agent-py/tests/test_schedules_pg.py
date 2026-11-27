@@ -187,6 +187,64 @@ async def test_concurrent_dispatchers_fire_once(
         assert (await _counts(conn, user))["task_jobs"] == 1
 
 
+#: The Vercel Cron's claim (`dispatchDueSchedules` in
+#: `lib/server/agent/schedules.ts`), as PostgREST runs it: guarded on the
+#: `next_run_at` the tick read.
+_TS_CLAIM_SQL = """
+UPDATE public.task_schedules
+   SET next_run_at = $3, last_run_at = $4, updated_at = $4
+ WHERE id = $1 AND user_id = $2 AND next_run_at = $5
+RETURNING id
+"""
+
+
+async def _ts_claim(
+    conn: asyncpg.Connection, sid: uuid.UUID, user: uuid.UUID, read: datetime
+) -> bool:
+    now = datetime.now(UTC)
+    return (
+        await conn.fetchrow(_TS_CLAIM_SQL, sid, user, now + timedelta(days=1), now, read)
+        is not None
+    )
+
+
+async def test_the_vercel_cron_and_agent_py_fire_an_occurrence_once(
+    pool: asyncpg.Pool, seeded: tuple[uuid.UUID, uuid.UUID]
+) -> None:
+    """Q130: agent-py's scheduler is on by default where its worker runs,
+    so until wave 13 deletes the cron both dispatch the same rows. Each
+    reads a due row, then claims it: whichever claims second moves
+    nothing and fires nothing."""
+    user, ws = seeded
+
+    # The cron claims between agent-py's read and its claim.
+    async with pool.acquire() as conn:
+        sid = await _seed_schedule(conn, user, ws, model="anthropic/claude-haiku-4.5")
+
+    class CronFirst(PgScheduleStore):
+        async def claim(self, row: Any, *, next_run_at: datetime, now: datetime) -> bool:
+            if row.id == str(sid):
+                async with pool.acquire() as conn:
+                    assert await _ts_claim(conn, sid, user, row.next_run_at)
+            return await super().claim(row, next_run_at=next_run_at, now=now)
+
+    await dispatch_due_schedules(CronFirst(pool))
+    async with pool.acquire() as conn:
+        assert (await _counts(conn, user))["tasks"] == 0
+
+    # agent-py claims first: the cron's claim, on the value it read, misses.
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM public.task_schedules WHERE id = $1", sid)
+        sid = await _seed_schedule(conn, user, ws, model="anthropic/claude-haiku-4.5")
+        read = await conn.fetchval(
+            "SELECT next_run_at FROM public.task_schedules WHERE id = $1", sid
+        )
+    assert await dispatch_due_schedules(PgScheduleStore(pool)) >= 1
+    async with pool.acquire() as conn:
+        assert not await _ts_claim(conn, sid, user, read)
+        assert (await _counts(conn, user))["tasks"] == 1
+
+
 async def test_min_gap_defers_a_recent_fire(
     pool: asyncpg.Pool, seeded: tuple[uuid.UUID, uuid.UUID]
 ) -> None:

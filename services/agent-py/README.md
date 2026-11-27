@@ -466,7 +466,7 @@ for the thinking in ghost text).
 | `JOB_LEASE_SECONDS` | No | Default `120`. Lease a claim holds on a `task_jobs` row (`lease_expires_at`, migration 0032). A job whose worker died is reclaimed once it lapses (or reaped as failed, with its task, once `max_attempts` is spent). |
 | `JOB_HEARTBEAT_SECONDS` | No | Default `30` (clamped to a third of the lease). How often an executing job extends its lease. |
 | `SHUTDOWN_GRACE_SECONDS` | No | Default `8`. On shutdown the in-flight job may finish within this window; after it, the job is cancelled and handed back (lease expired on the spot) for the next worker. Keep it under the container stop timeout (Docker's default is 10 s). The stop starts on SIGTERM itself (the server's signal handler is chained), not after uvicorn has drained open SSE streams; the image also runs uvicorn with `--timeout-graceful-shutdown 8` so the lifespan (which closes the DB pool) isn't held past the stop timeout by a chat stream. `/readyz` reports `poller_alive` / `poller_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
-| `SCHEDULER_ENABLED` | No | Default `false`. Run the schedule dispatcher loop (`scheduler.py`) in this process: it fires due `task_schedules` rows exactly like the Vercel Cron's `/api/tasks/jobs/tick`. Needs `SUPABASE_DB_URL`. Safe alongside that cron and on several replicas — see [Scheduled tasks](#scheduled-tasks-replacing-the-vercel-cron). `/readyz` reports `scheduler_alive` / `scheduler_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
+| `SCHEDULER_ENABLED` | No | Unset: follows the worker (Q130) — on where the worker runs tasks (`WORKER_DRY_RUN=false`) with `SUPABASE_DB_URL` set, off otherwise. An explicit `true` / `false` wins (`false` keeps it off beside a live worker); empty counts as unset. Runs the schedule dispatcher loop (`scheduler.py`) in this process: it fires due `task_schedules` rows exactly like the Vercel Cron's `/api/tasks/jobs/tick`, which is redundant from wave 12 and deleted in wave 13. Needs `SUPABASE_DB_URL`. Safe alongside that cron and on several replicas — see [Scheduled tasks](#scheduled-tasks-replacing-the-vercel-cron). `/readyz` reports `scheduler_alive` / `scheduler_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
 | `SCHEDULER_INTERVAL_SECONDS` | No | Default `60` (the Vercel Cron's cadence). Seconds between dispatcher ticks. |
 | `REQUIRE_AUTH_FOR_AI` | No | Default off. `true` / `1` (with `SUPABASE_JWT_SECRET` or a JWKS URL set) refuses anonymous runs with `401 auth_required`. Strict values (`true` / `false` / `1` / `0`); anything else fails anonymous starts with 500 — never silently open. Same variable as the Next.js routes. |
 | `RUNS_STUB_HARNESS` | No | Default `false` (runs use the native harness and `ANTHROPIC_API_KEY`; without a key every run fails `unavailable`). `true` runs every run on the model-free stub (`runs/stub_harness.py`, steered by `forwardedProps.conformance`) — for the contract conformance suite only. |
@@ -536,18 +536,21 @@ Vercel Cron that calls `/api/tasks/jobs/tick` every minute
   path writes them one by one, so a failure there can leave a partial
   run).
 
-**Switching from the Vercel Cron.** Both dispatchers can run at the same
-time: the guarded claim lets exactly one of them fire each occurrence
-(tested with concurrent dispatchers against Postgres, including the TS
-dispatcher racing this one).
+**On where the worker runs (Q130).** Since wave 12 the dispatcher is on
+by default in every agent-py whose worker is live (`WORKER_DRY_RUN=false`
+with `SUPABASE_DB_URL`): a deployment that runs tasks fires its schedules
+too, with nothing to set. Look for `lifespan.scheduler.started`, then
+`scheduler.fired` as schedules come due; `/readyz` shows
+`scheduler_alive: true`. `SCHEDULER_ENABLED=false` turns it off (say, to
+keep one dispatching replica of several — not needed for safety).
 
-1. Set `SCHEDULER_ENABLED=true` (with `SUPABASE_DB_URL`) on one or more
-   agent-py instances and deploy. Look for `lifespan.scheduler.started`,
-   then `scheduler.fired` as schedules come due; `/readyz` shows
-   `scheduler_alive: true`.
-2. Remove the `/api/tasks/jobs/tick` entry from `vercel.json`'s `crons`
-   (and, once nothing calls the route, `CRON_SECRET`). Until then the
-   two simply share the work.
+**The Vercel Cron is redundant.** Both dispatchers can run at the same
+time: the guarded claim lets exactly one of them fire each occurrence
+(`tests/test_schedules_pg.py`: concurrent agent-py dispatchers, and the
+cron's own claim racing this one either way round). Until wave 13
+deletes the cron entry in `vercel.json` (and the route and
+`CRON_SECRET` with it), the two simply share the work; removing the
+entry sooner is safe.
 
 ## Crash recovery and side-effecting tools
 
