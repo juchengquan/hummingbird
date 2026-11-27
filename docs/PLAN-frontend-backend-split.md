@@ -422,6 +422,7 @@ Read from the code at #302; the first twelve were also checked by hand.
 - **Supabase** as the platform (Q3).
 - **Same origin** vs a separate API origin (Q21).
 - **A2A** at the backend edge (Q14).
+- **A static frontend** (Q128): a static export with a hash-based CSP instead of the per-request nonce, so the frontend needs no server.
 - **The backend switch** is per browser (Q33); make it a synced account setting. *(wave 11, Q111)*
 - **MCP 2026-07-28** dropped sessions and SSE resumability — check
   `lib/server/mcp/` and agent-py's MCP client against it.
