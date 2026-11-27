@@ -13,6 +13,14 @@ work, check the GitHub issues for your Hummingbird version.
 the key is set in `.env.local`. Restart `bun dev` after editing
 the file.
 
+## "No model provider is configured on this deploy"
+
+On the agent-py backends the agent service has no model provider key
+at all, so nothing can answer: the model picker and the chat say so and
+sending is blocked (there is no mock answer there). Set a provider key
+for agent-py — see [Model providers](23-model-providers.md) — and
+restart it, then reload the page.
+
 ## "Sign in required" instead of an AI answer
 
 The server sets `REQUIRE_AUTH_FOR_AI`, so AI features (chat, Explain,

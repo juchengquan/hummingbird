@@ -74,6 +74,7 @@ import { CompressButton } from "@/components/chat/compress-button"
 import { ResourcesMobileDrawer } from "@/components/sidebars/resources-mobile-drawer"
 import { ShareDialog } from "@/components/share-dialog"
 import { BranchesDialog } from "@/components/branches-dialog"
+import { NO_MODEL_PROVIDER_HINT, NO_MODEL_PROVIDER_MESSAGE } from "@/shared/served-models"
 import { cn } from "@/shared/utils"
 import {
   autoAvailableForBackend,
@@ -98,6 +99,9 @@ interface ChatHeaderProps {
    *  task worker's (Q55): the agent services take only the `anthropic/*`
    *  allowlist and no `auto`. */
   modelBackend: ModelBackendKind
+  /** Q131: the serving agent-py has no model provider — the picker says so
+   *  instead of offering models that can't run. */
+  noModelProvider?: boolean
   /** Called when the user picks a model from the header's model select.
    *  Owned by ChatPanel so it can chain a retry on the pending-error case. */
   onModelPick: (modelId: string) => void
@@ -125,6 +129,7 @@ interface ChatHeaderProps {
 export function ChatHeader({
   chatModel,
   modelBackend,
+  noModelProvider = false,
   onModelPick,
   modelPickerOpen,
   onModelPickerOpenChange,
@@ -430,7 +435,17 @@ export function ChatHeader({
             focused on text entry. ChatPanel owns the state so it can pop
             this open programmatically (e.g. when the user clicks
             `Change model` on an error). */}
-        {!renaming && (
+        {!renaming && noModelProvider && (
+          <span
+            data-testid="model-picker-no-provider"
+            role="status"
+            title={`${NO_MODEL_PROVIDER_MESSAGE} ${NO_MODEL_PROVIDER_HINT}`}
+            className="h-7 inline-flex items-center px-2 text-xs text-[var(--destructive)] shrink-0 max-w-[220px] truncate"
+          >
+            {NO_MODEL_PROVIDER_MESSAGE}
+          </span>
+        )}
+        {!renaming && !noModelProvider && (
           <Select
             value={chatModel}
             onValueChange={onModelPick}

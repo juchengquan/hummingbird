@@ -568,8 +568,12 @@ Every catalog id is still valid on agent-py's other endpoints; one
 missing here answers 503 instead of running. The browser reads it once
 per page (`lib/client/api/served-models.ts` → `lib/shared/served-models.ts`)
 and the model picker, the switch note, the task models and the editor's
-list follow it; until it arrives, when it can't be read, or when it lists
-nothing (no provider key), they keep the built-in `anthropic/*` list.
+list follow it; until it arrives, or when it can't be read, they keep the
+built-in `anthropic/*` list. An answer that lists **nothing** is a deploy
+with no model provider (wave 12, Q131): on agent-py's backends the picker
+and the chat say "No model provider is configured on this deploy" with a
+pointer to the setup docs, and sending is refused (no run, no 503 bubble,
+no mock); the model rules still keep the built-in list.
 
 ---
 

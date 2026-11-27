@@ -21,7 +21,7 @@ import {
   ROUTING_CONFIG,
   type ChatModel,
 } from "./models"
-import { servedModels } from "./served-models"
+import { noModelProvider, servedModels } from "./served-models"
 
 /** `"any"`: the Next.js routes. `"agent-service"`: agent-py's `/v1/chat`.
  *  `"agent-runs"`: agent-py's runs API — the same models, plus `auto` when
@@ -40,6 +40,17 @@ export const RUNS_ROUTING_AVAILABLE: boolean =
 /** Whether `kind` accepts what agent-py's `/v1/models` lists. */
 export function usesAgentPyList(kind: ModelBackendKind): boolean {
   return kind === "agent-service" || kind === "agent-runs" || kind === "agent-tasks"
+}
+
+/**
+ * Q131: whether a send on `kind` is refused because agent-py — which serves
+ * it — answered its model list and the list was **empty** (no model provider
+ * on the deploy): the picker and the chat say so instead of every send
+ * failing 503. A list that could not be read never refuses (the built-in
+ * list stands, as before). The Next routes and agent-ts are unaffected.
+ */
+export function sendRefusedNoProvider(kind: ModelBackendKind, agentPyConfigured: boolean): boolean {
+  return usesAgentPyList(kind) && agentPyConfigured && noModelProvider()
 }
 
 /** The ids `kind` accepts, or null for every catalog model (Next). */

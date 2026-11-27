@@ -47,6 +47,13 @@ fallbacks in order without re-sending.
 - `openrouter/auto` lets OpenRouter pick the upstream per request
   based on prompt length, latency budget, and price. Use it for
   one-id-fits-all setups.
+- The agent service (agent-py) reads the same provider variables, plus
+  `ANTHROPIC_API_KEY` for `anthropic/*` models directly
+  (`services/agent-py/README.md` § Models and providers). With none of
+  them set it serves no model, and on the agent-py backends the app says
+  **"No model provider is configured on this deploy"** in the model
+  picker and the chat and won't send — set at least one and restart
+  agent-py.
 
 ## Related
 - [Environment variables](21-environment-variables.md)

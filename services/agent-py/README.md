@@ -454,6 +454,11 @@ Anthropic key. `GET /v1/models` lists what runs (public).
 | OpenRouter | `OPENROUTER_API_KEY` | **no** — and whether it honours the `models` fallback list is unverified |
 | Ollama | `OLLAMA_BASE_URL` (+ `OLLAMA_API_KEY`) | on the real stack's scripted server only |
 
+With **no** provider configured `GET /v1/models` lists nothing, and the
+browser then says "No model provider is configured on this deploy" in the
+model picker and the chat and refuses to send (wave 12, Q131) — set one of
+the variables above.
+
 `scripts/probe_providers.py` makes one real call per model with a key in
 the repo's `.env` (stream, a tool call, thinking where flagged, an image
 where flagged) — run it after adding a provider or a model.
