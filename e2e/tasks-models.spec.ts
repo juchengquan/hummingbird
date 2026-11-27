@@ -1,6 +1,7 @@
 import { expect, type Page } from "@playwright/test"
 
 import { backendAcceptsModel, modelsForBackend } from "../lib/shared/backend-models"
+import { AGENT_PY_ORIGIN } from "./support/env"
 import { CHAT_MODELS } from "../lib/shared/models"
 
 import { createPersona, SERVER } from "./support/persona"
@@ -23,7 +24,6 @@ import {
 
 /** Q55 / B21: a task is launched only with a model the worker runs. */
 
-const SWITCHED_TO = modelsForBackend("agent-service")[0].id
 const NOTE = /isn't available in tasks\. Switched to/
 
 async function launchedModel(tasks: TasksBackend): Promise<string> {
@@ -178,6 +178,9 @@ test("a tab in Task mode doesn't undo another tab's pick for chat", async ({ pag
     window.dispatchEvent(new Event("focus"))
   })
   await expect(page.getByText(NOTE)).toBeVisible()
-  await expect.poll(async () => (await persisted(page)).chatModel).toBe(SWITCHED_TO)
+  // The picker follows agent-py's list (wave 10): what isn't accepted goes to
+  // agent-py's own default, which the browser reads from the stub's list.
+  const served = await (await fetch(`${AGENT_PY_ORIGIN}/v1/models`)).json()
+  await expect.poll(async () => (await persisted(page)).chatModel).toBe(served.defaultModel)
   expect(await tasks.sent("start")).toHaveLength(0)
 })
