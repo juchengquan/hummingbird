@@ -103,8 +103,8 @@ errors:
      (third source type after files and MCP resources) plus the
      `selected_url_bookmark_ids` column on `conversations`. Same RLS
      pattern, same workspace + conversation-private lane model. Page
-     content is fetched + extracted server-side by `/api/url/fetch`
-     at save time.
+     content is fetched + extracted server-side at save time (agent-py's
+     `/v1/url/fetch`).
 7. `supabase/migrations/0007_file_full_text.sql`
    - Adds the `full_text` column to `files` (alongside the existing
      truncated `extracted_text`) plus a `tsvector` generated column
@@ -227,7 +227,8 @@ order. Every migration has a unique numeric prefix (CI enforces this via
   - `mcp_upsert_server_with_credentials` raises `23505`
     (`mcp_server_id_conflict`) when the server id belongs to another
     user instead of silently writing nothing, and `P0002` for a foreign
-    workspace; `/api/mcp/server` answers 409 / 404. Idempotent.
+    workspace; the MCP save route (agent-py's `/v1/mcp/server`) answers
+    409 / 404. Idempotent.
 - `supabase/migrations/0040_task_worker_liveness.sql`
   - `task_worker_active_within(p_seconds)` (SECURITY DEFINER, returns a
     boolean only): true when any task worker holds a live lease or
@@ -358,8 +359,10 @@ order. Every migration has a unique numeric prefix (CI enforces this via
 - `supabase/migrations/0051_profile_chat_backend.sql`
   - `profiles.chat_backend` (wave 11, Q111): the account's chat backend —
     `ts`, `python`, `ts-service` or `python-runs`; NULL = never chosen (the
-    deploy's default). The browser reads it on sign-in (a set value wins)
-    and writes every choice through. Own-row RLS as the rest of `profiles`.
+    deploy's default). **Unused since wave 13** (Q145): the chat-backend
+    switch is gone — agent-py is the only backend — and the browser
+    neither reads nor writes the column. It stays until wave 15 drops it
+    with the table reshape. Own-row RLS as the rest of `profiles`.
   - **Deploy order:** migrate first; an older Next ignores the column, a
     newer one without it logs nothing and keeps the choice in the browser.
   - **Existing rows:** NULL — everyone follows the deploy's default until
