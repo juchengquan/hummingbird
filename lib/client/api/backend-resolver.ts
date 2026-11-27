@@ -30,6 +30,7 @@ import {
   isAgentTsConfigured,
   type ChatBackendOption,
 } from "@/client/api-client"
+import { explainOnRuns } from "@/client/chat/explain-stream"
 import { useStore } from "@/client/hooks/use-store"
 import type { RunsTarget } from "@/client/runs/types"
 import { editorAiBackend } from "@/shared/editor-ai/routing"
@@ -116,6 +117,24 @@ export async function resolveRemoteBackend(): Promise<RemoteBackendContext | nul
 export async function resolveRunsTarget(): Promise<RunsTarget | null> {
   if (useStore.getState().chatBackend !== "python-runs") return null
   if (!isAgentPyConfigured()) return null
+  const session = await sessionAccessToken()
+  const authToken = session.ok ? session.token : null
+  return {
+    baseUrl: AGENT_PY_BASE_URL,
+    authToken,
+    ...(authToken ? { getAuthToken: currentAccessToken } : {}),
+  }
+}
+
+/**
+ * Where the Explain-selection popover's run goes (wave 12, Q125), or
+ * `null` for the Next route: agent-py's runs API on its backends —
+ * `python-runs` and `python` alike (`explainOnRuns`) — signed in (the
+ * bearer) or out (an anonymous run). `ts` / `ts-service` keep the Next
+ * route until wave 13.
+ */
+export async function resolveExplainTarget(): Promise<RunsTarget | null> {
+  if (!explainOnRuns(useStore.getState().chatBackend, isAgentPyConfigured())) return null
   const session = await sessionAccessToken()
   const authToken = session.ok ? session.token : null
   return {

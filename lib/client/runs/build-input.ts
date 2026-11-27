@@ -103,6 +103,9 @@ export interface ChatRunInput {
    *  id, local ones with their bytes — `fitSandboxFilesToRun` keeps the
    *  bytes within the request limit. */
   sandboxFiles?: readonly RunSandboxFile[]
+  /** Contract 0.8.0 (Q135/Q136): a throwaway run — memory-only on the
+   *  backend, no tools. The Explain popover's (`buildExplainRunInput`). */
+  ephemeral?: boolean
 }
 
 /** Base64 characters of inline `sandboxFiles` a run request carries at
@@ -231,6 +234,7 @@ export function buildRunInput(input: ChatRunInput): StartRunRequest {
   if (input.sandboxFiles && input.sandboxFiles.length > 0) {
     forwardedProps.sandboxFiles = [...input.sandboxFiles]
   }
+  if (input.ephemeral) forwardedProps.ephemeral = true
   const creds = input.localMcpCredentials
   const state = creds && Object.keys(creds).length > 0 ? { [LOCAL_MCP_STATE_KEY]: { ...creds } } : undefined
   return {
@@ -242,5 +246,41 @@ export function buildRunInput(input: ChatRunInput): StartRunRequest {
     }) as StartRunRequest["messages"],
     ...(state ? { state } : {}),
     ...(Object.keys(forwardedProps).length > 0 ? { forwardedProps } : {}),
+  }
+}
+
+/** What the Explain-selection popover sends (Q125, Q135). */
+export interface ExplainRunInput {
+  /** The conversation's messages, for context. */
+  history: readonly Message[]
+  /** `explainSelectionPrompt(selection)` — the new user message. */
+  prompt: string
+  model?: string
+  /** The workspace system prompt. */
+  systemPrompt?: string
+}
+
+/**
+ * The Explain popover's run (wave 12): an **ephemeral** interactive run
+ * (`forwardedProps.ephemeral`, contract 0.8.0 — kept in agent-py's memory
+ * only, never stored with the user's tasks, Q136) on a **fresh thread** no
+ * conversation owns, carrying the history plus the explain prompt, the chat
+ * model and the workspace prompt — nothing else: no skills, attachments,
+ * MCP or AG-UI tools (Q135; the backend offers an ephemeral run no tools
+ * anyway). Pure but for the minted ids.
+ */
+export function buildExplainRunInput(input: ExplainRunInput): StartRunRequest {
+  const forwardedProps: RunForwardedProps = { ephemeral: true }
+  if (input.model) forwardedProps.model = input.model
+  if (input.systemPrompt) forwardedProps.systemPrompt = input.systemPrompt
+  const messages: AgUiMessage[] = [
+    ...toRunMessages(input.history),
+    { id: mintRunId(), role: "user", content: input.prompt },
+  ]
+  return {
+    threadId: mintRunId(),
+    runId: mintRunId(),
+    messages: messages as StartRunRequest["messages"],
+    forwardedProps,
   }
 }

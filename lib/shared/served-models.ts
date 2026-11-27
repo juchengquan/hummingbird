@@ -22,6 +22,7 @@ export interface ServedModels {
 
 let current: ServedModels | null = null
 let settled = false
+let empty = false
 const listeners = new Set<() => void>()
 
 export function servedModels(): ServedModels | null {
@@ -41,8 +42,36 @@ function notify(): void {
 export function setServedModels(next: ServedModels | null): void {
   current = next
   settled = next !== null
+  empty = false
   notify()
 }
+
+/**
+ * Q131: agent-py answered its list and the list is **empty** — no model
+ * provider is configured on this deploy (no provider key at all). Distinct
+ * from a list that could not be read (offline, an error, a malformed body),
+ * which keeps the built-in list and stays `false`. On agent-py's backends
+ * the picker and the chat then say so and refuse to send
+ * (`NO_MODEL_PROVIDER_MESSAGE`); the model rules still keep the built-in
+ * list (`servedModels()` stays null), so nothing is switched around.
+ */
+export function noModelProvider(): boolean {
+  return empty
+}
+
+export function markNoModelProvider(): void {
+  if (empty && settled) return
+  current = null
+  empty = true
+  settled = true
+  notify()
+}
+
+/** Shown in the model picker and the chat, and as a send's refusal. */
+export const NO_MODEL_PROVIDER_MESSAGE = "No model provider is configured on this deploy."
+/** Where an admin looks next (agent-py reads the provider keys). */
+export const NO_MODEL_PROVIDER_HINT =
+  "Set a provider key for agent-py — see Model providers in the user manual (docs/user-manual/23-model-providers.md)."
 
 export function markServedModelsSettled(): void {
   if (settled) return
@@ -58,8 +87,8 @@ export function subscribeServedModels(listener: () => void): () => void {
 }
 
 /** A `/v1/models` body, or null when it isn't one — or lists nothing: a
- *  deploy without any provider key (or on the stub harness) runs nothing,
- *  and the built-in list keeps the picker usable, as before wave 10. */
+ *  deploy without any provider key runs nothing; the model rules keep the
+ *  built-in list then, and `isEmptyModelList` tells that case apart (Q131). */
 export function parseServedModels(body: unknown): ServedModels | null {
   if (typeof body !== "object" || body === null) return null
   const { models, defaultModel, auto } = body as Record<string, unknown>
@@ -75,4 +104,12 @@ export function parseServedModels(body: unknown): ServedModels | null {
   }
   if (ids.length === 0) return null
   return { ids: new Set(ids), tasks: new Set(tasks), defaultModel, auto }
+}
+
+/** Whether `body` is a well-formed `/v1/models` answer listing no model —
+ *  a deploy with no model provider (Q131). */
+export function isEmptyModelList(body: unknown): boolean {
+  if (typeof body !== "object" || body === null) return false
+  const { models, defaultModel, auto } = body as Record<string, unknown>
+  return Array.isArray(models) && models.length === 0 && typeof defaultModel === "string" && typeof auto === "boolean"
 }
