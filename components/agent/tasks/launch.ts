@@ -31,11 +31,6 @@ import { launchRefusalText } from "./phase"
 /** How long a launch waits for its conversation to sync. */
 const SYNC_WAIT_MS = 20_000
 
-/** Whether the tasks interface launches on runs (else the old path does). */
-export function launchesOnRuns(tasks: Pick<TasksContextValue, "availability">): boolean {
-  return tasks.availability.ok || tasks.availability.reason === "signed_out"
-}
-
 /** A refusal before anything is sent, or null when a launch may go. */
 export function preLaunchRefusal(
   tasks: Pick<TasksContextValue, "availability" | "activeCount" | "activeLimit">,

@@ -172,10 +172,6 @@ export type TasksAvailability =
   /** Background runs need sign-in (`401 auth_required`): hide the Task
    *  toggle and the board's start. */
   | { ok: false; reason: "signed_out" }
-  /** The selected backend isn't "agent-py (runs)" (Q61): tasks launch,
-   *  are listed, delivered and notified on the old path; the runs
-   *  controller does nothing (on runs, the list shows every task — Q76). */
-  | { ok: false; reason: "not_runs" }
 
 export interface TaskLaunchOptions {
   /** The task's title in the list (default: the goal). */

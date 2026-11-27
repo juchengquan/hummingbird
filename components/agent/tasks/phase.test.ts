@@ -74,14 +74,10 @@ describe("a task's title", () => {
 })
 
 describe("the task gate (bug 20, C's `loading`)", () => {
-  test("on runs it follows availability; off runs the session", async () => {
+  test("it follows availability", async () => {
     const { taskGate } = await import("./phase")
-    expect(taskGate({ ok: true }, "signed-out")).toBe("ready")
-    expect(taskGate({ ok: false, reason: "loading" }, "signed-in")).toBe("loading")
-    expect(taskGate({ ok: false, reason: "signed_out" }, "signed-in")).toBe("signed_out")
-    expect(taskGate({ ok: false, reason: "not_runs" }, "signed-in")).toBe("ready")
-    expect(taskGate({ ok: false, reason: "not_runs" }, "loading")).toBe("loading")
-    expect(taskGate({ ok: false, reason: "not_runs" }, "signed-out")).toBe("signed_out")
-    expect(taskGate({ ok: false, reason: "not_runs" }, "unconfigured")).toBe("signed_out")
+    expect(taskGate({ ok: true })).toBe("ready")
+    expect(taskGate({ ok: false, reason: "loading" })).toBe("loading")
+    expect(taskGate({ ok: false, reason: "signed_out" })).toBe("signed_out")
   })
 })
