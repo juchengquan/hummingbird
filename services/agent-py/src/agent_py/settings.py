@@ -433,6 +433,11 @@ class Settings(BaseSettings):
     When set and present it wins over `X-Forwarded-For`. Only set this
     if the edge proxy overwrites the header — otherwise it's spoofable."""
 
+    VISION_MODEL: str = ""
+    """The catalog model `/v1/extract`'s PDF vision pass uses, if it is
+    flagged `supportsVision` and served here; else the first such model in
+    catalog order; none → no vision pass. Next's `VISION_MODEL`."""
+
     EXTRACT_MAX_BYTES: int = 5 * 1024 * 1024
     """Upload cap for `/v1/extract`. Matches the Next.js route's
     `FILE_SIZE_LIMIT` (`lib/shared/upload-config.ts`, 5 MB). Larger

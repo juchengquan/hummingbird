@@ -29,6 +29,7 @@ dependencies = [
     # `renderUI` validates parts against the generated `UiPartSchema`
     # (`agent_py.ui_parts`); the tests also check AG-UI streams with it.
     "jsonschema>=4.23",
+    "pypdfium2>=4.30",
 ]
 
 [project.optional-dependencies]
@@ -98,5 +99,5 @@ ignore_missing_imports = true
 # notoriously incomplete. Treat as Any at the import boundary; we
 # wrap their narrow surface in our own types.
 [[tool.mypy.overrides]]
-module = ["pypdf", "pypdf.*", "docx", "docx.*", "openpyxl", "openpyxl.*", "lxml", "lxml.*"]
+module = ["pypdf", "pypdf.*", "pypdfium2", "pypdfium2.*", "docx", "docx.*", "openpyxl", "openpyxl.*", "lxml", "lxml.*"]
 ignore_missing_imports = true

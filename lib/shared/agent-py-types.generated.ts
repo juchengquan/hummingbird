@@ -103,10 +103,9 @@ export interface paths {
          *     a `file` field and returns a structured `ExtractionResponse`
          *     matching `ExtractionResponseSchema` on the TS side.
          *
-         *     Auth-protected (JWT) — Phase 4 cuts the frontend over to this
-         *     endpoint, at which point the existing Next.js route can be
-         *     deleted. Until then both producers exist and the wire schema
-         *     keeps them aligned.
+         *     Signed in or anonymous; the limits, the vision pass and the cache
+         *     are in the module docstring. `fullText` is camelCase, as the
+         *     contract's `ExtractionResponse` (and the browser) read it.
          *
          *     File-size cap (`EXTRACT_MAX_BYTES`, default 5 MB) matches the
          *     Next.js side (`FILE_SIZE_LIMIT` in `lib/shared/upload-config.ts`);
@@ -858,6 +857,11 @@ export interface components {
              * @description The uploaded file to extract text from.
              */
             file: string;
+            /**
+             * Vision
+             * @description Force the PDF vision pass on or off; absent → auto.
+             */
+            vision?: ("true" | "false") | null;
         };
         /**
          * BookmarkSnapshot
@@ -1278,29 +1282,22 @@ export interface components {
             /** Snippet */
             snippet: string;
         };
+        /** @enum {string} */
+        ExtractionKind: "pdf" | "docx" | "markdown" | "csv" | "json" | "text" | "image" | "html" | "code" | "spreadsheet" | "unsupported";
         /**
          * ExtractionResponse
-         * @description Mirrors `ExtractionResponseSchema` in
-         *     `lib/shared/api-schemas.ts` for kind / text / truncated / language.
-         *     Keeps snake_case on `full_text` to match the rest of the Python
-         *     service's wire format (see `WhoAmIResponse.user_id`); the
-         *     generated TS types reflect that so the Phase 4 cutover doesn't
-         *     have to recase fields.
+         * @description Mirrors `ExtractionResponseSchema` (`lib/shared/api-schemas.ts`).
          */
         ExtractionResponse: {
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "pdf" | "docx" | "markdown" | "csv" | "json" | "text" | "image" | "html" | "code" | "spreadsheet" | "unsupported";
+            kind: components["schemas"]["ExtractionKind"];
             /** Text */
             text: string;
             /** Truncated */
             truncated: boolean;
-            /** Full Text */
-            full_text?: string | null;
             /** Language */
             language?: string | null;
+            /** Fulltext */
+            fullText?: string | null;
         };
         /** File */
         File: {

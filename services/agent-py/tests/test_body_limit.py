@@ -168,7 +168,9 @@ def test_unauthenticated_chunked_json_over_default_limit_is_413(client: TestClie
 
 
 def test_small_unauthenticated_request_still_reaches_auth(client: TestClient) -> None:
-    r = client.post("/v1/url/fetch", json={"url": "https://example.com"})
+    # A signed-in-only route (`/v1/url/fetch` serves anonymous callers
+    # since wave 12).
+    r = client.post("/v1/share", json={"kind": "conversation", "conversationId": "x"})
     assert r.status_code == 401
 
 
