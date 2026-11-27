@@ -31,7 +31,7 @@ describe("NoBackendGate", () => {
 
   test("by default it follows the build's NEXT_PUBLIC_AGENT_PY_URL", () => {
     const configured = resolveBackendBaseUrl(process.env.NEXT_PUBLIC_AGENT_PY_URL).configured
-    const html = renderToStaticMarkup(createElement(NoBackendGate, null, APP))
+    const html = renderToStaticMarkup(createElement(NoBackendGate, {}, APP))
     expect(html.includes("the-app")).toBe(configured)
     expect(html.includes(NO_BACKEND_TITLE)).toBe(!configured)
   })

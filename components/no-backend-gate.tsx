@@ -31,7 +31,7 @@ export function NoBackendGate({
   /** Whether the build names a backend; defaults to the build's
    *  `NEXT_PUBLIC_AGENT_PY_URL` (tests pass it). */
   configured?: boolean
-  children: ReactNode
+  children?: ReactNode
 }) {
   if (configured) return <>{children}</>
   return <NoBackendScreen />
