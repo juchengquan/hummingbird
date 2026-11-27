@@ -19,7 +19,7 @@ Error mapping follows the Next routes: on create / update the deliberate
 SQLSTATEs map like `taskWriteErrorResponse` (42501 → 403 `forbidden`,
 P0002 → 404, 22023 → 400 `invalid_request`, 55000 → 409 `invalid_state`,
 54000 → 409 `limit_reached`); anything else — and every list / delete
-failure — is what `categorizeError` makes of a PostgREST error object:
+failure — is what Next's `categorizeError` made of a PostgREST error object:
 500 `unknown` "Unknown error".
 """
 
@@ -70,12 +70,12 @@ def _error(status_code: int, code: str, message: str) -> HTTPException:
 
 
 def _unknown() -> HTTPException:
-    # `categorizeError` of a PostgREST error object (not an `Error`).
+    # What Next's `categorizeError` made of a PostgREST error object.
     return _error(500, "unknown", "Unknown error")
 
 
 def _write_error(exc: BaseException) -> HTTPException:
-    """`taskWriteErrorResponse(error) ?? categorizeError(error)`."""
+    """Next's `taskWriteErrorResponse(error) ?? categorizeError(error)`."""
     sqlstate = getattr(exc, "sqlstate", None)
     mapped = _SQLSTATE_RESPONSES.get(sqlstate) if isinstance(sqlstate, str) else None
     if mapped is None:

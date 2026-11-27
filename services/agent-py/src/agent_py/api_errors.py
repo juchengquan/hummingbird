@@ -1,9 +1,8 @@
 """HTTP error categorisation for JSON (non-streaming) AI routes.
 
-Port of `categorizeError` / `upstreamStatus` in `lib/shared/api-errors.ts`:
-maps a raised provider error to a stable `(status, code, message)` triple
-so a route can answer with the same status + `code` the Next.js route
-would. `chat.categorize_provider_error` is the SSE-stream sibling (it
+Maps a raised provider error to a stable `(status, code, message)` triple
+(ported from Next's `categorizeError` / `upstreamStatus`, deleted in wave
+13 — this is now the only copy). `chat.categorize_provider_error` is the SSE-stream sibling (it
 buckets into the four in-band error codes and never picks a status).
 
 One case of the TS original is not ported: `AbortError` → `408 aborted`.
@@ -87,8 +86,8 @@ def upstream_status(exc: BaseException, message: str) -> int | None:
 
 
 def categorize_error(exc: BaseException) -> CategorizedError:
-    """Bucket a raised error into the route's HTTP answer. Order and
-    patterns follow `categorizeError` in `lib/shared/api-errors.ts`."""
+    """Bucket a raised error into the route's HTTP answer (order and
+    patterns as Next's `categorizeError` had them)."""
     message = str(exc) or "Unknown error"
 
     if isinstance(exc, UnknownModelError):

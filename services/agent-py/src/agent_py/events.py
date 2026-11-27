@@ -610,9 +610,8 @@ TaskEvent = (
 
 def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
     """Serialise an event's kind-specific fields into the jsonb
-    `payload` column of `task_events`. Matches the keys the TS side
-    writes via `taskEventToRow` in `lib/shared/agent/persistence.ts`
-    so the projection reducer accepts rows from either producer.
+    `payload` column of `task_events` (the keys Next's task routes also
+    wrote before wave 13, so older rows read the same).
     """
     if isinstance(event, StatusEvent):
         status_payload: dict[str, object] = {"status": event.status}

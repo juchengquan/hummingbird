@@ -146,8 +146,7 @@ _CONTEXT_WINDOW_RE = re.compile(
 
 def categorize_provider_error(exc: BaseException) -> ProviderErrorCode:
     """Bucket an Anthropic SDK exception into one of the four wire
-    codes. Mirrors the browser's `categorizeError` in
-    `lib/shared/api-errors.ts`.
+    codes (the buckets Next's `categorizeError` used, before wave 13).
 
     Order matters — rate-limit-with-a-context-window-message would
     still be a rate limit, not a context bust. We check the Anthropic

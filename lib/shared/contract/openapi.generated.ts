@@ -2646,7 +2646,7 @@ export interface components {
          * @enum {string}
          */
         ShareKind: "conversation" | "document";
-        /** @description A skill enabled for a run, with optional per-skill settings (`ChatRequestSchema.shape.skills` in `lib/shared/api-schemas.ts`). */
+        /** @description A skill enabled for a run, with optional per-skill settings. */
         SkillConfig: {
             fileSearchConfig?: components["schemas"]["MaxCallsSkillConfig"];
             id: string;
