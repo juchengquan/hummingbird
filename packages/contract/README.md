@@ -300,7 +300,9 @@ without / with a bad credential — `startRun`'s fixture is a
   `dataUrl` is not an image / PDF / text file (0.4.1); a malformed 0.4.0 run
   option (`research`, `allowedMcpServerIds`, an `attachments[]` entry of
   each kind, `referenceImage`, `localMcpServers[]`) → 422
-  `invalid_request`; anonymous background start → 401 `auth_required`.
+  `invalid_request`; anonymous background start → 401 `auth_required`;
+  an `ephemeral` resume (0.8.0) → 400 `invalid_request`, and with a token
+  an `ephemeral` background start too; `ephemeral: "maybe"` → 422.
 - **credentials**: `getRun` / `streamRunEvents` / `cancelRun` with no
   credential or a malformed `X-Run-Token` → 401; `listRuns` with only a
   run token → 401; an unknown run → one identical 404 body from all three
@@ -314,6 +316,11 @@ without / with a bad credential — `startRun`'s fixture is a
   `goal` / `maxSteps` / `step` are null. Every 0.4.0 run option is
   accepted, with local MCP credentials in `state`, and the credential
   appears in neither the stream nor the run resource.
+- **ephemeral runs** (stub, 0.8.0, Q135/Q136): steered to `interrupt`,
+  an `ephemeral` run still finishes succeeded (it has no tools to pause
+  on); with a token, no `X-Run-Token`, the bearer reads, replays and
+  cancels it, `listRuns` on its thread is empty, and a second user gets
+  404.
 - **idempotency** (stub): the same body again (anonymous: with its run
   token) replays the identical stream; a taken `runId` — anonymous
   without its token, on another thread, from a signed-in user, the

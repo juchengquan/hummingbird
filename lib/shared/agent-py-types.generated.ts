@@ -1929,6 +1929,8 @@ export interface components {
             sandboxFiles?: components["schemas"]["RunSandboxFile"][] | null;
             /** Localmcpservers */
             localMcpServers?: components["schemas"]["LocalMcpServer"][] | null;
+            /** Ephemeral */
+            ephemeral?: boolean | null;
         } & {
             [key: string]: unknown;
         };

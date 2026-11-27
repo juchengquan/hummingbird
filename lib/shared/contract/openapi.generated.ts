@@ -1855,6 +1855,23 @@ export interface components {
              *     (see `RunFileAttachment`, `RunInlineFileAttachment`).
              */
             attachments?: components["schemas"]["RunAttachment"][];
+            /**
+             * @description 0.8.0 (Q135, Q136): a throwaway run on a temporary thread —
+             *     the Explain-selection popover. The backend keeps it in
+             *     memory only, as it keeps an anonymous run: never stored
+             *     with the caller's tasks, never in `listRuns`, gone a while
+             *     after it ends (agent-py: `RUNS_MEMORY_TTL_SECONDS`). A
+             *     signed-in caller still owns it — their bearer reads, streams
+             *     and cancels it, and their limits apply. It offers the model
+             *     **no tools**: the backend ignores `skills`, MCP servers,
+             *     `localMcpServers` and AG-UI `tools`, and offers no `askUser`
+             *     / `renderUI` either, so the run never runs a tool and never
+             *     ends `interrupted`; no follow-up suggestions. Interactive
+             *     only and never a resume: with `mode: background`,
+             *     `previousRunId` or `resume[]` it is `400 invalid_request`.
+             *     Absent means false.
+             */
+            ephemeral?: boolean;
             /** @description Background runs — the task's title. Absent means the last user message's text. */
             goal?: string;
             /**

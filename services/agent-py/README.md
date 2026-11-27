@@ -269,6 +269,19 @@ refuses anonymous starts with `401 auth_required`. Per-IP limits:
 `RUNS_ANONYMOUS_DAILY_BUDGET` and `RUNS_ANONYMOUS_MAX_CONCURRENT` →
 `429 rate_limit`.
 
+**Ephemeral runs (wave 12, Q135/Q136, contract 0.8.0).**
+`forwardedProps.ephemeral: true` — the Explain-selection popover's runs,
+on a temporary thread no conversation owns. Kept in the in-memory store
+and log like an anonymous run, even signed in with a database (so never a
+`tasks` row, never in `GET /v1/runs`, dropped `RUNS_MEMORY_TTL_SECONDS`
+after it ends), while staying the user's: their bearer reads, rejoins and
+cancels it (`RunServices.stores_of_run`) and `RUNS_RATE_PER_MINUTE`
+counts it. The native harness offers it **no tools** — it ignores the
+skills, MCP servers, local MCP servers and AG-UI `tools` it was sent and
+drops `askUser` / `renderUI` — and asks for no suggestions, so it never
+runs a tool or pauses. With `mode: background`, `previousRunId` or
+`resume[]` it is `400 invalid_request`.
+
 **What runs wire to** (`runs/wiring.py`, one instance of each per
 process). Event logs: `runs/event_log_pg.py` over `task_events` for
 signed-in runs with a database, `runs/event_log_memory.py` (TTL'd,
