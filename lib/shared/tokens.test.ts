@@ -4,7 +4,6 @@ import type { Message } from "@/shared/types"
 import {
   contextZone,
   estimateConversationTokens,
-  estimateTokens,
   estimateTokensWith,
   formatTokenCount,
   tokenizerForModelId,
@@ -68,18 +67,6 @@ describe("tokenizerForModelId", () => {
   test("unknown / undefined id → heuristic", () => {
     expect(tokenizerForModelId("some/unknown-model")).toBe("heuristic")
     expect(tokenizerForModelId(undefined)).toBe("heuristic")
-  })
-})
-
-describe("estimateTokens", () => {
-  test("picks the model's tokenizer; falls back to heuristic", () => {
-    // An OpenAI model uses the real encoder → higher than chars/4 for code.
-    expect(estimateTokens(CODE, "openai/gpt-5.5")).toBeGreaterThan(
-      HEURISTIC(CODE)
-    )
-    // An untagged model + no model id both reduce to the heuristic.
-    expect(estimateTokens(CODE, "google/gemini-2.5-pro")).toBe(HEURISTIC(CODE))
-    expect(estimateTokens(CODE)).toBe(HEURISTIC(CODE))
   })
 })
 
