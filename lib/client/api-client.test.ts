@@ -625,6 +625,35 @@ describe("apiClient.mcp.upsertCloudServer — dispatch", () => {
   })
 })
 
+describe("dispatchedFetch — error envelopes", () => {
+  // Next's routes nest the error (`{ ok: false, error: { code, message } }`);
+  // read as a flat message, an object reached the toast and crashed React (#31).
+  test("a Next route's nested error comes back as its code and message string", async () => {
+    installFetchStub({
+      status: 400,
+      jsonBody: { ok: false, error: { code: "validation", message: "Address 127.0.0.1 is in a private range" } },
+    })
+    const result = await apiClient.url.fetch("http://127.0.0.1/", { dispatch: "in-next" })
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.error).toEqual({ code: "validation", message: "Address 127.0.0.1 is in a private range" })
+  })
+
+  test("agent-py's flat envelope and a bare string error still read as before", async () => {
+    installFetchStub({ status: 429, jsonBody: { code: "rate_limit", message: "Slow down" } })
+    const flat = await apiClient.url.fetch("https://e.x", { dispatch: "remote", remote: REMOTE })
+    expect(!flat.ok && flat.error).toEqual({
+      code: "rate_limit",
+      message: "Slow down",
+    })
+    installFetchStub({ status: 500, jsonBody: { error: "boom" } })
+    const bare = await apiClient.url.fetch("https://e.x", { dispatch: "in-next" })
+    expect(!bare.ok && bare.error).toEqual({
+      code: undefined,
+      message: "boom",
+    })
+  })
+})
+
 describe("dispatchedFetch — wire shape", () => {
   test("in-next dispatch sets Content-Type and no Authorization", async () => {
     const log = installFetchStub({ jsonBody: { ok: true } })

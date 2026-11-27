@@ -249,15 +249,7 @@ async function dispatchedFetch<LocalBody, RemoteBody, T>(
         signal: options.signal,
       })
       if (!res.ok) {
-        const errBody = await readErrorBody(res)
-        return {
-          ok: false,
-          status: res.status,
-          error: {
-            code: errBody.code,
-            message: errBody.message ?? errBody.error,
-          },
-        }
+        return { ok: false, status: res.status, error: errorOf(await readErrorBody(res)) }
       }
       const raw: unknown = await res.json()
       if (options.schema) {
@@ -404,14 +396,24 @@ export const apiUrls = {
  * / `message` off the result; we don't throw an Error here because the
  * chat client interprets the status + envelope specifically.
  */
-async function readErrorBody(
-  res: Response
-): Promise<{ code?: string; message?: string; error?: string }> {
+type ErrorBody = { code?: string; message?: string; error?: string | { code?: string; message?: string } }
+
+async function readErrorBody(res: Response): Promise<ErrorBody> {
   try {
     return await res.json()
   } catch {
     return {}
   }
+}
+
+/** A failed response's code and message, whichever envelope it came in:
+ *  agent-py's flat `{ code, message }`, a Next route's nested
+ *  `{ ok: false, error: { code, message } }`, or a bare `{ error: "…" }`. */
+function errorOf(body: ErrorBody): { code?: string; message?: string } {
+  if (body.error && typeof body.error === "object") {
+    return { code: body.error.code ?? body.code, message: body.error.message ?? body.message }
+  }
+  return { code: body.code, message: body.message ?? body.error }
 }
 
 // --- /api/chat (streaming) --------------------------------------------------
@@ -500,7 +502,7 @@ async function chatStreamTs(
       ok: false,
       status: res.status,
       body: null,
-      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+      error: errorOf(errBody),
     }
   }
   return { ok: true, status: res.status, body: res.body }
@@ -535,7 +537,7 @@ async function chatStreamRemote(
       ok: false,
       status: res.status,
       body: null,
-      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+      error: errorOf(errBody),
     }
   }
   return { ok: true, status: res.status, body: res.body }
@@ -575,7 +577,7 @@ async function tasksStart(
     return {
       ok: false,
       status: res.status,
-      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+      error: errorOf(errBody),
     }
   }
   try {
@@ -620,7 +622,7 @@ async function tasksResume(
       ok: false,
       status: res.status,
       body: null,
-      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+      error: errorOf(errBody),
     }
   }
   return { ok: true, status: res.status, body: res.body }
@@ -640,7 +642,7 @@ async function tasksCancel(
     return {
       ok: false,
       status: res.status,
-      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+      error: errorOf(errBody),
     }
   }
   return { ok: true, status: res.status }
@@ -669,7 +671,7 @@ async function tasksRespond(
     return {
       ok: false,
       status: res.status,
-      error: { code: errBody.code, message: errBody.message ?? errBody.error },
+      error: errorOf(errBody),
     }
   }
   return { ok: true, status: res.status }
@@ -725,7 +727,7 @@ async function scheduleErrorResult(res: Response) {
   return {
     ok: false as const,
     status: res.status,
-    error: { code: errBody.code, message: errBody.message ?? errBody.error },
+    error: errorOf(errBody),
   }
 }
 
