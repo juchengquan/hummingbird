@@ -1,16 +1,13 @@
 /**
- * Where the editor's AI goes (wave 9, Q102–Q105), as pure decisions; the
- * browser side is `resolveEditorAiTarget` (`lib/client/api/backend-resolver.ts`).
+ * The editor's AI models (wave 9, Q102–Q105), as pure decisions. agent-py
+ * serves the editor's AI (`/v1/ai/command`, `/v1/ai/complete`) — the only
+ * backend since wave 13 — signed in or out, as it serves chat. There is no
+ * own-key setting (wave 12, Q124: agent-py never takes a user's key, Q103).
  *
- * * agent-py serves it on `python` (signed in) and `python-runs` (signed
- *   in or out), as it serves chat — `resolveModelBackend`'s rules; agent-ts
- *   is frozen, so `ts-service` keeps the Next route (Q105).
- * * There is no own-key setting any more (wave 12, Q124: agent-py never
- *   takes a user's key, Q103): the editor uses the deploy's models — on
- *   the Next route the catalog (`config/models.json`) on the deploy's key.
- * * On agent-py the editor takes the agent-service models (Q102): a model
- *   it doesn't run is switched to the backend's default, with a note; no
- *   model means agent-py's own default (`AGENT_DEFAULT_MODEL`).
+ * The editor takes the models agent-py serves chat on (Q102), except
+ * `auto` (the editor routes don't resolve it): a model it doesn't run is
+ * switched to agent-py's default, with a note; no model means agent-py's
+ * own default (`AGENT_DEFAULT_MODEL`).
  */
 
 import {
@@ -18,24 +15,7 @@ import {
   defaultModelForBackend,
   modelsForBackend,
 } from '@/shared/backend-models';
-import { CHAT_MODELS, type ChatModel } from '@/shared/models';
-
-export type EditorAiBackend = 'agent-py' | 'next';
-
-export function editorAiBackend({
-  agentPyConfigured,
-  chatBackend,
-  signedIn,
-}: {
-  agentPyConfigured: boolean;
-  chatBackend: 'python' | 'python-runs' | 'ts' | 'ts-service';
-  signedIn: boolean;
-}): EditorAiBackend {
-  if (!agentPyConfigured) return 'next';
-  if (chatBackend === 'python-runs') return 'agent-py';
-  if (chatBackend === 'python' && signedIn) return 'agent-py';
-  return 'next';
-}
+import { isAutoModel, type ChatModel } from '@/shared/models';
 
 /** The model to send agent-py for `requested` (the editor settings' pick). */
 export function editorAiModelFor(requested: string | null | undefined): {
@@ -43,20 +23,13 @@ export function editorAiModelFor(requested: string | null | undefined): {
   switchedFrom: string | null;
 } {
   if (!requested) return { model: null, switchedFrom: null };
-  if (backendAcceptsModel('agent-service', requested)) {
+  if (!isAutoModel(requested) && backendAcceptsModel('agent-runs', requested)) {
     return { model: requested, switchedFrom: null };
   }
-  return { model: defaultModelForBackend('agent-service'), switchedFrom: requested };
+  return { model: defaultModelForBackend('agent-runs'), switchedFrom: requested };
 }
 
-/** The editor settings' model list while agent-py serves the editor. */
-export function editorAiAgentModels(): ChatModel[] {
-  return modelsForBackend('agent-service');
-}
-
-/** The editor settings' model list for `backend`: what agent-py runs, or on
- *  the Next route the deploy's catalog — the only ids it dispatches on the
- *  deploy's key (Q124; a gateway-wide list needed a user's own key). */
-export function editorAiModels(backend: EditorAiBackend): ChatModel[] {
-  return backend === 'agent-py' ? editorAiAgentModels() : CHAT_MODELS;
+/** The editor settings' model list: what agent-py runs. */
+export function editorAiModels(): ChatModel[] {
+  return modelsForBackend('agent-runs');
 }

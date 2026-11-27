@@ -5,8 +5,7 @@ import "client-only"
  * The `TasksContextValue` the dashboard hands to `TasksProvider`.
  *
  * - The real value is `useTasksController()` (`lib/client/runs/tasks/
- *   controller.ts`): `not_runs` off "agent-py (runs)", so every surface
- *   keeps the old single-task path there (Q61).
+ *   controller.ts`).
  * - E2E builds (`NEXT_PUBLIC_E2E_TASKS_FAKE=1`, set only by
  *   `playwright.config.ts`) can swap in the in-page fake (`./e2e-fake`)
  *   when a spec asks for it. Any other build folds the flag to `false`,
@@ -23,27 +22,6 @@ import type { FakeTasks } from "./e2e-fake"
 /** Whether this build may load the e2e fake. Off unless the build set it. */
 export function e2eTasksFakeAllowed(flag: string | undefined): boolean {
   return flag === "1"
-}
-
-const refuse = async () =>
-  ({ ok: false, code: "not_runs", message: "Tasks don't run on agent-py (runs) here." }) as const
-
-/** Tasks off runs: the old path drives them (`TaskRunProvider`). */
-export const PLACEHOLDER_TASKS: TasksContextValue = {
-  availability: { ok: false, reason: "not_runs" },
-  tasks: [],
-  listError: null,
-  activeCount: 0,
-  activeLimit: 5,
-  getTask: () => null,
-  subscribeTask: () => () => {},
-  launch: refuse,
-  answer: refuse,
-  cancel: async () => {},
-  skipChild: async () => {},
-  refresh: () => {},
-  runAsTask: false,
-  setRunAsTask: () => {},
 }
 
 function useRealTasks(): TasksContextValue {

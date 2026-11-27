@@ -1,7 +1,6 @@
 /**
- * Resolve a remote-backend base URL env value (`NEXT_PUBLIC_AGENT_PY_URL`,
- * `NEXT_PUBLIC_AGENT_TS_URL`) into the prefix the API client puts in
- * front of `/v1/...`.
+ * Resolve the backend base URL env value (`NEXT_PUBLIC_AGENT_PY_URL`) into
+ * the prefix the API client puts in front of `/v1/...`.
  *
  * Three shapes:
  *

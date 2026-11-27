@@ -19,10 +19,10 @@ export const SERVER = {
 
 export const CREDENTIAL = "Bearer e2e-local-mcp-credential"
 
-/** Open a chat on `chatBackend`, in a workspace with one local-mode server
- *  (with a saved credential). Seeds once per browser context, so a reload
- *  or a second tab sees what the app saved. */
-export async function openWithLocalServer(page: Page, chatBackend: "ts" | "python-runs") {
+/** Open a chat in a workspace with one local-mode server (with a saved
+ *  credential). Seeds once per browser context, so a reload or a second
+ *  tab sees what the app saved. */
+export async function openWithLocalServer(page: Page) {
   await page.addInitScript(
     ({ state, version, creds }) => {
       if (localStorage.getItem("e2e-seeded")) return
@@ -31,7 +31,7 @@ export async function openWithLocalServer(page: Page, chatBackend: "ts" | "pytho
       localStorage.setItem("e2e-seeded", "1")
     },
     {
-      state: { chatBackend, mcpServers: [SERVER] },
+      state: { mcpServers: [SERVER] },
       version: STORE_VERSION,
       creds: { [SERVER.id]: { type: "bearer", headers: { Authorization: CREDENTIAL } } },
     },

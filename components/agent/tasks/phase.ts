@@ -11,6 +11,7 @@ import type {
   TaskChild,
   TaskPhase,
   TaskSummary,
+  TasksAvailability,
 } from "@/client/runs/tasks/types"
 
 /** A task still counting against the cap (Q72). */
@@ -177,22 +178,15 @@ export function taskGoalLine(goal: string | null | undefined): string {
 
 /**
  * Whether this browser may offer task launches (the Task toggle, `/research`,
- * the board's "Run as task"), on either path:
- * - `loading` — the session is still being read (C's `availability`, or the
- *   old path's auth status): offer nothing, refuse nothing;
- * - `signed_out` — tasks need sign-in on both paths (bug 20);
+ * the board's "Run as task"):
+ * - `loading` — the session is still being read: offer nothing, refuse
+ *   nothing;
+ * - `signed_out` — tasks need sign-in (bug 20);
  * - `ready`.
  */
 export type TaskGate = "ready" | "loading" | "signed_out"
 
-export function taskGate(
-  availability: { ok: true } | { ok: false; reason: string },
-  authStatus: "unconfigured" | "loading" | "signed-out" | "signed-in",
-): TaskGate {
+export function taskGate(availability: TasksAvailability): TaskGate {
   if (availability.ok) return "ready"
-  if (availability.reason === "loading") return "loading"
-  if (availability.reason === "signed_out") return "signed_out"
-  // Off runs (`not_runs`): the old path's own session.
-  if (authStatus === "loading") return "loading"
-  return authStatus === "signed-in" ? "ready" : "signed_out"
+  return availability.reason
 }

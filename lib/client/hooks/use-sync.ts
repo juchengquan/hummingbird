@@ -29,9 +29,7 @@ import { heldConversationIds } from "@/client/hooks/store/slices/chat"
 import { useSyncEnabled } from "@/client/hooks/use-sync-enabled"
 import { getSupabaseBrowserClient } from "@/client/supabase/client"
 import { fetchAccountInstructions } from "@/client/supabase/account-instructions"
-import { fetchChatBackend, writeChatBackend } from "@/client/supabase/chat-backend"
 import { fetchMemoryEnabled } from "@/client/supabase/memory"
-import { reconcileChatBackend } from "@/shared/chat-backend"
 import {
   configureSync,
   enqueue,
@@ -254,16 +252,6 @@ export function useSync(): void {
       const memoryEnabled = await fetchMemoryEnabled(userId)
       if (cancelled || memoryEnabled === null) return
       useStore.getState().setMemoryEnabled(memoryEnabled)
-    })()
-    // The chat backend follows the account (wave 11, Q111): a set value
-    // wins; an unset one takes this browser's explicit choice.
-    void (async () => {
-      const server = await fetchChatBackend(userId)
-      if (cancelled) return
-      const { chatBackend, chatBackendExplicit, setChatBackend } = useStore.getState()
-      const step = reconcileChatBackend({ server, local: chatBackend, localExplicit: chatBackendExplicit })
-      if (step.apply) setChatBackend(step.apply)
-      if (step.push) void writeChatBackend(userId, step.push)
     })()
     return () => {
       cancelled = true

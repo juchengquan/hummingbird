@@ -17,7 +17,6 @@ import { ImageViewerHost } from "@/components/image-viewer/image-viewer"
 import { DocxViewerHost } from "@/components/docx-viewer/docx-viewer"
 import { TextViewerHost } from "@/components/text-viewer/text-viewer"
 import { CsvViewerHost } from "@/components/csv-viewer/csv-viewer"
-import { ChildRunModalHost } from "@/components/agent/child-run-modal"
 import {
   SidebarInset,
   SidebarProvider,
@@ -27,7 +26,7 @@ import { useSync } from "@/client/hooks/use-sync"
 import { staleCredentialFingerprints } from "@/client/mcp/local-creds"
 import { useReconcile } from "@/client/hooks/use-reconcile"
 import { ReconcileDialog } from "@/components/auth/reconcile-dialog"
-import { TaskRunProvider } from "@/client/agent/task-run-context"
+import { OldTaskPointerHandOff } from "@/client/agent/old-task-pointer"
 import { TasksProvider } from "@/client/runs/tasks/context"
 import { useTasksValue } from "@/components/agent/tasks/use-tasks-value"
 import { AgentImportListener } from "@/components/agent-import-listener"
@@ -136,8 +135,7 @@ function DashboardShell() {
   const sidebarWidth = useStore((state) => state.sidebarWidth)
   const sidebarCollapsed = useStore((state) => state.sidebarCollapsed)
   // Tasks on runs (wave 6, Q69): every surface that shows or launches a
-  // task reads this; off runs it says `not_runs` and the old path
-  // (`TaskRunProvider`) drives them (Q61).
+  // task reads this.
   const tasks = useTasksValue()
 
   return (
@@ -155,12 +153,10 @@ function DashboardShell() {
       <AgentImportListener />
       <SkillImportListener />
       <TasksProvider value={tasks}>
-        <TaskRunProvider>
-          <MainArea />
-        </TaskRunProvider>
+        <OldTaskPointerHandOff />
+        <MainArea />
       </TasksProvider>
       <CommandPalette />
-      <ChildRunModalHost />
       <PdfViewerHost />
       <UrlPreviewHost />
       <LiveArtifactHost />

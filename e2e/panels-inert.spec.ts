@@ -1,6 +1,6 @@
-import { expect } from "@playwright/test"
+import { expect, test } from "@playwright/test"
 
-import { openApp, test } from "./support/tasks"
+import { openWithTasks } from "./support/tasks-fake"
 
 /** Q89: a closed side panel's content is only shrunk to zero width, still
  *  mounted — its controls must be out of the tab order and the
@@ -9,7 +9,7 @@ import { openApp, test } from "./support/tasks"
 const CLOSED = 'aside[data-state="collapsed"]'
 
 test("a closed panel's controls can't be reached by keyboard or by role", async ({ page }) => {
-  await openApp(page, { resourcesSidebarOpen: false, tasksPanelOpen: false })
+  await openWithTasks(page, { tasks: [] }, { resourcesSidebarOpen: false, tasksPanelOpen: false })
   await expect(page.locator(CLOSED)).toHaveCount(2)
 
   const focusedInClosed: string[] = []
@@ -39,7 +39,7 @@ test("a closed panel's controls can't be reached by keyboard or by role", async 
 })
 
 test("an open panel's controls can be", async ({ page }) => {
-  await openApp(page, { resourcesSidebarOpen: false, tasksPanelOpen: true })
+  await openWithTasks(page, { tasks: [] }, { resourcesSidebarOpen: false, tasksPanelOpen: true })
   await expect(page.getByRole("button", { name: "Close tasks panel" })).toBeVisible()
   await page.getByRole("button", { name: "Close tasks panel" }).focus()
   await expect(page.getByRole("button", { name: "Close tasks panel" })).toBeFocused()

@@ -31,7 +31,7 @@ async function signedIn(page: Page, workspaceExtra: Record<string, unknown> = {}
   const raw = "base64-" + Buffer.from(JSON.stringify(s)).toString("base64url")
   await page.context().addCookies([{ name: "sb-127-auth-token", value: raw, domain: "127.0.0.1", path: "/" }])
   const id = crypto.randomUUID(), now = new Date().toISOString()
-  const seed = { chatBackend: "python-runs", chatModel: HAIKU, workspaces: [{ id, name: "Runs", createdAt: now, updatedAt: now, ...workspaceExtra }], activeWorkspaceId: id, conversations: [] }
+  const seed = { chatModel: HAIKU, workspaces: [{ id, name: "Runs", createdAt: now, updatedAt: now, ...workspaceExtra }], activeWorkspaceId: id, conversations: [] }
   await page.addInitScript(({ seed, version }) => {
     if (localStorage.getItem("e2e-seeded")) return
     localStorage.setItem("hummingbird-storage", JSON.stringify({ state: seed, version }))

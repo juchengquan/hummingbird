@@ -1,11 +1,9 @@
 import "client-only"
 
 /**
- * Mounted by the chat panel: once the store has hydrated, and again when
- * the chat backend changes, rebuild the interrupted turns of chat on runs
- * from the active-run pointers (`restoreInterruptedTurns`). A no-op unless
- * the "agent-py (runs)" option is selected (`resolveRunsTarget()` is
- * `null` otherwise).
+ * Mounted by the chat panel: once the store has hydrated, rebuild the
+ * interrupted turns of chat on runs from the active-run pointers
+ * (`restoreInterruptedTurns`).
  */
 
 import { useEffect } from "react"
@@ -19,15 +17,14 @@ import { useInterruptedTurns } from "./chat-bridge"
 import { restoreInterruptedTurns } from "./restore-interrupted"
 
 export function useRestoreInterruptedTurns(enabled: boolean): void {
-  const chatBackend = useStore((s) => s.chatBackend)
   useEffect(() => {
-    if (!enabled || chatBackend !== "python-runs") return
+    if (!enabled) return
     const records = listActiveRuns().filter((r) => r.status === "interrupted")
     if (records.length === 0) return
     let cancelled = false
     void (async () => {
       const target = await resolveRunsTarget()
-      if (!target || cancelled) return
+      if (cancelled) return
       await restoreInterruptedTurns({
         target,
         records,
@@ -48,5 +45,5 @@ export function useRestoreInterruptedTurns(enabled: boolean): void {
     return () => {
       cancelled = true
     }
-  }, [enabled, chatBackend])
+  }, [enabled])
 }

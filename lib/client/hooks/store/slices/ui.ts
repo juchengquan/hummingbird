@@ -7,8 +7,6 @@ import type {
   PinnedExplanation,
   ToolCallResult,
 } from "@/shared/types"
-import { resolveBackendBaseUrl } from "@/shared/backend-base-url"
-import { defaultChatBackend } from "@/shared/chat-backend"
 import { extractPersistedTheme } from "@/shared/persisted-theme"
 import { uuid } from "@/shared/uuid"
 
@@ -21,10 +19,6 @@ const EMPTY_PINS: readonly PinnedExplanation[] = Object.freeze([])
 
 export type Theme = "system" | "dark" | "light"
 export type ColorScheme = "default" | "anthropic"
-
-/** Which `/api/chat` producer the apiClient hits. See `chatBackend`
- *  on the UI slice for the full rationale. */
-export type ChatBackend = "ts" | "python" | "ts-service" | "python-runs"
 
 /** Tab ids for the right resources sidebar. */
 export type ResourcesSidebarTab =
@@ -149,41 +143,10 @@ export interface UiSlice {
    *  useEffect reads, copies to local state, then clears. */
   pendingChatInput: string | null
 
-  /**
-   * Backend selector for `/api/chat` streaming.
-   *
-   * - `'ts'` (default) — Next.js route `/api/chat` (the existing,
-   *   feature-complete stack with skills / attachments / MCP / etc.).
-   * - `'python'` — the Phase 4-1 agent service at
-   *   `<NEXT_PUBLIC_AGENT_PY_URL>/v1/chat`. Text-only today; tools
-   *   and skills land in later phases.
-   * - `'ts-service'` — the frozen agent-ts service's `/v1/chat`.
-   * - `'python-runs'` — "agent-py (runs)" (store v35,
-   *   `PLAN-frontend-backend-split.md` Q33/Q34): chat turns go to
-   *   agent-py's `/v1/runs` (AG-UI, `lib/client/runs/`), signed-in or
-   *   anonymous; every non-chat call dispatches exactly as under
-   *   `'python'`. Hidden in the selector behind `RUNS_CHAT_ENABLED`
-   *   (`lib/client/runs/config.ts`) until chat is wired onto runs;
-   *   until then a chat turn under it behaves as `'python'`.
-   *
-   * Per `PLAN-agent-api.md`, both stacks stay live indefinitely —
-   * this setting is the user-facing selector, NOT a phased cutover.
-   * The toggle only surfaces in the UI when `NEXT_PUBLIC_AGENT_PY_URL`
-   * is set; without it, every value here is treated as 'ts'.
-   *
-   * The backend in effect. Wave 11 (Q110): unless the user chose one
-   * (`chatBackendExplicit`), it is the deploy's default — "agent-py
-   * (runs)" when agent-py is configured, else `'ts'`
-   * (`@/shared/chat-backend`) — persisted as `null` and recomputed on
-   * every load (`reviveChatBackend`). A choice persists as itself and,
-   * signed in, on the account's profile (`profiles.chat_backend`, Q111).
-   */
-  chatBackend: ChatBackend
-  /** Whether `chatBackend` is the user's choice rather than the default. */
-  chatBackendExplicit: boolean
-  /** In memory only: the v36 migration moved this browser off its old
-   *  default `'ts'`; a one-time notice says so (`useBackendMovedNotice`). */
-  chatBackendMoved?: boolean
+  /** In memory only: the v37 migration removed this browser's explicit
+   *  chat-backend choice (wave 13, Q145); one note says so
+   *  (`useBackendRemovedNotice`). */
+  backendSettingRemoved?: boolean
 
   // View / sidebar actions
   toggleSidebar: () => void
@@ -218,7 +181,6 @@ export interface UiSlice {
   setLocalFilesOnly: (value: boolean) => void
   setVerifyCitations: (value: boolean) => void
   setPendingChatInput: (value: string | null) => void
-  setChatBackend: (value: ChatBackend) => void
 
   // Theme actions
   setTheme: (theme: Theme) => void
@@ -249,12 +211,6 @@ export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
   localFilesOnly: false,
   verifyCitations: false,
   pendingChatInput: null,
-  chatBackend: defaultChatBackend(
-    resolveBackendBaseUrl(
-      typeof process !== "undefined" ? process.env.NEXT_PUBLIC_AGENT_PY_URL : undefined
-    ).configured
-  ),
-  chatBackendExplicit: false,
 
   toggleSidebar: () =>
     set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
@@ -302,7 +258,6 @@ export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
   setLocalFilesOnly: (value) => set({ localFilesOnly: value }),
   setVerifyCitations: (value) => set({ verifyCitations: value }),
   setPendingChatInput: (value) => set({ pendingChatInput: value }),
-  setChatBackend: (value) => set({ chatBackend: value, chatBackendExplicit: true }),
 
   setTheme: (theme) => set({ theme }),
   toggleTheme: () => {
