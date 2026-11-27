@@ -26,8 +26,7 @@ or click the **+** next to the **Chats** group to start a new one.
   opens the picker.
 - Select text in a message and pick **Explain** (or `Ctrl+E`) for a
   short explanation in a popover. It uses the conversation so far, the
-  chat model and the workspace prompt. On the agent-py backends it is a
-  throwaway run: it uses no tools (no web search, no questions), it is
+  chat model and the workspace prompt. It is a throwaway run: it uses no tools (no web search, no questions), it is
   not saved to the conversation or your tasks, and closing the popover
   stops it. To keep an explanation, **Pin** it
   ([Notes & bookmarks](11-notes-and-bookmarks.md)).
@@ -41,7 +40,7 @@ or click the **+** next to the **Chats** group to start a new one.
   keys in the deployment's `.env`. If a skill toggle is greyed out,
   ask the self-hoster to enable the key.
 - A persona that limits its MCP servers (`/personas`) limits them in
-  its replies and tasks (Next.js and agent-py (runs) backends): only the
+  its replies and tasks: only the
   servers it allows offer tools, and one that allows none uses no MCP
   tools at all. Local-mode servers count too: tick them in the persona
   to use them in chat (tasks can't use local-mode servers).
@@ -49,9 +48,9 @@ or click the **+** next to the **Chats** group to start a new one.
   Retry and answering one of its cards use the persona's current
   prompt, model and skills, and never more MCP servers than it allowed
   when the message was sent. That limit holds if the persona is deleted.
-- Switching the chat backend (Next.js vs. the Python agent service)
-  is a power-user setting - see [Settings & theme](12-settings-and-theme.md).
-- **Questions from the assistant (agent-py (runs) backend).** When the
+- Chat runs on the deploy's agent service (agent-py); there is no
+  backend to pick any more - see [Settings & theme](12-settings-and-theme.md).
+- **Questions from the assistant.** When the
   assistant needs you mid-answer - approve a tool call, pick an option,
   type an answer, or fill in an interactive card (confirm, form, date
   picker) - the reply pauses and answer cards appear under it, the same

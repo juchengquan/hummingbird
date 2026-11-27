@@ -1183,8 +1183,8 @@ def _settle_hooks(run: _Run) -> tuple[FinalizeFn, FinalTextFn, FinalOutputsFn]:
     cfg = run.checkpoint.get("config")
     run_mode = _str_or_none(cfg.get("mode")) if isinstance(cfg, dict) else None
     # Answerer provider is "anthropic" for every agent-py run today
-    # (the only model family the executor wires). When agent-ts goes
-    # live, read this from `cfg.get("provider", "anthropic")` so the
+    # (the only model family the executor wires). When another family
+    # is wired, read this from `cfg.get("provider", "anthropic")` so the
     # cross-family verifier picks a genuinely different family.
     answerer_provider = "anthropic"
     run_id, user_id = run.payload.run_id, run.payload.user_id

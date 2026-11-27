@@ -184,8 +184,8 @@ class Settings(BaseSettings):
     AGENT_DEFAULT_MODEL: str = DEFAULT_AGENT_MODEL
     """Catalog id of the model used when a request doesn't name one
     (`/v1/summarize`) and for the follow-up-suggestion chips. Must be an
-    `anthropic/*` entry of `config/models.json` — checked at boot. Same
-    name + default as agent-ts; empty → the default."""
+    `anthropic/*` entry of `config/models.json` — checked at boot.
+    Empty → the default."""
 
     # --- Web search -------------------------------------------------------
     TAVILY_API_KEY: str = ""
@@ -365,8 +365,7 @@ class Settings(BaseSettings):
     past it answers `503 unavailable` instead of growing without bound."""
 
     RUNS_RATE_PER_MINUTE: int = 30
-    """Run starts per client IP per minute, every caller (the same budget
-    as `/v1/chat`'s turns)."""
+    """Run starts per client IP per minute, every caller."""
 
     RUNS_ANONYMOUS_RATE_PER_MINUTE: int = 10
     """Anonymous run starts per client IP per minute (on top of
@@ -461,11 +460,11 @@ class Settings(BaseSettings):
     """Default request-body cap (`body_limit.py`), enforced before
     routing / auth so an unauthenticated caller can't make the service
     buffer an unbounded body. `/v1/extract` uses `EXTRACT_MAX_BYTES`
-    (+ multipart overhead) instead, `/v1/chat` + `/v1/summarize` use
+    (+ multipart overhead) instead, `/v1/runs` + `/v1/summarize` use
     `CHAT_BODY_MAX_BYTES`. Over the cap → 413."""
 
     CHAT_BODY_MAX_BYTES: int = 16 * 1024 * 1024
-    """Request-body cap for `/v1/chat` and `/v1/summarize`, whose JSON
+    """Request-body cap for `/v1/runs` and `/v1/summarize`, whose JSON
     carries a whole conversation (up to 200 messages)."""
 
     # --- Service identity -------------------------------------------------

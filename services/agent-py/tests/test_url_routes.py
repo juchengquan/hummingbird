@@ -142,7 +142,7 @@ def test_url_fetch_happy_path_returns_bookmark(client: TestClient) -> None:
     assert body["ok"] is True
     assert body["bookmark"]["title"] == "Example"
     assert body["bookmark"]["url"] == "https://example.com/p"
-    # camelCase, as Next / agent-ts answer and `UrlFetchSnapshot` reads.
+    # camelCase, as the browser's `UrlFetchSnapshot` reads.
     assert body["bookmark"] == {
         "url": "https://example.com/p",
         "title": "Example",

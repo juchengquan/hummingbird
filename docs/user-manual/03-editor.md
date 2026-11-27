@@ -23,11 +23,9 @@ open an existing one.
 - Toggle **AI review changes** in [Settings](12-settings-and-theme.md)
   to control whether AI edits land as suggestions (default) or replace
   your text directly.
-- With the **agent-py** or **agent-py (runs)** backend selected, the
-  editor's AI menu and ghost-text suggestions run on agent-py too. The
-  editor's own settings (the gear at the bottom right) then offer only
-  the models agent-py runs; on the built-in route they offer the
-  deploy's model catalog.
+- The editor's AI menu and ghost-text suggestions run on the deploy's
+  agent service (agent-py), like chat. The editor's own settings (the
+  gear at the bottom right) offer the models agent-py runs.
 - The editor always uses **this deploy's models** and keys. The old
   "AI Gateway API Key" field in the editor settings is gone (the
   agent service never takes a personal key); the first time you open

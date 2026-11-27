@@ -1,4 +1,4 @@
-<!-- pages-for: setting:theme, setting:colorScheme, setting:chatBackend, setting:localOnlyMode, setting:localFilesOnly, setting:editorPrefs.aiReviewChanges -->
+<!-- pages-for: setting:theme, setting:colorScheme, setting:localOnlyMode, setting:localFilesOnly, setting:editorPrefs.aiReviewChanges -->
 <!-- related: lib/client/hooks/store/slices/ui.ts, components/auth/account-menu.tsx -->
 
 # Settings & theme
@@ -41,62 +41,30 @@ Click your avatar or initial at the bottom of the left sidebar.
   editor always runs on the deploy's keys (a one-time note says so the
   first time you open it).
 
-### Backend
-- **Chat backend** - pick the user-facing chat producer. The default is
-  `python-runs` (**agent-py (runs)**) when the deploy has the Python agent
-  service (`NEXT_PUBLIC_AGENT_PY_URL`), else `ts`; the menu marks it. Until
-  you pick one, the browser follows the deploy's default. A browser that
-  was on the old default (`ts`) is moved once, with a note saying where to
-  switch back. Signed in, your pick is saved on your account and every
-  browser you sign in to takes it. Options:
-  - `ts` - the Next.js `/api/chat` route.
-  - `python` - the Python agent service at
-    `${NEXT_PUBLIC_AGENT_PY_URL}/v1/chat` (only shows when the env
-    var is set).
-  - `ts-service` - the TypeScript agent service (Phase 5+; shows
-    when `NEXT_PUBLIC_AGENT_TS_URL` is set).
-  - `python-runs` - **agent-py (runs)**: chat turns run
-    on the agent-py runs API (`/v1/runs`). Stop cancels the answer on
-    the server; closing or reloading the tab doesn't — after a reload
-    the running answer is picked back up into its message. When the
-    assistant needs your input mid-answer (an approval or a question),
-    the answer pauses until you reply; typing a new message instead
-    cancels the paused one. Also offered to signed-out users (shows
-    when `NEXT_PUBLIC_AGENT_PY_URL` is set). Attached files, MCP
-    resources and URL bookmarks reach the model as they do on the
-    default backend (signed in, files go by reference — the server reads
-    your synced copy, including RAG-mode files through file search), and
-    so do the reasoning-effort setting, reference images and the
-    workspace's local-mode MCP servers (their credentials go with each
-    answer and the server never stores them; MCP App panels render as
-    on `ts`). The code interpreter works too, where the agent-py
-    server can run its sandbox: charts, tables and downloadable files
-    appear as they do on `ts`; signed in, attached files it reads go by
-    reference, and a local-only file is sent with the message if it fits
-    (about 9 MB in all). Every
-    other request (summaries, embeds, sharing, …) goes exactly where
-    `python` sends it.
-- **Models per backend.** The Python agent service (`python` when signed
-  in, `python-runs` always) runs the models its deploy has a provider key
-  for — Anthropic, MiniMax, the AI Gateway's, OpenRouter's, Ollama's —
-  and tells the browser which ones; the TypeScript one (`ts-service`)
-  runs only the Anthropic models. While an agent service serves chat the
-  model picker lists just what it runs, and a model it can't run is
-  switched to one it can, with a note saying so. Auto is offered on
-  `python-runs` when both models of the routing pair run there (it routes
-  each message between them, and the reply shows which one it used) but
-  not on `python` or `ts-service`. Switching back to `ts` brings the full
-  list back.
-- **No model provider.** On the agent-py backends, if the deploy has no
-  model provider key at all, the model picker and the chat say "No model
-  provider is configured on this deploy" and sending is blocked (with a
-  pointer to [Model providers](23-model-providers.md)) — there is no
-  stand-in answer. An admin adds a provider key for agent-py to fix it.
+### Chat and models
+There is no backend setting any more: chat always runs on the deploy's
+agent service (agent-py, on its runs API `/v1/runs`). A browser that had
+picked another backend sees one note, "Chat now runs on agent-py. The
+backend setting was removed." Stop cancels the answer on the server;
+closing or reloading the tab doesn't - after a reload the running answer
+is picked back up into its message. When the assistant needs your input
+mid-answer (an approval or a question), the answer pauses until you
+reply; typing a new message instead cancels the paused one.
+
+- **Models.** The agent service runs the models its deploy has a
+  provider key for - Anthropic, MiniMax, the AI Gateway's, OpenRouter's,
+  Ollama's - and tells the browser which ones. The model picker lists
+  just those, and a model it can't run is switched to one it can, with a
+  note saying so. Auto is offered when both models of the routing pair
+  run there (it routes each message between them, and the reply shows
+  which one it used).
+- **No model provider.** If the deploy has no model provider key at
+  all, the model picker and the chat say "No model provider is
+  configured on this deploy" and sending is blocked (with a pointer to
+  [Model providers](23-model-providers.md)) - there is no stand-in
+  answer. An admin adds a provider key for agent-py to fix it.
 
 ## Tips & gotchas
-- The Chat backend toggle is only visible when the corresponding
-  env var is set on the server. Without it, every value here is
-  silently treated as `ts` (and `ts` is the default).
 - Local-only mode is sticky - once on, you'll need to flip it off
   to sign back in.
 

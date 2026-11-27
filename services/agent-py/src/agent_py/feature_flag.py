@@ -1,14 +1,14 @@
 """Per-user opt-out from the Python executor.
 
-agent-py is the task executor for everyone: agent-ts has no executor
-and the Next.js app no longer runs a worker. So the per-user
+agent-py is the task executor for everyone: nothing else runs a
+worker. So the per-user
 `agent_backend` flag is an **opt-out**: on every claim the poller calls
 `python_executes_for_user(pool, user_id)`:
 
   - flag absent / NULL / `'python'` → Python executes the job;
   - any other value (`'off'`, `'none'`, `'ts'`, …) → the user is opted
     out: the job is released, nothing runs it, and the stale-run
-    reconciler (`lib/server/agent/store.ts`) fails the task with a clear
+    reconciler (`runs/reconcile.py`) fails the task with a clear
     "no task worker available" error once it has waited
     `TASK_NO_WORKER_TIMEOUT_MINUTES`.
 

@@ -1,13 +1,14 @@
 <!-- pages-for: panel:schedule-section -->
-<!-- related: components/panels/schedule-section.tsx, app/api/tasks/schedules/route.ts -->
+<!-- related: components/panels/schedule-section.tsx, services/agent-py/src/agent_py/routers/schedules.py, services/agent-py/src/agent_py/scheduler.py -->
 
 # Schedules
 
 ## What it is
 A saved prompt in a workspace that runs as a background task on a cron
-schedule. Each run starts a new conversation; with **agent-py (runs)**
-selected, the run shows in the Tasks panel and its result is written
-into that conversation.
+schedule. Each run starts a new conversation; the run shows in the Tasks
+panel and its result is written into that conversation. The deploy's
+agent service (agent-py) fires schedules as they come due, wherever its
+task worker runs - there is no separate cron job to set up.
 
 Every schedule runs on a model. A new one gets **Claude Haiku 4.5**
 unless you pick another.

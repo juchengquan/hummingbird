@@ -1,557 +1,140 @@
 # API contract
 
-This document is the contract between the Hummingbird frontend and
-whatever backend implements it. Today the backend is the Next.js route
-handlers under `app/api/*`; the plan in
-[`PLAN-backend-extraction.md`](./PLAN-backend-extraction.md) describes
-swapping in a Python service. Both implementations must satisfy what's
-written here.
+This document is the map of the contract between the Hummingbird
+frontend and its backend. Since wave 13 of
+[`PLAN-frontend-backend-split.md`](./PLAN-frontend-backend-split.md)
+there is **one backend, agent-py** (`services/agent-py/`), and it is
+required: the Next app has no API routes (`app/api/**` was deleted with
+the `lib/server` code behind it, Q121/Q122) and reads no server secret.
+The browser reaches agent-py at `NEXT_PUBLIC_AGENT_PY_URL` (`/` behind
+the same-origin proxy); a deploy without it shows a full-page "This
+deploy has no backend configured" screen (Q137).
 
-Single client entry point: `lib/api-client.ts`. Frontend code never
-calls `fetch('/api/...')` directly — everything goes through
-`apiClient.*` or `apiUrls.*` (the latter for Plate's `useChat`
-plugins, which take a URL string and handle the fetch themselves).
+The contract is spec-first and lives in `packages/contract/`:
 
-Response validation: JSON routes have Zod response schemas in
-`lib/api-schemas.ts`. The client parses with them so a mismatched
+- `openapi.yaml` — every endpoint, request and response (→ the TS types
+  in `lib/shared/contract/openapi.generated.ts` and agent-py's Pydantic
+  models, `bun run contract:gen`; `bun run contract:check` fails on
+  drift).
+- `RUN_EVENTS.md` — the runs API's event stream (AG-UI over SSE): how a
+  run's internal events map to the wire, cursors, interrupts and
+  resumes, tasks and sub-agents.
+- `conformance/` — the language-neutral suite any backend must pass
+  (`CONTRACT_BASE_URL=… bun run contract:conformance`).
+
+Single client entry point: `lib/client/api-client.ts` (and the runs
+client under `lib/client/runs/`). Frontend code never `fetch`es a
+backend path directly — everything goes through `apiClient.*` or
+`apiUrls.*` (the latter for Plate, which takes a URL string and handles
+the fetch itself). Response validation: the client parses JSON responses
+with the Zod schemas in `lib/shared/api-schemas.ts`, so a mismatched
 backend fails loudly at the boundary instead of corrupting the UI.
 
-Base URL: `NEXT_PUBLIC_API_BASE_URL` (default empty = same origin).
-Setting it points every call at another host without code changes.
+### Auth — bearer, `auth_required`
 
-### Sign-in gate — `REQUIRE_AUTH_FOR_AI` / `auth_required`
+The browser sends the Supabase access token as `Authorization: Bearer
+<jwt>`; agent-py verifies it (HS256 with `SUPABASE_JWT_SECRET`, or
+ES256 / RS256 against the project's JWKS). A bad bearer is `401 auth`.
+An account-bound call (share, schedules, memory extract, the stored-file
+links, cloud MCP) made without a session goes **tokenless** and gets
+`401 auth_required` (Q142).
 
-When the server sets `REQUIRE_AUTH_FOR_AI=true` (or `1`) **and**
-Supabase is configured, the routes that spend model budget refuse
-anonymous callers before reading the body or doing any model work:
+When agent-py runs with `REQUIRE_AUTH_FOR_AI=true` (or `1`), anonymous
+runs and anonymous calls to the signed-out endpoints are refused before
+any model work:
 
 ```jsonc
 // 401
 { "code": "auth_required", "message": "Sign in to use AI features on this server." }
 ```
 
-Gated: `POST /api/chat`, `/api/summarize`, `/api/ai/command`,
-`/api/ai/complete`, `/api/extract-table`, `/api/memory/extract`.
-`POST /api/extract` is **not** 401'd — text extraction spends no model
-budget — but an anonymous caller never gets the vision pass (the
-`vision` field is treated as `false`). The session is verified with
-Supabase `auth.getUser()`; any failure to verify (no cookie, expired,
-auth-server error) is `auth_required` (fail closed). Flag off / unset,
-or Supabase unconfigured → no gate, anonymous calls behave as before.
-An invalid flag value (anything but `true`/`false`/`1`/`0`) makes the
-gated routes fail with a 500 until fixed.
+`POST /v1/extract` is the exception: it serves an anonymous caller
+without the vision pass. Strict values (`true` / `false` / `1` / `0`);
+anything else fails closed.
 
-`auth_required` is distinct from `auth` (missing / rejected **server**
-AI key): clients must not apply the `auth` mock-response fallback to
-it; they show a sign-in prompt instead.
+`auth_required` is distinct from `auth` (a rejected token, or no
+provider key for the model): the client shows a "Sign in required"
+prompt with a Sign in action (`lib/client/auth/auth-required.ts`).
 
 ### Error envelope
 
 JSON error responses use `{ code, message }` — a stable machine `code`
 the client keys typed UI off, plus a display `message` (extra fields
-allowed, e.g. `issues` on a validation error). The shared contract
-(`packages/contract/openapi.yaml`, `ApiError`) allows no other error
-body, and agent-py answers every non-streaming error in this shape (its
-request validation answers `422 { code: "invalid_request", message,
-issues }`; see `services/agent-py/README.md` → *Error responses*). Some
-older Next routes listed below still answer `{ error }`; the client
-reads `message ?? error`.
+allowed, e.g. `issues` on a validation error, `status` on a URL fetch).
+The contract (`ApiError`) allows no other error body; request validation
+answers `422 { code: "invalid_request", message, issues }`. See
+`services/agent-py/README.md` → *Error responses*. In-stream errors on a
+run are `RUN_ERROR` events (`RUN_EVENTS.md`).
 
 ### Request body caps — `413 payload_too_large`
 
-App Router route handlers have no default body limit, so every JSON
-route reads its body through `readJsonCapped`
-(`lib/server/read-body-capped.ts`): a `Content-Length` over the cap is
-rejected before anything is read, and a chunked body is cut off once the
-streamed count passes it. Routes with the `{ code, message }` envelope
-answer `413 { code: "payload_too_large", message }`; older `{ error }`
-routes answer `413` in their own envelope.
+agent-py caps every request body before routing or auth
+(`body_limit.py`): a `Content-Length` over the cap, or a chunked body
+whose streamed count passes it, is `413 { code: "payload_too_large",
+message }` (a malformed `Content-Length` is `400 invalid_request`).
 
-| Route | Cap | Derived from |
-|---|---|---|
-| `/api/chat` | `CHAT_BODY_MAX` ≈ 125 MB | inline `sandboxFiles` total + 40 attachments × 220k chars × 3 bytes + 32 MB for history / images |
-| `/api/ai/command` | 32 MB | ≤ 1000 messages + ≤ 50,000 editor blocks |
-| `/api/summarize` | 8 MB | ≤ 200 messages |
-| `/api/embed` | 4 MB | `text` ≤ 1.2M chars |
-| `/api/extract-table` | 2 MB | `reportText` ≤ 100k chars + ≤ 100 sources |
-| `/api/mcp/server` | 2 MB | config + cached capabilities |
-| `/api/mcp/{id}/{action}` | 1 MB | server config + tool input |
-| `/api/ai/complete`, `/api/memory/extract` | 256 KB | ≤ 36k / 50k chars |
-| `/api/url/fetch`, `/api/share`, `/api/images/refresh-url`, `/api/files/refresh-url` | 16 KB | one URL / id / path |
-
-`/api/extract` (multipart) and `/api/csp-report` cap their raw bodies the
-same way. The `/api/tasks/**` routes still use a bare `req.json()`.
+| Endpoint | Cap |
+|---|---|
+| `/v1/runs`, `/v1/summarize` | `CHAT_BODY_MAX_BYTES` (16 MiB) — a whole conversation |
+| `/v1/extract` (multipart) | `EXTRACT_MAX_BYTES` (5 MB) + 64 KiB of multipart headroom |
+| `/v1/ai/command` | 32 MiB |
+| `/v1/embed` | 4 MiB |
+| `/v1/extract-table` | 2 MiB |
+| `/v1/tasks/schedules[/{id}]`, `/v1/memory/extract`, `/v1/ai/complete` | 256 KiB |
+| `/v1/share`, `/v1/csp-report` | 16 KiB |
+| everything else | `REQUEST_BODY_MAX_BYTES` (1 MiB) |
 
 ---
 
-## JSON routes
+## Endpoints
 
-### `POST /api/extract`
+Each is an operation in `packages/contract/openapi.yaml`; its
+description there is normative.
 
-Extract text from an uploaded file.
-
-**Request**: `multipart/form-data` with one field `file`.
-
-**Response 200**: `ExtractionResponse`
-
-```ts
-{
-  kind: "pdf" | "docx" | "markdown" | "csv" | "json" | "text"
-      | "image" | "html" | "code" | "spreadsheet" | "unsupported",
-  text: string,          // may be truncated; see `truncated`
-  truncated: boolean,    // true when text was cut to fit the per-file budget
-  language?: string,     // present for `kind: "code"` only
-}
-```
-
-**Errors**: `400` malformed FormData, `413` file too large, `429` more
-than 60 extractions per minute from one client IP (with `Retry-After`;
-checked before the body is read), `500` for extractor failures. Body
-shape: `{ error: string }`. Never
-`auth_required` — with the sign-in gate on, an anonymous caller just
-gets text-only extraction (no vision pass).
-
-`413` fires in three places: the request's `Content-Length` (or the
-streamed byte count, for chunked uploads) exceeds `FILE_SIZE_LIMIT`
-+ 64 KB of multipart headroom — checked before the form is parsed;
-the `file` part exceeds `FILE_SIZE_LIMIT` (5 MB); or a docx/xlsx zip
-would decompress past 100 MB / 5,000 entries (zip-bomb guard,
-`lib/server/extraction/zip-guard.ts`, which measures the real inflated
-size, not the headers' claims).
-
-Spreadsheets are parsed up to their first 5,000 rows per sheet; each
-sheet's declared range is clamped to the cells actually present, and
-the CSV text stops being built once it passes the 1 MB full-text
-budget (a tiny file declaring `A1:CV1000000` costs nothing).
+| Endpoint | What |
+|---|---|
+| `POST /v1/runs`, `GET /v1/runs`, `GET /v1/runs/{id}`, `GET /v1/runs/{id}/events`, `POST /v1/runs/{id}/cancel`, `POST /v1/runs/{id}/answers`, `POST /v1/runs/{id}/delivered` | Chat (interactive runs, streamed) and tasks (background runs, `202`): start, list, read, rejoin from a cursor, cancel, answer a sub-agent run in place, mark a task delivered. Answers to a paused run are a resume: a new run with `forwardedProps.previousRunId` and `resume[]`. |
+| `GET /v1/models` | The catalog models agent-py has a provider for (below). |
+| `POST /v1/ai/command`, `POST /v1/ai/complete` | The Plate editor's AI menu and ghost text (below). |
+| `POST /v1/extract` | Text (and, for some PDFs, a vision pass) from an uploaded file. |
+| `POST /v1/summarize` | Conversation summary / compression. |
+| `POST /v1/extract-table` | A research report's citation table. |
+| `POST /v1/url/fetch` | A bookmark's snapshot (SSRF-guarded fetch). |
+| `POST /v1/embed` | Chunk + embed a stored file into `file_sections`. |
+| `POST /v1/memory/extract` | Facts to remember from a turn. |
+| `POST /v1/mcp/server`, `POST /v1/mcp/{serverId}/{action}` | Save a cloud MCP server; the MCP proxy (`discover` / `call` / `read`). |
+| `POST /v1/share`, `DELETE /v1/share/{token}`, `GET /v1/share/{token}` | Share links; the public read the share pages render (no auth, Q127). |
+| `GET/POST /v1/tasks/schedules`, `PATCH/DELETE /v1/tasks/schedules/{id}` | Recurring tasks; agent-py's scheduler fires them. |
+| `POST /v1/images/refresh-url`, `POST /v1/files/refresh-url` | Fresh signed URLs for stored images / files. |
+| `POST /v1/csp-report` | CSP violation reports (the page's `report-uri`, Q140). |
 
 ---
 
-### `POST /api/embed`
+## Streams
 
-Chunk + embed a file's extracted text into the `file_sections` vector
-table (`docs/PLAN-local-rag.md` PR 2). The body carries the text
-directly so indexing doesn't depend on `files.full_text` having synced;
-the only cloud precondition is the `files` row existing (the
-`file_sections.file_id` FK). Requires an authenticated Supabase session.
+**Runs** (`POST /v1/runs` interactive, `GET /v1/runs/{id}/events`):
+AG-UI events over SSE, each with a `<seq>` / `<seq>.<k>` cursor id for
+rejoining — `packages/contract/RUN_EVENTS.md` is the protocol. Chat
+consumes it through the runs client (`lib/client/runs/`); a task's
+panel reads the same events. The AI SDK frame stream that `/api/chat`
+and agent-py's `/v1/chat` sent is gone (wave 13).
 
-**Request**: `EmbedRequest`
-
-```ts
-{
-  fileId: string,    // ≤ 64 chars; the owning files-row id
-  text: string,      // ≤ 1.2 MB; the extracted full text
-  force?: boolean,   // re-index even if sections already exist
-}
-```
-
-**Response 200**: `EmbedResponse`
-
-```ts
-{
-  status: "indexed" | "skipped",
-  sections: number,  // chunks written, or already-present count on skip
-  reason?: "not_configured" | "empty" | "already_indexed" | "file_not_found"
-         | "not_signed_in",  // agent-py only, signed out (wave 12)
-}
-```
-
-Idempotent: a file already chunked returns `skipped/already_indexed`
-(no embed) unless `force`. `not_configured` (no server-side embedder)
-and `file_not_found` (the caller can't see a live `files` row with that
-id — not synced yet, deleted, or not theirs; the client retries with
-backoff) are **200, not errors** — indexing is best-effort background
-decoration. The `files` row is looked up with the caller's RLS-scoped
-client *before* anything is embedded, so a forged id costs no model
-call.
-
-**Errors**: `400` invalid body, `401` not signed in, `413` body over
-4 MB, `429` more than 30 embed calls per minute per user (with
-`Retry-After`), `500` embed/insert failure. Body shape:
-`{ code?: string, error: string }`.
+**Editor AI** (`POST /v1/ai/command`, `POST /v1/ai/complete`; contract
+operations `editorAiCommand` / `editorAiComplete`): consumed by Plate
+(`@platejs/ai`) in the Vercel AI SDK's formats — the UI message stream
+(v1, `x-vercel-ai-ui-message-stream: v1`) for commands, a text stream
+for completion. Plate's `useChat` / `useCompletion` hooks parse them;
+the frontend doesn't touch the bytes. The browser renders the document
+first — the command body is `{ messages, document: EditorAiDocument,
+toolName?, model? }`, built by `components/editor/ai/agent-py-body.ts`;
+agent-py never sees the Plate value. The editor's own-gateway-key
+setting was removed in wave 12 (Q124): agent-py never takes a user's
+key. The prompts live in agent-py (`editor_ai/`), pinned by its frozen
+golden files (Q141).
 
 ---
 
-### `POST /api/summarize`
-
-Generate a short summary. Two modes via discriminated union on
-`mode`.
-
-**Request — file mode**:
-
-```ts
-{ mode: "file", name?: string, text: string, model?: string }
-```
-
-Response: `{ summary: string, keyTopics?: string[] }`
-
-**Request — conversation mode**:
-
-```ts
-{
-  mode: "conversation",
-  messages: { role: "user" | "assistant", content: string }[],
-  model?: string,
-}
-```
-
-Response: `{ summary: string, keyPoints?: string[], decisions?: string[] }`
-
-**Errors**: `400` invalid body, `401` missing AI key (`auth`) or
-caller not signed in under the sign-in gate (`auth_required`), `500`
-model failure.
-
----
-
-### `POST /api/share`
-
-Mint a public share token for a conversation or its editor document.
-Requires an authenticated Supabase session (cookie-based today).
-
-**Request**:
-
-```ts
-| { kind: "conversation", conversationId: string }  // uuid the caller owns
-| { kind: "document",     documentId: string }      // uuid the caller owns
-```
-
-**Response 200**: `{ token: string, kind: "conversation" | "document" }`
-
-**Errors**: `400` invalid body, `401` unauthorised, `404` conversation
-/ document not found, `500` insert failure, `503` Supabase not configured.
-
-### `DELETE /api/share/[token]`
-
-Revoke an existing share token. Requires auth; users can only revoke
-their own tokens (enforced by RLS).
-
-**Response 200**: `{ ok: true }`
-
-**Errors**: `401` unauthorised, `404` token not found, `500` update
-failure, `503` Supabase not configured.
-
-**agent-py** serves both as `POST /v1/share` and `DELETE /v1/share/{token}`
-(same bodies and statuses; bearer JWT) plus the public read
-`GET /v1/share/{token}` — no auth, rate limited per IP — that the share
-pages call from the browser when `NEXT_PUBLIC_AGENT_PY_URL` is set
-(`apiClient.share.resolve`). Its body is `ResolvedShare` in
-`packages/contract/openapi.yaml` (`ResolvedShareResponseSchema` in
-`lib/shared/api-schemas.ts`); any unresolvable token is a 404. The client
-dispatches create / revoke to agent-py for `python` accounts only.
-
-### `POST /api/mcp/{serverId}/{discover|call|read}`
-
-Server-side MCP proxy for browser-initiated discovery, resource reads
-and MCP-app tool calls (chat-turn tool calls run in-process). Local-mode
-servers send their credential in `X-MCP-Credentials`; cloud-mode
-servers are looked up (and their credential decrypted) by `serverId`.
-
-**Access**: with Supabase configured the caller must be signed in,
-whatever `REQUIRE_AUTH_FOR_AI` says — anonymous calls get
-`401 { code: "auth_required", message }`. Without Supabase (local-only
-deployment) anonymous local-mode MCP keeps working. Either way calls
-are limited to 120 per minute per user (signed in) or per client IP
-(`429 { error: "rate_limited", code, message }` + `Retry-After`).
-
-**Errors**: `400` invalid body / `mcp_url_blocked` (SSRF guard), `401`,
-`404` unknown action, `413` body over 1 MB, `429`, `502`
-`mcp_upstream_error` (the upstream error text is never echoed).
-
-### `POST /api/memory/extract`
-
-Best-effort, post-turn cross-conversation memory extraction. Fired
-fire-and-forget by the chat pipeline (`lib/client/memory/extract-after-turn.ts`
-via `apiClient.memory.extract`) after a finished assistant turn when the
-user has memory enabled. The route self-gates again server-side
-(sign-in + `profiles.memory_enabled`), so an anonymous / opted-out call
-is a no-op that still answers `200`.
-
-**Request**:
-
-```ts
-{
-  turnText: string,          // 1..50_000 chars — "User: …\n\nAssistant: …"
-  conversationId?: string,   // max 64 chars
-  tainted?: boolean,         // the chat stream flagged the turn (memoryTainted)
-}
-```
-
-**Response 200**: `{ ok: true }`. With `tainted: true` nothing is
-extracted (still `200 { ok: true }`); the first-party client doesn't
-send tainted turns at all.
-
-**Errors**: `400` invalid body, `401 auth_required` (sign-in gate on,
-anonymous caller).
-
----
-
-## Streaming route — `POST /api/chat`
-
-Sends a chat request and streams the assistant response.
-
-**Request**: `ChatRequestSchema` from `lib/api-schemas.ts`:
-
-```ts
-{
-  messages: ModelMessage[],         // 1..CHAT_MESSAGES_MAX (2000); multimodal parts OK
-  model?: string,                   // default = DEFAULT_CHAT_MODEL
-  files?: FileSummary[],            // extracted-text bundles up to 20 files
-  workspaceSystemPrompt?: string,   // prepended to base instructions
-  skills?: { id: SkillId }[],       // e.g. [{ id: "webSearch" }]
-  sandboxFiles?: { name, fileId, dataBase64? }[]
-                                    // ≤ 10 entries; dataBase64 ≤ 10 MB decoded each,
-                                    // ≤ 10 × FILE_SIZE_LIMIT (5 MB) decoded in total
-}
-```
-
-**Response 200**: `Content-Type: text/event-stream` carrying SSE
-frames. Each frame is `data: <json>\n\n`. `<json>` is one of the
-shapes below, discriminated by `type`.
-
-**Errors**: `401 auth` missing AI gateway key (frontend falls back to a
-mock response), `401 auth_required` caller not signed in under the
-sign-in gate (frontend shows a "Sign in required" bubble — no mock),
-`400` invalid body, other 4xx/5xx with `{ code, message }` envelope.
-
-### Frame protocol
-
-The frontend's parser lives in `components/panels/chat.tsx`; the
-shapes below are normative.
-
-```jsonc
-// Text delta — incremental answer content.
-{ "type": "text", "value": "string fragment" }
-
-// Reasoning delta — for models that emit reasoning tokens (DeepSeek R1,
-// Claude thinking variants). Rendered in a collapsible block above the
-// text.
-{ "type": "reasoning", "value": "string fragment" }
-
-// Tool invocation start — fired when the model calls a tool. The
-// client shows a live "Searching for X…" pill above the message.
-{
-  "type": "tool_call",
-  "id": "string",        // unique within this stream
-  "name": "string",      // e.g. "webSearch"
-  "args": { ... }        // tool-specific (e.g. { "query": "..." })
-}
-
-// Tool result — collapses the live pill to a "Searched · N results" pill.
-{
-  "type": "tool_result",
-  "id": "string",        // matches the `tool_call` frame
-  "name": "string",
-  "summary": "string",   // one-line user-facing summary
-  // Optional — populated by `webSearch` (and any future tools that want
-  // a Sources strip + clickable [N] citation markers in the message).
-  // Order matters: the assistant cites these as [1], [2], etc.
-  "results": [
-    { "title": "string", "url": "string", "snippet": "string" }
-  ]
-}
-
-// Generated images — inline image gallery from the `generateImage` skill
-// or `runCode` charts (matplotlib savefig). `mode` distinguishes the
-// source. Each also becomes an `image` artifact. Interleaves with text
-// like tool_result.
-{
-  "type": "tool_image",
-  "id": "string",        // matches the originating tool_call.id
-  "mode": "t2i" | "i2i" | "code",
-  "images": [
-    { "id": "string", "url": "string", "storagePath": "string?",
-      "width": 0, "height": 0, "format": "string",
-      "prompt": "string", "mode": "t2i" | "i2i" | "code" }
-  ]
-}
-
-// Generated files — download chips for files the code interpreter wrote
-// to /tmp/outputs. Each also becomes a `file` artifact. Interleaves with
-// text like tool_result.
-{
-  "type": "tool_file",
-  "id": "string",        // matches the runCode tool_call.id
-  "files": [
-    { "id": "string", "name": "string", "sizeBytes": 0,
-      "mimeType": "string", "url": "string", "storagePath": "string|null" }
-  ]
-}
-
-// Code-interpreter output — stdout/stderr + non-image result cells from
-// the `runCode` skill. (Chart images arrive separately as `tool_image`
-// with mode "code".) Rendered as a collapsible code-output block.
-{
-  "type": "code_result",
-  "id": "string",        // matches the runCode tool_call.id
-  "stdout": "string",
-  "stderr": "string",
-  "codeCells": [
-    { "type": "table", "columns": ["string"], "rows": [["string"]] },
-    { "type": "text", "value": "string" }
-  ]
-}
-
-// Suggestion chips — follow-up question prompts. Sent at most once,
-// after the main answer streams in.
-{ "type": "suggestions", "values": ["...", "..."] }
-
-// Terminal error — stops the stream. `code` matches MessageErrorCode.
-// Categorisation is best-effort (string-match on provider message +
-// typed-error introspection where available); when no branch claims
-// the error it falls through to "unknown" (Next.js inline route) or
-// "upstream" (agent-py / agent-ts services). The consumer maps both
-// catch-alls to the same generic ErrorBubble surface.
-{ "type": "error", "code": "auth" | "rate_limit" | "context_window"
-                          | "invalid_model" | "unknown_model" | "provider"
-                          | "network" | "unknown",
-  "message": "string" }
-
-// Stream end — last frame of a successful stream.
-{ "type": "done" }
-```
-
-**Memory taint.** On the wire (AI SDK v5 UI message stream) a
-successful stream ends `finish-step`, `finish`, `[DONE]`. When the turn
-read third-party content — the request carried attachments (files, URL
-bookmarks, MCP resources), uploaded image / file parts, or replayed
-tool results, or a web / MCP / file / sandbox tool ran — the `finish`
-frame carries per-message metadata:
-
-```jsonc
-{ "type": "finish", "messageMetadata": { "memoryTainted": true } }
-```
-
-Absent metadata means untainted. On a tainted turn the server refuses
-`rememberFact` / `forgetFact`, and the client must not run post-turn
-memory extraction (`POST /api/memory/extract`) for it. The client's
-translator surfaces it as `{ type: "memory_tainted" }`.
-
-agent-py's `/v1/chat` sends the same flag when any tool outside the
-trusted set (`rememberFact`, `forgetFact`, `renderUI`, `generateImage`)
-ran in the turn (`TRUSTED_TOOLS` in `services/agent-py/src/agent_py/chat.py`);
-its request carries only plain-text messages, so it has no request-side taint.
-
-### Ordering rules
-
-- Any number of `text` and `reasoning` frames may interleave.
-- `tool_call` and matching `tool_result` frames may interleave with
-  text. A `tool_result.id` MUST match an earlier `tool_call.id`.
-- `suggestions` is sent at most once, after all text has streamed.
-- A stream MUST terminate with exactly one of `done` or `error`.
-- The client treats end-of-stream without `done`/`error` as
-  `code: "provider", message: "empty response"`.
-
-### Abort semantics
-
-- The client may abort via `AbortSignal`. The route handler MUST stop
-  the upstream model call when its `req.signal` aborts.
-- An aborted stream produces no `done` frame. The client treats
-  abort-with-empty-placeholder as a quiet cancel (the placeholder is
-  deleted, no error shown).
-
----
-
-## Streaming route — `GET /api/tasks/:id/stream`
-
-Replays a long-running task's `task_events` log and live-tails it. The
-body is the AI SDK UI message stream (SSE `data:` frames); every
-`TaskEvent` travels as one `data-agent-event` part (codec:
-`lib/shared/agent/wire.ts`, client decoder:
-`lib/shared/agent/stream.ts`). The client folds them through
-`reduceRun` (`lib/shared/agent/project.ts`).
-
-- **Cursor.** `Last-Event-ID` carries the last `seq` the client folded;
-  the replay starts strictly after it (absent / garbage → from 0).
-- **Resume markers.** A reclaimed job's re-run opens with
-  `status: running` + `resumedFromSeq`; every event with
-  `resumedFromSeq < seq < marker.seq` is a dead attempt's output and
-  consumers discard it (`resumeDiscardRange`). Such events may already
-  have been sent; the fold rolls them back.
-- **Terminal rule.** A terminal event — `result`, or `status:
-  cancelled` — only ends the stream once the task row's status is
-  terminal (`done` / `failed` / `cancelled`). A worker can die after
-  writing `result` but before settling the task; until the row
-  confirms it, the route holds that event back (does not send it, and
-  re-reads it next poll). If a resume marker supersedes it, it is never
-  sent. See `gateLiveTailBatch` in `lib/shared/agent/events.ts`.
-- **The row has the last word.** A row that turned terminal with no
-  terminal event in the log (cancelled, reconciled, orphaned), or with
-  one that says otherwise (a cancel that beat the result), ends the
-  stream with a terminal event for the row's status: `status:
-  cancelled`, or `result` `done` / `failed`. It is made by this route
-  (`seq` = the last one + 1) and not written to the log; a disagreeing
-  terminal event isn't sent.
-- **End of stream.** The stream closes after a terminal event (one poll
-  after the row turned `done` / `failed` with none in the log, at once
-  for `cancelled`); when the row is deleted (no event: the next connect
-  is `404 not_found`); or after a 5-minute wall-clock cap. The client
-  reconnects with its cursor until the run has ended — also while it is
-  paused. A new watch (a reload) replays from 0.
-- **Realtime.** The client also subscribes to `task_events` inserts via
-  Supabase Realtime for lower latency, but folds only a non-terminal
-  event that is the next one after its cursor (the replay may be behind)
-  — terminal events come from this route, confirmed.
-
----
-
-## `GET /api/tasks/:id/children`
-
-`{ children: [{ id, status, goal, pendingInput? }] }`
-(`TaskChildrenResponseSchema`). `pendingInput` is set for a `paused`
-child: the question it waits on, in the fold's `PendingInput` shape. The
-client shows it on the parent task and answers it with
-`POST /api/tasks/:childId/respond` (Q59).
-
----
-
-## Streaming route — `POST /api/ai/command` and `POST /api/ai/copilot`
-
-These two are consumed by Plate (`@platejs/ai`). The wire format is
-the Vercel AI SDK's UI message stream / completion stream (not the
-custom protocol used by `/api/chat`). Plate's `useChat` / `useCompletion`
-hooks parse them — the frontend doesn't touch the bytes directly.
-
-**`/api/ai/command` request** — validated by `AiCommandRequestSchema`
-(`lib/shared/api-schemas.ts`); anything malformed is
-`400 { code: "invalid_request", message }` before any model call.
-The body is the AI SDK `DefaultChatTransport` payload merged with
-Plate's context and the editor settings:
-
-```ts
-{
-  messages: UIMessage[]   // 1..1000; each { role, parts: [{ type, text? }] , ... }
-  ctx: {
-    children: SlateElement[]                 // editor.children (≤ 50,000 blocks)
-    selection?: { anchor: Point, focus: Point } | null
-    toolName?: 'generate' | 'edit' | 'comment' | null  // absent → model chooses
-  }
-  model?: string | null   // ≤ 100 chars; unknown ids → 400 unknown_model
-  apiKey?: string | null  // BYO AI Gateway key — the browser no longer sends one (wave 12, Q124: the setting is gone)
-  // other transport fields (id, trigger, messageId, …) are ignored
-}
-```
-
-Both routes return `401 { code: "auth_required", message }` (JSON, not a
-stream) to anonymous callers when the sign-in gate is on — before the
-body is validated, and even with a BYO `apiKey`.
-
-**On agent-py** (wave 9, Phase 4 of `docs/PLAN-frontend-backend-split.md`):
-`POST /v1/ai/command` and `POST /v1/ai/complete` (contract 0.6.0,
-operations `editorAiCommand` / `editorAiComplete`) emit the same streams.
-The browser renders the document first — the command body is
-`{ messages, document: EditorAiDocument, toolName?, model? }`, built by
-`components/editor/ai/agent-py-body.ts`; agent-py never sees the Plate
-value. The editor goes there where agent-py serves chat (`python`
-signed in, `python-runs` signed in or out; `lib/shared/editor-ai/routing.ts`).
-The editor settings' own-gateway-key field was removed in wave 12 (Q124):
-agent-py never takes a user's key, and elsewhere the Next route bills the
-deploy's. The prompts live in
-`lib/shared/editor-ai/`; agent-py's port is pinned to them by
-`components/editor/ai/editor-ai.parity.test.ts`, and its streams to the
-route's by `app/api/ai/command/stream.fixture.test.ts`.
-
----
-
-## Models (agent-py) — `GET /v1/models`
+## Models — `GET /v1/models`
 
 Public (no token), contract 0.7.0, operation `listModels` (wave 10,
 Q119). The `config/models.json` ids agent-py has a provider for, in
@@ -568,48 +151,35 @@ catalog order:
 Every catalog id is still valid on agent-py's other endpoints; one
 missing here answers 503 instead of running. The browser reads it once
 per page (`lib/client/api/served-models.ts` → `lib/shared/served-models.ts`)
-and the model picker, the switch note, the task models and the editor's
-list follow it; until it arrives, or when it can't be read, they keep the
-built-in `anthropic/*` list. An answer that lists **nothing** is a deploy
-with no model provider (wave 12, Q131): on agent-py's backends the picker
-and the chat say "No model provider is configured on this deploy" with a
-pointer to the setup docs, and sending is refused (no run, no 503 bubble,
-no mock); the model rules still keep the built-in list.
+and the model picker, the task models and the editor's list follow it;
+until it arrives, or when it can't be read, they keep the built-in
+`anthropic/*` list. An answer that lists **nothing** is a deploy with no
+model provider (Q131): the picker and the chat say "No model provider
+is configured on this deploy" with a pointer to the setup docs, and
+sending is refused (no run, no 503 bubble, no mock answer).
 
 ---
 
-## Signed-out calls on agent-py (wave 12, contract 0.8.0)
+## Signed-out calls (wave 12, contract 0.8.0)
 
-On the agent-py backends the browser sends `extract`, `summarize`,
-`url/fetch`, `extract-table`, the MCP proxy and `embed` to agent-py's
-`/v1/*` twins (`POST /v1/extract`, `/v1/summarize`, `/v1/url/fetch`,
-`/v1/extract-table`, `/v1/mcp/{serverId}/{action}`, `/v1/embed`; all in
-`packages/contract/openapi.yaml`). On `python-runs` (the default) they go
-there **signed out too**, with no `Authorization` header
-(`resolveRemoteBackend({ anonymous: true })` → `remoteTargetFor`), so a
-signed-out browser never calls these `/api/*` routes (Q123/Q134).
-`python` keeps its signed-out calls on Next, as its chat; `ts-service`
-and `ts` are unchanged. The account-bound calls (share, schedules,
-memory extract, the stored-file links, `/v1/mcp/server`) stay
-signed-in only and are not sent signed out.
+A signed-out browser sends `extract`, `summarize`, `url/fetch`,
+`extract-table`, the MCP proxy and `embed` to agent-py with no
+`Authorization` header, and chats on anonymous runs (Q123/Q134). The
+account-bound calls (share, schedules, memory extract, the stored-file
+links, `/v1/mcp/server`) are signed-in only (a tokenless call gets `401
+auth_required`).
 
 agent-py's rules for an anonymous caller: a bad bearer is still `401
 auth`; under `REQUIRE_AUTH_FOR_AI` it is refused `401 auth_required` —
-except `/v1/extract`, which serves it without the vision pass, as Next
-does; and it gets Next's per-IP limits (`429 rate_limit` +
-`Retry-After`): URL fetch 30 / min, MCP proxy 120 / min (local
-credentials only, never a cloud-mode lookup), text extraction 60 / min,
-the vision pass 10 / min (every caller), embed 30 / min. Summarize and
-extract-table have no rate limit, as their Next routes. Signed-in limits
-are unchanged.
-
-Wire differences from the Next routes, all the contract's shapes:
-errors are the flat `{ code, message }` envelope (URL fetch adds
-`status`); an invalid body is `422 invalid_request`; `embed` signed out
-answers `200 { status: "skipped", sections: 0, reason: "not_signed_in" }`
-(Next: `401`). `extract`'s `fullText` and the bookmark's
-`contentTruncated` / `contentHash` / `faviconUrl` are camelCase, as here
-(before wave 12 agent-py answered them in snake_case).
+except `/v1/extract`, which serves it without the vision pass; and it
+gets per-IP limits (`429 rate_limit` + `Retry-After`): URL fetch 30 /
+min, MCP proxy 120 / min (local credentials only, never a cloud-mode
+lookup, and only on a deploy without accounts), text extraction 60 /
+min, the vision pass 10 / min (every caller), embed 30 / min; anonymous
+runs `RUNS_ANONYMOUS_*`. Summarize and extract-table have no per-IP
+limit. Signed out, `embed` answers `200 { status: "skipped", sections:
+0, reason: "not_signed_in" }`. The client IP is taken behind
+`TRUSTED_PROXY_HOPS` reverse proxies (`docs/SECURITY.md`).
 
 ---
 
@@ -617,30 +187,35 @@ answers `200 { status: "skipped", sections: 0, reason: "not_signed_in" }`
 
 The frontend talks directly to Supabase for:
 
-- Auth (magic-link, session refresh)
-- Sync queue + reconciliation (`lib/sync/`)
-- Storage uploads (`hooks/use-upload-file.ts`,
-  `lib/files/persist.ts`)
-- Share-page reads via the service-role admin client server-side
-  (`lib/supabase/admin.ts`, used by `app/share/.../page.tsx`) — only
-  when no backend is configured; with `NEXT_PUBLIC_AGENT_PY_URL` set the
-  pages read from agent-py's `GET /v1/share/{token}` instead
+- Auth (password sign-in, session refresh; the session lives in
+  `@supabase/ssr`'s cookie storage in the browser, Q144)
+- Sync queue + reconciliation (`lib/client/sync/`)
+- Storage uploads (`lib/client/files/`)
 
-These bypass the backend entirely and are unaffected by a Python
-rewrite.
+These bypass the backend entirely. Share pages read through agent-py's
+`GET /v1/share/{token}` (Q127), never with a service-role key.
 
 ---
 
 ## When you add a new endpoint
 
-1. Add request and response Zod schemas to `lib/api-schemas.ts`.
-2. Add the URL builder to `apiUrls` in `lib/api-client.ts`.
-3. Add a typed method to `apiClient.*` that wraps `fetch`, parses the
-   response via the Zod schema, and returns either the parsed value or
-   a typed error result.
-4. Document the route in this file under the right section.
-5. Implement the route handler under `app/api/...`. The server-side
-   `route.ts` should `ChatRequestSchema.safeParse(body)` (or whichever
-   schema) to fail fast on malformed requests.
-6. Update `docs/PLAN-backend-extraction.md`'s endpoint inventory if
-   the new route should also be implemented by the Python service.
+1. Add the operation (path, request, responses, errors as `ApiError`)
+   to `packages/contract/openapi.yaml`, then `bun run contract:gen`.
+2. Implement it in agent-py (`services/agent-py/src/agent_py/routers/`,
+   mounted in `main.py`), using the generated models
+   (`agent_py/contract/models.py`); add its body cap to `body_limit.py`
+   if the default (1 MiB) doesn't fit, and its tests.
+3. Regenerate `lib/shared/agent-py-types.generated.ts`
+   (`bun run codegen:agent-types`).
+4. Add request and response Zod schemas to `lib/shared/api-schemas.ts`
+   where the client parses the response.
+5. Add a typed method to `apiClient.*` (`lib/client/api-client.ts`) that
+   calls agent-py, parses the response with the schema, and returns the
+   parsed value or a typed error result (or a URL builder to `apiUrls`
+   for a library that takes a URL).
+6. Add a conformance case under `packages/contract/conformance/` when
+   the behaviour is part of the contract, and list the endpoint in the
+   table above.
+
+Next gets no route: anything that needs a secret or a model belongs in
+agent-py.

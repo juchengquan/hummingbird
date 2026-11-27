@@ -1135,7 +1135,7 @@ paths:
         paused run's saved one.
 
         A `forwardedProps.model` outside the backend's allow-list is `400
-        unknown_model`, answered before the run exists (as `/v1/chat`):
+        unknown_model`, answered before the run exists:
         no row, no stream, nothing to rejoin. So is a user message part
         the backend cannot give the model (`400 invalid_attachment`, the
         `message` naming the part and the limit — see `StartRunRequest`):

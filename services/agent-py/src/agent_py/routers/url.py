@@ -95,8 +95,8 @@ async def url_fetch(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "missing_snapshot", "message": "Empty fetch result."},
         )
-    # The contract's `BookmarkSnapshot`: camelCase, as Next and agent-ts
-    # answer and the browser's `UrlFetchSnapshot` reads.
+    # The contract's `BookmarkSnapshot`: camelCase, as the browser's
+    # `UrlFetchSnapshot` reads.
     return models.UrlFetchResponse(
         ok=True,
         bookmark=models.BookmarkSnapshot(

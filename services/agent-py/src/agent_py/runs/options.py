@@ -385,7 +385,7 @@ def parse_run_options(options: Mapping[str, object]) -> RunOptions:
 def validate_run_options(options: Mapping[str, object]) -> None:
     """Raise `UnknownModelError` (`code = "unknown_model"`) for a model
     outside the allow-list — lets the API answer 400 before creating the
-    run, as `/v1/chat` does. The adapter re-checks and fails the run.
+    run. The adapter re-checks and fails the run.
     `auto` passes on an interactive run when the catalog's routing pair
     is allowed here.
 

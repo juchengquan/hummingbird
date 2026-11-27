@@ -1,24 +1,16 @@
-"""Wave 3b-C — chat emits internal events, `/v1/chat` translates them.
+"""Wave 3b-C — the agent loop emits the run model's internal events.
 
-`chat_loop.run_turn_loop` is the agent loop; it emits the run model's
-internal events. `chat.AiSdkFrameTranslator` turns them back into the
-AI SDK frames `/v1/chat` has always sent. The wire-level tests in
-`test_chat.py` / `test_chat_tools.py` / `test_chat_route.py` pin the
-frames; these pin the events and the translator's mapping.
+`chat_loop.run_turn_loop` is the agent loop the native harness drives;
+these pin the events it emits and how it ends a turn. (The AI SDK
+translator `/v1/chat` used went with that route in wave 13, Q121.)
 """
 
 from __future__ import annotations
 
-import asyncio
-import itertools
-import json
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
 
-import pytest
-
-from agent_py.chat import AiSdkFrameTranslator, ChatConfig, ChatMessage, chat_stream_ai_sdk
 from agent_py.chat_loop import (
     LoopFailed,
     LoopSucceeded,
@@ -27,20 +19,10 @@ from agent_py.chat_loop import (
 )
 from agent_py.emitter import RunEmitter
 from agent_py.events import (
-    CodeResultEvent,
-    McpAppEvent,
-    PlanEvent,
-    PlanItem,
-    RoutedModelEvent,
     StepErrorEvent,
-    SuggestionsEvent,
     TaskEvent,
     TokenEvent,
-    ToolFileEvent,
-    ToolImageEvent,
     ToolOutputEvent,
-    UiPartEvent,
-    VerificationEvent,
     event_to_row_payload,
 )
 from agent_py.tools.registry import ToolDescriptor, ToolError, ToolInvocationResult
@@ -191,19 +173,17 @@ async def test_loop_provider_error_leaves_the_step_open() -> None:
     events, result = await _run([{"events": [_text("a")], "raise": RuntimeError("429 slow down")}])
     assert [e.kind for e in events] == ["step_start", "token"]
     assert result.step_open
-    assert result.outcome == LoopFailed(
-        code="rate_limit", message="429 slow down", wire_code="rate_limit"
-    )
+    assert result.outcome == LoopFailed(code="rate_limit", message="429 slow down")
 
 
-async def test_loop_max_steps_is_a_max_steps_failure_but_upstream_on_the_wire() -> None:
+async def test_loop_max_steps_is_a_max_steps_failure() -> None:
     _, result = await _run(
         [{"tools": [{"id": f"t{i}", "name": "echo", "input": {}}]} for i in range(2)],
         tools=[_tool("echo")],
         max_steps=2,
     )
     assert isinstance(result.outcome, LoopFailed)
-    assert (result.outcome.code, result.outcome.wire_code) == ("max_steps", "upstream")
+    assert result.outcome.code == "max_steps"
     assert not result.step_open
 
 
@@ -236,155 +216,3 @@ def test_tool_output_full_text_is_never_written_to_the_log() -> None:
         "toolName": "webFetch",
         "summary": "Fetched X",
     }
-
-
-# --- the translator -------------------------------------------------------------------
-
-
-def _ev(cls: type[Any], **fields: Any) -> Any:
-    return cls(run_id="r", seq=1, step=1, created_at="t", **fields)
-
-
-def _frames(t: AiSdkFrameTranslator, *events: Any) -> list[dict[str, Any]]:
-    out: list[str] = []
-    for e in events:
-        out.extend(t.event(e))
-    return [json.loads(f.removeprefix("data: ")) for f in out]
-
-
-def test_translator_maps_part_events_to_todays_data_frames() -> None:
-    t = AiSdkFrameTranslator()
-    frames = _frames(
-        t,
-        _ev(ToolImageEvent, tool_call_id="c", mode="t2i", images=({"id": "i"},)),
-        _ev(ToolFileEvent, tool_call_id="c", files=({"id": "f"},)),
-        _ev(CodeResultEvent, tool_call_id="c", stdout="o", stderr="e", results=()),
-        _ev(UiPartEvent, tool_call_id="c", ui_kind="confirm", props={"a": 1}),
-        _ev(McpAppEvent, tool_call_id="c", server_id="s", html="<p>", truncated=True),
-        _ev(SuggestionsEvent, values=("x", "y")),
-        _ev(VerificationEvent, verification={"checks": [], "summary": {}}),
-        _ev(RoutedModelEvent, model="m"),
-        _ev(PlanEvent, items=(PlanItem(id="1", text="t", status="pending"),)),
-    )
-    assert frames == [
-        {
-            "type": "data-tool-image",
-            "id": "c",
-            "data": {"id": "c", "mode": "t2i", "images": [{"id": "i"}]},
-        },
-        {"type": "data-tool-file", "id": "c", "data": {"id": "c", "files": [{"id": "f"}]}},
-        {
-            "type": "data-code-result",
-            "id": "c",
-            "data": {"id": "c", "stdout": "o", "stderr": "e", "results": []},
-        },
-        {"type": "data-ui", "id": "c", "data": {"id": "c", "kind": "confirm", "props": {"a": 1}}},
-        {
-            "type": "data-mcp-app",
-            "id": "c",
-            "data": {"id": "c", "serverId": "s", "html": "<p>", "truncated": True},
-        },
-        {"type": "data-suggestions", "data": {"values": ["x", "y"]}},
-        {"type": "data-verification", "data": {"checks": [], "summary": {}}},
-        {"type": "data-routed-model", "data": {"model": "m"}},
-    ]
-
-
-def test_translator_block_rule_any_non_token_event_closes_the_open_block() -> None:
-    ids = (f"b{i}" for i in itertools.count())
-    t = AiSdkFrameTranslator(new_id=lambda: next(ids))
-    frames = _frames(
-        t,
-        _ev(TokenEvent, text="a"),
-        _ev(TokenEvent, text=""),  # empty: nothing, closes nothing
-        _ev(TokenEvent, text="r", channel="reasoning"),
-        _ev(StepErrorEvent, message="x"),  # no frame, still closes
-        _ev(TokenEvent, text="b"),
-    )
-    assert frames == [
-        {"type": "text-start", "id": "b0"},
-        {"type": "text-delta", "id": "b0", "delta": "a"},
-        {"type": "text-end", "id": "b0"},
-        {"type": "reasoning-start", "id": "b1"},
-        {"type": "reasoning-delta", "id": "b1", "delta": "r"},
-        {"type": "reasoning-end", "id": "b1"},
-        {"type": "text-start", "id": "b2"},
-        {"type": "text-delta", "id": "b2", "delta": "b"},
-    ]
-    closing = t.failed(message="boom", code="upstream")
-    assert closing == [
-        'data: {"type":"text-end","id":"b2"}\n\n',
-        'data: {"type":"error","errorText":"boom","code":"upstream"}\n\n',
-        "data: [DONE]\n\n",
-    ]
-
-
-def test_translator_tool_output_without_full_text_falls_back_to_summary() -> None:
-    t = AiSdkFrameTranslator()
-    (frame,) = _frames(
-        t,
-        _ev(ToolOutputEvent, tool_call_id="c", tool_name="x", summary="oops", is_error=True),
-    )
-    assert frame == {
-        "type": "tool-output-available",
-        "toolCallId": "c",
-        "output": "oops",
-        "errorText": "oops",
-    }
-
-
-async def test_suggest_hook_becomes_a_data_suggestions_frame_before_finish_step() -> None:
-    async def suggest(text: str) -> list[str]:
-        assert text == "Hello"
-        return ["Why?"]
-
-    config = ChatConfig(model="m", messages=[ChatMessage(role="user", content="hi")])
-    frames = [
-        f
-        async for f in chat_stream_ai_sdk(
-            client=_Client([{"events": [_text("Hello")]}]),  # type: ignore[arg-type]
-            config=config,
-            suggest=suggest,
-        )
-    ]
-    assert frames[-4:] == [
-        'data: {"type":"data-suggestions","data":{"values":["Why?"]}}\n\n',
-        'data: {"type":"finish-step"}\n\n',
-        'data: {"type":"finish"}\n\n',
-        "data: [DONE]\n\n",
-    ]
-
-
-async def test_closing_the_stream_cancels_the_loop_task() -> None:
-    """The route closes the generator when the client hangs up or the
-    idle watchdog fires; the loop task (and its provider stream) must go
-    with it."""
-    cancelled = asyncio.Event()
-
-    class _Hanging:
-        async def __aenter__(self) -> _Hanging:
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            cancelled.set()
-
-        def __aiter__(self) -> AsyncIterator[SimpleNamespace]:
-            return self._iter()
-
-        async def _iter(self) -> AsyncIterator[SimpleNamespace]:
-            yield _text("hello")
-            await asyncio.sleep(60)
-
-    class _Client2:
-        class messages:
-            @staticmethod
-            def stream(**_kw: Any) -> _Hanging:
-                return _Hanging()
-
-    config = ChatConfig(model="m", messages=[ChatMessage(role="user", content="hi")])
-    gen = chat_stream_ai_sdk(client=_Client2(), config=config)  # type: ignore[arg-type]
-    seen = [await gen.__anext__() for _ in range(4)]  # start, start-step, text-start, delta
-    assert '"text-delta"' in seen[-1]
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(gen.__anext__(), timeout=0.05)
-    await asyncio.wait_for(cancelled.wait(), timeout=1)

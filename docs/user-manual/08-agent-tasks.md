@@ -5,9 +5,8 @@
 
 ## What it is
 A long-running agent run: work that takes more than one model turn and
-carries on in the background. It runs on the deployment's agent service,
-needs a signed-in account, and doesn't depend on which chat backend you
-picked.
+carries on in the background. It runs on the deployment's agent service
+(agent-py) and needs a signed-in account.
 
 ## How to open it
 - **Task** in the chat header: while it is on, the next message starts a
@@ -18,21 +17,18 @@ picked.
 The Tasks panel opens beside the chat. The line above the message box
 opens it again while a task of that conversation runs.
 
-With **agent-py (runs)** selected as the backend, the panel lists **all
-your tasks**, from every conversation, scheduled ones included: those
+The panel lists **all your tasks**, from every conversation, scheduled ones included: those
 that need your answer first, then the running ones, then the finished
 ones. Up to 5 can run at once (the count is at the top of the list). The
 **Tasks** button in the chat header opens the panel, and shows how many
 tasks wait for your answer. Click a task to expand it: its text, steps,
 plan, sub-agents and its question. A task that asks opens by itself.
 
-With any other backend, the panel shows the one task this browser
-started, as before. A task started that way (under another backend, or
-before agent-py (runs) became the default) is in the list like any other
-once you are on agent-py (runs): a reload opens the panel on it while it
-runs, and you answer, cancel and get its result from there.
+Tasks started before the chat-backend setting was removed are in the
+list like any other: a reload opens the panel on one while it runs, and
+you answer, cancel and get its result from there.
 
-Either way a task is titled by its goal (the first line of what you
+A task is titled by its goal (the first line of what you
 asked), with its conversation's name under it.
 
 Signed out, there is no **Task** toggle and no **Run as task** on the
@@ -40,7 +36,7 @@ board: tasks need an account. `/research` says so.
 
 ## What you can do
 - Watch progress: status, step, plan, tool calls, sub-agents and text.
-- **Run several at once** (agent-py (runs)): up to 5 tasks, the board's
+- **Run several at once**: up to 5 tasks, the board's
   and `/research` included. A sixth is refused with "You already have 5
   tasks running"; wait for one to finish or cancel one.
 - **Answer a question.** A task that needs you pauses and shows a card:

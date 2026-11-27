@@ -1,5 +1,5 @@
 <!-- pages-for: panel:sources -->
-<!-- related: components/panels/sources.tsx, lib/client/file-utils.tsx, app/api/extract/ -->
+<!-- related: components/panels/sources.tsx, lib/client/file-utils.tsx, services/agent-py/src/agent_py/routers/extract.py -->
 
 # Files & attachments
 
