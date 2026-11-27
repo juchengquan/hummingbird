@@ -1,4 +1,5 @@
 {
+  "_generated": "Frozen golden file (wave 13, Q141): generated at commit 9cf4405 by hand (checked against the TS builders by lib/server/agent/schedules.parity.test.ts). The TypeScript generator and the code it ran are deleted; this is agent-py's own expectation now, changed by hand together with the port.",
   "note": "Schedule fire + model-on-save parity (wave 6, Q73/Q79/Q80): lib/server/agent/schedules.parity.test.ts and services/agent-py/tests/test_schedules_dispatch.py both check their builders against these cases. Hand-written; change both dispatchers and this file together.",
   "defaultModel": "anthropic/claude-haiku-4.5",
   "fires": [

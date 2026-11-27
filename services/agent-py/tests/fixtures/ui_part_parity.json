@@ -1,4 +1,5 @@
 {
+ "_generated": "Frozen golden file (wave 13, Q141): generated at commit 14f9e1f by scripts/gen-agent-py-parity.ts. The TypeScript generator and the code it ran are deleted; this is agent-py's own expectation now, changed by hand together with the port.",
  "source": "lib/shared/generative-ui/schemas.ts (UiPartSchema)",
  "cases": [
   {
