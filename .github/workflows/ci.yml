@@ -138,52 +138,6 @@ jobs:
       - name: Test against Postgres
         run: bash scripts/test-db.sh -rs
 
-  # TS twin of the Python agent service (services/agent-ts/).
-  # See docs/PLAN-agent-ts.md. Same gate shape as agent-py: a
-  # typecheck + a test run. Runs in parallel with the main CI job
-  # since they share no inputs.
-  agent-ts:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    defaults:
-      run:
-        working-directory: services/agent-ts
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      # agent-ts is frozen and self-contained (docs/PLAN-frontend-backend-split.md
-      # Q11): the Next app modules it used are vendored under
-      # `src/vendor/`, so no root `bun install` — only its own deps.
-      # Guard: nothing under services/agent-ts may reach back into the
-      # Next app's `lib/` (via the `@/server|shared|client` aliases or a
-      # relative `../lib` path). Repo-root `config/` stays shared, read
-      # as `@config/*`.
-      - name: Guard against lib/ reach-back imports
-        run: |
-          if grep -rnE "['\"](@/(server|shared|client)(/|['\"])|(\.\./)+lib(/|['\"]))" src tests tsconfig.json; then
-            echo "::error::services/agent-ts must not import the Next app's lib/ — use the vendored copies under src/vendor/"
-            exit 1
-          fi
-
-      - name: Install agent-ts dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Test
-        # Use `bun run test` (not `bun test`) so the package.json
-        # script's `--conditions=react-server` flag applies — the
-        # vendored `src/vendor/server/*` modules keep their
-        # `import "server-only"` marker, which only resolves to a no-op
-        # under that condition.
-        run: bun run test
-
   # Drift gate for the TS types generated from the agent service's
   # OpenAPI doc. Regenerates against the live FastAPI schema and fails
   # if the checked-in `lib/shared/agent-py-types.generated.ts` is out
@@ -268,7 +222,7 @@ jobs:
   # app/api/tasks/'s process-global mock.module mocks, excludes services/;
   # a coverage guard fails if a *.test.ts sits outside the configured
   # roots — see scripts/run-tests.sh / PR #218). Separate parallel job,
-  # mirroring agent-py/agent-ts, so the `ci` build job's time is unchanged
+  # mirroring agent-py, so the `ci` build job's time is unchanged
   # and a test failure gets its own check name.
   app-tests:
     runs-on: ubuntu-latest
