@@ -3,6 +3,8 @@ import "client-only"
 import { stripDurableBlobFieldsAll } from "@/client/files/blob-fields"
 import { persistableArtifacts, stripDurableMessageBlobs } from "@/client/messages/message-blobs"
 import { reviveDates } from "@/client/store/revive-dates"
+import { resolveBackendBaseUrl } from "@/shared/backend-base-url"
+import { defaultChatBackend, isChatBackend } from "@/shared/chat-backend"
 
 import type { AppState } from "../use-store"
 
@@ -69,7 +71,8 @@ export const partializeState = (state: AppState) => ({
   localOnlyMode: state.localOnlyMode,
   localFilesOnly: state.localFilesOnly,
   verifyCitations: state.verifyCitations,
-  chatBackend: state.chatBackend,
+  // Unset (null) unless the user chose one: follow the deploy (Q110).
+  chatBackend: state.chatBackendExplicit ? state.chatBackend : null,
   prompts: state.prompts,
   agents: state.agents,
   activeAgentId: state.activeAgentId,
@@ -97,6 +100,38 @@ export const partializeState = (state: AppState) => ({
  * Caller wires this into `onRehydrateStorage` and is responsible for
  * calling `notifyHydrated()` afterwards.
  */
+/**
+ * The backend a loaded state runs on (wave 11, Q110): its stored choice, or —
+ * stored as `null`, never chosen — the deploy's default, recomputed on every
+ * load so a deploy that changes its default moves the browser too.
+ */
+export function reviveChatBackend(state: Record<string, unknown>, agentPyConfigured: boolean): void {
+  if (isChatBackend(state.chatBackend)) {
+    state.chatBackendExplicit = true
+    return
+  }
+  state.chatBackend = defaultChatBackend(agentPyConfigured)
+  state.chatBackendExplicit = false
+}
+
+/**
+ * zustand's `merge`: the stored state over the in-memory one (its default
+ * shallow merge), then the backend revived from what was stored. Nothing
+ * stored (a fresh browser) → the in-memory state as it is: its backend is
+ * the deploy's default, not a choice.
+ */
+export function mergePersistedState(persisted: unknown, current: AppState): AppState {
+  if (!persisted || typeof persisted !== "object") return current
+  const merged = { ...current, ...(persisted as Partial<AppState>) }
+  reviveChatBackend(
+    merged as unknown as Record<string, unknown>,
+    resolveBackendBaseUrl(
+      typeof process !== "undefined" ? process.env.NEXT_PUBLIC_AGENT_PY_URL : undefined
+    ).configured
+  )
+  return merged
+}
+
 export function reviveAndPruneState(state: AppState): void {
   reviveDates(state as unknown as Record<string, unknown>)
 

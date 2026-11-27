@@ -15,6 +15,8 @@ import { CustomInstructionsDialog } from "@/components/chat/custom-instructions-
 import { MemoryPanel } from "@/components/chat/memory-panel"
 import { useAuth } from "@/client/hooks/use-auth"
 import { useSyncEnabled } from "@/client/hooks/use-sync-enabled"
+import { writeChatBackend } from "@/client/supabase/chat-backend"
+import { useBackendMovedNotice } from "@/client/hooks/use-backend-moved-notice"
 import { writeMemoryEnabled } from "@/client/supabase/memory"
 import { useStore } from "@/client/hooks/use-store"
 import type { ChatBackend } from "@/client/hooks/store/slices/ui"
@@ -24,6 +26,7 @@ import { clearAll, estimateUsage } from "@/client/files/local-store"
 import { formatFileSize } from "@/client/file-utils"
 import { isAgentPyConfigured, isAgentTsConfigured } from "@/client/api-client"
 import { RUNS_CHAT_ENABLED } from "@/client/runs/config"
+import { defaultChatBackend } from "@/shared/chat-backend"
 
 /**
  * Sidebar footer auth + local-mode surface.
@@ -37,11 +40,12 @@ import { RUNS_CHAT_ENABLED } from "@/client/runs/config"
  */
 export function AccountMenu() {
   const { status, user, signOut } = useAuth()
+  useBackendMovedNotice()
   const localOnlyMode = useStore((s) => s.localOnlyMode)
   const setLocalOnlyMode = useStore((s) => s.setLocalOnlyMode)
   const localFilesOnly = useStore((s) => s.localFilesOnly)
   const chatBackend = useStore((s) => s.chatBackend)
-  const setChatBackend = useStore((s) => s.setChatBackend)
+  const storeSetChatBackend = useStore((s) => s.setChatBackend)
   const agentPyAvailable = isAgentPyConfigured()
   const agentTsAvailable = isAgentTsConfigured()
   const setLocalFilesOnly = useStore((s) => s.setLocalFilesOnly)
@@ -95,6 +99,16 @@ export function AccountMenu() {
   // Toggle cross-conversation memory: update local state immediately,
   // then best-effort write-through to the user's profile row (mirrors the
   // custom-instructions write). Not awaited — local state is authoritative.
+  // The chat backend: a choice here is explicit and, signed in, follows the
+  // account (`profiles.chat_backend`, wave 11 Q111) — same write-through.
+  const setChatBackend = useCallback(
+    (next: ChatBackend) => {
+      storeSetChatBackend(next)
+      if (userId) void writeChatBackend(userId, next)
+    },
+    [storeSetChatBackend, userId]
+  )
+
   const handleToggleMemory = useCallback(
     (next: boolean) => {
       setMemoryEnabled(next)
@@ -145,8 +159,8 @@ export function AccountMenu() {
         label="agent-py (runs)"
         description={
           chatBackend === "python-runs"
-            ? "Chat turns run on the agent-py runs API (experimental)"
-            : "Chat turns use the Next.js route (default)"
+            ? "Chat turns run on agent-py (runs), the default"
+            : "Chat turns use the Next.js route"
         }
         checked={chatBackend === "python-runs"}
         onCheckedChange={(v) => setChatBackend(v ? "python-runs" : "ts")}
@@ -590,8 +604,8 @@ function ToggleRow({
  * Chat-backend picker. Surfaces a segmented control when both remote
  * services are configured (or agent-py plus its "agent-py (runs)"
  * option, `RUNS_CHAT_ENABLED`), or a one-row Switch when only one is.
- * The in-Next TS route is always available as the default and shows up
- * under "Next.js".
+ * The in-Next TS route is always available under "Next.js"; the deploy's
+ * default (runs when agent-py is configured, wave 11) is marked.
  */
 function ChatBackendSelector({
   value,
@@ -652,8 +666,11 @@ function ChatBackendSelector({
   }
   // Both remote services configured (or agent-py with its runs option)
   // → segmented picker.
+  // The deploy's default (wave 11, Q110): runs when agent-py is configured.
+  const byDefault = defaultChatBackend(agentPyAvailable)
+  const mark = (id: ChatBackend, desc: string) => (id === byDefault ? `${desc}, default` : desc)
   const options: ReadonlyArray<{ id: ChatBackend; label: string; desc: string }> = [
-    { id: "ts", label: "Next.js", desc: "in-process (default)" },
+    { id: "ts", label: "Next.js", desc: mark("ts", "in-process") },
     ...(agentTsAvailable
       ? [{ id: "ts-service" as const, label: "TS service", desc: "agent-ts" }]
       : []),
@@ -661,7 +678,7 @@ function ChatBackendSelector({
       ? [{ id: "python" as const, label: "Python", desc: "agent-py" }]
       : []),
     ...(runsAvailable
-      ? [{ id: "python-runs" as const, label: "Runs", desc: "agent-py (runs)" }]
+      ? [{ id: "python-runs" as const, label: "Runs", desc: mark("python-runs", "agent-py (runs)") }]
       : []),
   ]
   return (

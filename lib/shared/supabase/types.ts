@@ -779,6 +779,7 @@ export type Database = {
       }
       profiles: {
         Row: {
+          chat_backend: string | null
           created_at: string
           custom_instructions_about: string
           custom_instructions_style: string
@@ -787,6 +788,7 @@ export type Database = {
           memory_enabled: boolean
         }
         Insert: {
+          chat_backend?: string | null
           created_at?: string
           custom_instructions_about?: string
           custom_instructions_style?: string
@@ -795,6 +797,7 @@ export type Database = {
           memory_enabled?: boolean
         }
         Update: {
+          chat_backend?: string | null
           created_at?: string
           custom_instructions_about?: string
           custom_instructions_style?: string

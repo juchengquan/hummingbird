@@ -7,6 +7,8 @@ import type {
   PinnedExplanation,
   ToolCallResult,
 } from "@/shared/types"
+import { resolveBackendBaseUrl } from "@/shared/backend-base-url"
+import { defaultChatBackend } from "@/shared/chat-backend"
 import { extractPersistedTheme } from "@/shared/persisted-theme"
 import { uuid } from "@/shared/uuid"
 
@@ -169,11 +171,19 @@ export interface UiSlice {
    * The toggle only surfaces in the UI when `NEXT_PUBLIC_AGENT_PY_URL`
    * is set; without it, every value here is treated as 'ts'.
    *
-   * Survives reloads via partialize (so a user who switched stays
-   * switched). Default is 'ts' — existing users see no behaviour
-   * change post-update.
+   * The backend in effect. Wave 11 (Q110): unless the user chose one
+   * (`chatBackendExplicit`), it is the deploy's default — "agent-py
+   * (runs)" when agent-py is configured, else `'ts'`
+   * (`@/shared/chat-backend`) — persisted as `null` and recomputed on
+   * every load (`reviveChatBackend`). A choice persists as itself and,
+   * signed in, on the account's profile (`profiles.chat_backend`, Q111).
    */
   chatBackend: ChatBackend
+  /** Whether `chatBackend` is the user's choice rather than the default. */
+  chatBackendExplicit: boolean
+  /** In memory only: the v36 migration moved this browser off its old
+   *  default `'ts'`; a one-time notice says so (`useBackendMovedNotice`). */
+  chatBackendMoved?: boolean
 
   // View / sidebar actions
   toggleSidebar: () => void
@@ -239,7 +249,12 @@ export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
   localFilesOnly: false,
   verifyCitations: false,
   pendingChatInput: null,
-  chatBackend: "ts",
+  chatBackend: defaultChatBackend(
+    resolveBackendBaseUrl(
+      typeof process !== "undefined" ? process.env.NEXT_PUBLIC_AGENT_PY_URL : undefined
+    ).configured
+  ),
+  chatBackendExplicit: false,
 
   toggleSidebar: () =>
     set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
@@ -287,7 +302,7 @@ export const createUiSlice: SliceCreator<UiSlice> = (set, get) => ({
   setLocalFilesOnly: (value) => set({ localFilesOnly: value }),
   setVerifyCitations: (value) => set({ verifyCitations: value }),
   setPendingChatInput: (value) => set({ pendingChatInput: value }),
-  setChatBackend: (value) => set({ chatBackend: value }),
+  setChatBackend: (value) => set({ chatBackend: value, chatBackendExplicit: true }),
 
   setTheme: (theme) => set({ theme }),
   toggleTheme: () => {

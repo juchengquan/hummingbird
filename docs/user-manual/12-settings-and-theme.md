@@ -37,14 +37,20 @@ Click your avatar or initial at the bottom of the left sidebar.
   off, the AI's output replaces the selected text directly.
 
 ### Backend
-- **Chat backend** - pick the user-facing chat producer. Options:
-  - `ts` (default) - the Next.js `/api/chat` route.
+- **Chat backend** - pick the user-facing chat producer. The default is
+  `python-runs` (**agent-py (runs)**) when the deploy has the Python agent
+  service (`NEXT_PUBLIC_AGENT_PY_URL`), else `ts`; the menu marks it. Until
+  you pick one, the browser follows the deploy's default. A browser that
+  was on the old default (`ts`) is moved once, with a note saying where to
+  switch back. Signed in, your pick is saved on your account and every
+  browser you sign in to takes it. Options:
+  - `ts` - the Next.js `/api/chat` route.
   - `python` - the Python agent service at
     `${NEXT_PUBLIC_AGENT_PY_URL}/v1/chat` (only shows when the env
     var is set).
   - `ts-service` - the TypeScript agent service (Phase 5+; shows
     when `NEXT_PUBLIC_AGENT_TS_URL` is set).
-  - `python-runs` - **agent-py (runs)**, experimental: chat turns run
+  - `python-runs` - **agent-py (runs)**: chat turns run
     on the agent-py runs API (`/v1/runs`). Stop cancels the answer on
     the server; closing or reloading the tab doesn't — after a reload
     the running answer is picked back up into its message. When the
@@ -80,7 +86,7 @@ Click your avatar or initial at the bottom of the left sidebar.
 ## Tips & gotchas
 - The Chat backend toggle is only visible when the corresponding
   env var is set on the server. Without it, every value here is
-  silently treated as `ts`.
+  silently treated as `ts` (and `ts` is the default).
 - Local-only mode is sticky - once on, you'll need to flip it off
   to sign back in.
 

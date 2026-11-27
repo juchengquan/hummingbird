@@ -214,8 +214,8 @@ describe("v<28 — MCP App polish (resourceUri + truncated on McpAppPart)", () =
 })
 
 describe("v<35 — ChatBackend widened to 'python-runs'", () => {
-  test("keeps every known value, including the new one", () => {
-    for (const value of ["ts", "python", "ts-service", "python-runs"]) {
+  test("keeps every known value, including the new one (v36 then unsets 'ts')", () => {
+    for (const value of ["python", "ts-service", "python-runs"]) {
       const out = runMigrations({ chatBackend: value }, 34) as {
         chatBackend: string
       }
@@ -223,21 +223,49 @@ describe("v<35 — ChatBackend widened to 'python-runs'", () => {
     }
   })
 
-  test("an unknown value falls back to the default 'ts'", () => {
+  test("an unknown value falls back to the default (v36: unset)", () => {
     const out = runMigrations({ chatBackend: "rust" }, 34) as {
-      chatBackend: string
+      chatBackend: string | null
     }
-    expect(out.chatBackend).toBe("ts")
+    expect(out.chatBackend).toBeNull()
   })
 
-  test("a v34 state without the key is left alone (v20 seeds it for older ones)", () => {
-    expect(runMigrations({}, 34)).toEqual({})
+  test("a v34 state without the key gets no 'ts' (v36 leaves it unset)", () => {
+    expect(runMigrations({}, 34)).toEqual({ chatBackend: null })
   })
 
-  test("already-v35 state is not touched", () => {
-    const out = runMigrations({ chatBackend: "rust" }, 35) as {
+  test("already-v36 state is not touched", () => {
+    const out = runMigrations({ chatBackend: "rust" }, 36) as {
       chatBackend: string
     }
     expect(out.chatBackend).toBe("rust")
+  })
+})
+
+describe("v<36 — the backend choice can be unset: follow the deploy (wave 11, Q110)", () => {
+  test("a stored 'ts' was the old default: it becomes unset, and the browser is told once", () => {
+    const out = runMigrations({ chatBackend: "ts" }, 35) as { chatBackend: unknown; chatBackendMoved?: boolean }
+    expect(out.chatBackend).toBeNull()
+    expect(out.chatBackendMoved).toBe(true)
+  })
+
+  test("a choice no build defaulted to stays an explicit choice", () => {
+    for (const value of ["python", "ts-service", "python-runs"]) {
+      const out = runMigrations({ chatBackend: value }, 35) as { chatBackend: unknown; chatBackendMoved?: boolean }
+      expect(out.chatBackend).toBe(value)
+      expect(out.chatBackendMoved).toBeUndefined()
+    }
+  })
+
+  test("no key: unset, nothing to tell", () => {
+    const out = runMigrations({}, 35) as { chatBackend: unknown; chatBackendMoved?: boolean }
+    expect(out.chatBackend).toBeNull()
+    expect(out.chatBackendMoved).toBeUndefined()
+  })
+
+  test("an old browser's 'ts' (from the v20 seed) is moved too", () => {
+    const out = runMigrations({}, 19) as { chatBackend: unknown; chatBackendMoved?: boolean }
+    expect(out.chatBackend).toBeNull()
+    expect(out.chatBackendMoved).toBe(true)
   })
 })
