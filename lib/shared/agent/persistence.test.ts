@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
 import type { TaskEvent } from "@/shared/agent/events"
-import { RunEmitter } from "@/shared/agent/emitter"
 import { projectRun } from "@/shared/agent/project"
 import {
   rowToTaskEvent,
@@ -154,23 +153,28 @@ describe("rowsToTaskEvents — batch sort + drop", () => {
   })
 })
 
-describe("persistence ↔ pipeline — emit → row → JSON → row → project", () => {
+/** A short run as the backend emits it: running, one step with reasoning,
+ *  a tool call and text, then done. */
+function runEvents(runId: string, maxSteps: number): TaskEvent[] {
+  const at = (n: number) => new Date(n).toISOString()
+  const base = (seq: number, step: number) => ({ runId, seq, step, createdAt: at(seq) })
+  return [
+    { ...base(1, 0), kind: "status", status: "running", maxSteps },
+    { ...base(2, 1), kind: "step_start" },
+    { ...base(3, 1), kind: "token", text: "Working", channel: "reasoning" },
+    { ...base(4, 1), kind: "tool_input", toolCallId: "t1", toolName: "webFetch", args: { url: "https://x" } },
+    { ...base(5, 1), kind: "tool_output", toolCallId: "t1", toolName: "webFetch", summary: "fetched" },
+    { ...base(6, 1), kind: "token", text: "Done." },
+    { ...base(7, 1), kind: "result", status: "done" },
+  ]
+}
+
+describe("persistence ↔ pipeline — row → JSON → row → project", () => {
   test("a run survives the DB round-trip into a coherent view", () => {
-    const rows: TaskEventRow[] = []
     let id = 0
-    let tick = 0
-    const em = new RunEmitter(
-      { runId: "22222222-2222-2222-2222-222222222222", maxSteps: 4, now: () => new Date(++tick).toISOString() },
-      // Sink writes to the "DB" as the runner would.
-      (e) => rows.push(asRow(taskEventToRow(e, "u1"), ++id))
+    const rows: TaskEventRow[] = runEvents("22222222-2222-2222-2222-222222222222", 4).map((e) =>
+      asRow(taskEventToRow(e, "u1"), ++id)
     )
-    em.status("running")
-    em.startStep()
-    em.token("Working", "reasoning")
-    em.toolInput("t1", "webFetch", { url: "https://x" })
-    em.toolOutput("t1", "webFetch", "fetched")
-    em.token("Done.")
-    em.result("done")
 
     // Simulate persistence + the resume read (JSON-serialized jsonb).
     const persisted: TaskEventRow[] = JSON.parse(JSON.stringify(rows))
