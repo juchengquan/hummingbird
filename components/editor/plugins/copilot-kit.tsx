@@ -21,7 +21,7 @@ import {
 import { MarkdownKit } from './markdown-kit';
 
 /**
- * Plate Copilot plugin wired to `/api/ai/complete`. Reads
+ * Plate Copilot plugin wired to agent-py's `/v1/ai/complete`. Reads
  * `editorPrefs.inlineComplete` synchronously per trigger so the
  * settings toggle takes effect without re-creating the editor.
  *

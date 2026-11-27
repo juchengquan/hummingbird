@@ -4,9 +4,9 @@
  * The answer cards: what a paused agent asks the human — approve a tool
  * call, pick an option, type an answer, or fill a generative-UI part —
  * rendered from an `AnswerQuestion` and answered with a `CardAnswer`
- * (`lib/shared/agent/answer-cards.ts`). Shared by the task strip (answers
- * go to `/api/tasks/:id/respond`) and chat on runs (answers resume the
- * run — `components/chat/interrupted-turn-cards.tsx`).
+ * (`lib/shared/agent/answer-cards.ts`). Shared by the runs task list and
+ * chat on runs (answers resume the run —
+ * `components/chat/interrupted-turn-cards.tsx`).
  *
  * The cards only collect the answer; the caller sends it, and passes
  * `busy` while it does (every control is then disabled).

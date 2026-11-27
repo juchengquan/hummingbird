@@ -1,12 +1,10 @@
 "use client"
 
 /**
- * The parts of a task's view that the old single-task panel
- * (`TaskStrip`, `/api/tasks`) and the runs task list (`TaskCard`,
- * `/v1/runs`) share, so the two read the same (Q61): the status icon,
- * the plan, the sub-agent rows, the tool pills, the step error, the
- * reasoning and the text. Presentational only: each caller feeds them
- * from its own source.
+ * The parts of a task's view in the runs task list (`TaskCard`,
+ * `/v1/runs`): the status icon, the plan, the sub-agent rows, the tool
+ * pills, the step error, the reasoning and the text. Presentational
+ * only: the caller feeds them.
  */
 
 import type { ReactNode } from "react"

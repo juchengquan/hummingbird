@@ -127,10 +127,9 @@ describe("apiClient.summarize — dispatch", () => {
       expect(call.url).toBe("https://agent-py.example/v1/summarize")
       expect(call.authorization).toBe("Bearer jwt-test-token")
     }
-    // Wire shape passes through unchanged — the remote services
-    // accept the camelCase TS shape directly (`existingTitles` is
-    // accepted via `populate_by_name` on agent-py; Zod parses it as-is
-    // on agent-ts).
+    // Wire shape passes through unchanged — agent-py accepts the
+    // camelCase TS shape directly (`existingTitles` via
+    // `populate_by_name`).
     expect((log[0].body as { mode: string }).mode).toBe("file")
     expect((log[3].body as { mode: string }).mode).toBe("project-breakdown")
   })
@@ -187,9 +186,7 @@ describe("apiClient.images.refreshUrl — dispatch + wire shape", () => {
   })
 })
 
-// agent-py-only endpoints: agent-ts is frozen (PLAN-frontend-backend-split
-// Q11) and has no `/v1/extract-table` or `/v1/files/refresh-url`, so a
-// `ts-service` account must stay on the in-Next route.
+// Account-bound endpoints on agent-py.
 describe("apiClient.files.refreshUrl — agent-py-only dispatch", () => {
   const storagePath = "u-1/generated/f1-report.csv"
   const signed = { url: "https://cdn.example/signed" }
