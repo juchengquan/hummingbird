@@ -16,7 +16,7 @@ type Options = { nextApi: "forbidden" | "allowed" }
 export const test = base.extend<Options & { nextApiGuard: void }>({
   nextApi: ["forbidden", { option: true }],
   nextApiGuard: [
-    async ({ browser, context, baseURL, nextApi }, use) => {
+    async ({ browser, context, baseURL, nextApi }, run) => {
       const next = new URL(baseURL ?? "http://127.0.0.1:3171").origin
       const hits: string[] = []
       const watch = (c: BrowserContext) =>
@@ -38,7 +38,7 @@ export const test = base.extend<Options & { nextApiGuard: void }>({
         return p
       }
       try {
-        await use()
+        await run()
       } finally {
         b.newContext = newContext
         b.newPage = newPage
