@@ -1,30 +1,16 @@
 import { z } from 'zod'
 
 import { ColumnTypeSchema } from '@/shared/artifacts/column-type'
-import { FILE_SIZE_LIMIT } from '@/shared/upload-config'
 
 /**
- * Shared request + response schemas for the app's API surface. These are
- * the contract every frontend → backend interaction must satisfy.
- *
- * Two purposes:
- *
- *   1. Server-side validation at the route boundary so we fail fast on
- *      malformed clients instead of letting bad payloads reach the AI
- *      SDK / Slate / pdf-parse with confusing downstream errors.
- *
- *   2. A single source of truth for the wire shapes. When the backend
- *      is rewritten in Python (see docs/PLAN-backend-extraction.md),
- *      these schemas describe what Python must accept and emit. The
- *      streaming SSE protocol for /api/chat is documented in
- *      docs/API.md — Zod doesn't model streams cleanly so the doc
- *      carries that contract.
+ * Shared request + response schemas for the app's API surface (served by
+ * agent-py; `packages/contract/openapi.yaml` is the contract). Response
+ * schemas parse what the backend returns (`lib/client/api-client.ts`);
+ * request schemas are the source of their inferred `…Input` types.
  *
  * Keep in sync with consumers:
  *
  *   - components/panels/chat.tsx           (chat)
- *   - components/editor/use-chat.ts        (command — Plate-driven;
- *                                           AiCommandRequestSchema)
  *   - components/editor/plugins/copilot-kit.tsx (copilot — Plate-driven)
  *   - lib/extract.ts                       (extract + summarize)
  *   - components/share-dialog.tsx          (share create)
@@ -70,7 +56,7 @@ export const McpResourceRefSchema = z.object({
 })
 
 /** Largest text field an attachment can carry (a bookmark's `content`;
- *  a file summary's `text` is capped lower). Feeds `CHAT_BODY_MAX`. */
+ *  a file summary's `text` is capped lower). */
 export const ATTACHMENT_TEXT_MAX = 220_000
 
 export const UrlBookmarkRefSchema = z.object({
@@ -112,22 +98,11 @@ const ModelMessageSchema = z.object({
  *  far above any real conversation: 2000 messages overflows every
  *  supported model's context window long before it's reached, and long
  *  threads get compressed (`compressed` messages aren't transmitted). */
-export const CHAT_MESSAGES_MAX = 2_000
+const CHAT_MESSAGES_MAX = 2_000
 
-/** base64 length of `bytes` raw bytes. */
-const base64Len = (bytes: number) => Math.ceil(bytes / 3) * 4
-
-/** Sandbox mount caps, mirrored from the client builder
- *  (`lib/client/chat/build-sandbox-files.ts`: ≤ 10 entries, local files
- *  > 10 MB dropped) and the server (`lib/server/code-sandbox/config.ts`). */
-export const SANDBOX_FILES_COUNT_MAX = 10
-export const SANDBOX_FILE_BASE64_MAX = base64Len(10_000_000)
-/** Total inline base64 across all entries. Local files can only enter the
- *  app through the upload dropzones (each capped at `FILE_SIZE_LIMIT`),
- *  so the largest legitimate manifest is 10 × FILE_SIZE_LIMIT. The server
- *  mounts at most `MOUNT_TOTAL_MAX` (20 MB) of it per run anyway. */
-export const SANDBOX_FILES_TOTAL_BASE64_MAX =
-  SANDBOX_FILES_COUNT_MAX * base64Len(FILE_SIZE_LIMIT)
+/** Sandbox mount cap, mirrored from the client builder
+ *  (`lib/client/chat/build-sandbox-files.ts`: ≤ 10 entries). */
+const SANDBOX_FILES_COUNT_MAX = 10
 
 // MCP server + its cached capabilities + (for local-mode) the
 // credential the client wants the server to use on its behalf this
@@ -166,164 +141,74 @@ const McpRequestServerSchema = z.object({
     .optional(),
 })
 
-/** Max attachments (files + MCP resources + URL bookmarks) per turn. */
-export const CHAT_ATTACHMENTS_MAX = 40
-
-/**
- * Byte cap on the raw `/api/chat` JSON body, checked before parsing
- * (route handlers have no default limit). Derived from the schema
- * bounds, generously: the inline sandbox files (base64, 1 byte/char) +
- * every attachment at the largest text field (up to 3 UTF-8 bytes per
- * char) + 32 MB for the message history (inline images included), MCP
- * server configs and the rest. ≈ 125 MB.
- */
-export const CHAT_BODY_MAX =
-  SANDBOX_FILES_TOTAL_BASE64_MAX +
-  CHAT_ATTACHMENTS_MAX * 3 * ATTACHMENT_TEXT_MAX +
-  32 * 1024 * 1024
-
-export const ChatRequestSchema = z.object({
-  messages: z.array(ModelMessageSchema).min(1).max(CHAT_MESSAGES_MAX),
-  model: z.string().max(100).optional(),
-  workspaceSystemPrompt: z.string().max(20_000).optional(),
-  /** When true, bypass cross-conversation memory for this turn: the route
-   *  injects no remembered facts. The client sets it from the
-   *  conversation's `memoryOff` and also skips post-turn extraction. */
-  memoryBypass: z.boolean().optional(),
-  /** Active workspace id — required to look up cloud-mode MCP servers
-   *  server-side. Local-mode servers are passed in `mcpServers` and
-   *  don't need this. Optional so signed-out usage still works. */
-  workspaceId: z.string().max(64).optional(),
-  /** Client-side "Store files locally" preference (from the account
-   *  menu). When true, the chat route's image-persistence layer skips
-   *  Supabase Storage and returns data URLs instead — same semantic as
-   *  the client's `persistFile()` honouring the same flag for uploads.
-   *  Absent / false → cloud upload is allowed when a session exists. */
-  localFilesOnly: z.boolean().optional(),
-  /** Reasoning-effort tier for models that expose a thinking-budget /
-   *  `reasoning_effort` knob. Absent → provider default. Mapped onto
-   *  provider options server-side; ignored for models/providers without
-   *  a mapping. See `@/shared/reasoning-effort`. */
-  reasoningEffort: z.enum(["low", "medium", "high"]).optional(),
-  /** Opt-in citation verification (`docs/PLAN-citation-verifiability.md`).
-   *  When true and the turn produced cited claims over retrieved sources,
-   *  the route runs a post-turn verifier pass and emits a
-   *  `data-verification` part. Absent / false → no verification.
-   *  Default-on in Deep Research mode is layered on separately. */
-  verifyCitations: z.boolean().optional(),
-  skills: z
-    .array(
-      z.object({
-        id: z.string().max(40),
-        /** Optional structured config — currently only the `webSearch`
-         *  skill reads it. Ignored for other skills. Provider toggles
-         *  and per-provider settings (search depth, freshness) live
-         *  inside `webSearchConfig`; see `lib/shared/skills/web-search-config.ts`. */
-        webSearchConfig: z
-          .object({
-            maxCalls: z.number().int().min(1).max(50).optional(),
-            tavily: z
-              .object({
-                enabled: z.boolean().optional(),
-                searchDepth: z.enum(["basic", "advanced"]).optional(),
-              })
-              .optional(),
-            brave: z
-              .object({
-                enabled: z.boolean().optional(),
-                freshness: z.enum(["any", "pd", "pw", "pm", "py"]).optional(),
-              })
-              .optional(),
-            exa: z
-              .object({
-                enabled: z.boolean().optional(),
-                type: z.enum(["auto", "neural", "keyword"]).optional(),
-              })
-              .optional(),
-          })
-          .optional(),
-        /** Optional structured config for the `webFetch` skill. Single
-         *  `maxCalls` field today; cascade machinery is in place for
-         *  future knobs. */
-        webFetchConfig: z
-          .object({
-            maxCalls: z.number().int().min(1).max(50).optional(),
-          })
-          .optional(),
-        /** Optional structured config for the `imageGen` skill (Minimax
-         *  T2I/I2I). Server clamps both `maxCalls` and `aspectRatio`
-         *  via `resolveImageGenConfig` so client-side garbage is safe. */
-        imageGenConfig: z
-          .object({
-            maxCalls: z.number().int().min(1).max(50).optional(),
-            aspectRatio: z
-              .enum(["1:1", "16:9", "9:16", "4:3", "3:4", "2:3", "3:2"])
-              .optional(),
-          })
-          .optional(),
-        /** Optional structured config for the `searchFiles` skill. Single
-         *  `maxCalls` field; server already clamps via clampMaxSearchFiles. */
-        fileSearchConfig: z
-          .object({
-            maxCalls: z.number().int().min(1).max(50).optional(),
-          })
-          .optional(),
-      })
-    )
-    .max(10)
-    .optional(),
-  /** MCP server configs (with cached capabilities + local-mode creds)
-   *  for tool registration. Distinct from `attachments` — these are
-   *  the **servers** whose tools the model can call; attachments of
-   *  `kind: 'mcp_resource'` are the **resources** whose content the
-   *  model reads. */
-  mcpServers: z.array(McpRequestServerSchema).max(8).optional(),
-  /** The persona's MCP allow-list for this turn (Q48, `PLAN-custom-agents`
-   *  Phase 2): when set, only the servers it names — cloud-mode rows and
-   *  `mcpServers` alike — offer tools; `[]` means no MCP. Absent means no
-   *  restriction (no persona, or one that does not restrict). */
-  allowedMcpServerIds: z.array(z.string().max(64)).max(64).optional(),
-  /** Everything attached to this turn — files, MCP resources, URL
-   *  bookmarks — in one discriminated array. Workspace-ticked +
-   *  conversation-pinned, de-duped client-side, tombstones filtered.
-   *  See `lib/shared/attachments.ts` for the union shape. */
-  attachments: z.array(AttachmentPayloadSchema).max(CHAT_ATTACHMENTS_MAX).optional(),
-  /** Files the client offers for `runCode` to mount (PR-2). Sent only
-   *  when the codeInterpreter skill is enabled. Each entry maps a
-   *  conversation attachment's `name` to its `fileId`; `dataBase64` is
-   *  present for LOCAL-only files (no storage_path) and absent for CLOUD
-   *  files (the server resolves those by fileId via the user's RLS and
-   *  downloads from user-files). Caps mirror the sandbox mount limits. */
-  sandboxFiles: z
-    .array(
-      z.object({
-        name: z.string().min(1).max(500),
-        fileId: z.string().min(1).max(64),
-        // 10 MB decoded (the client's per-file cap) ≈ 13.3M base64
-        // chars. Finer decoded/total mount caps live server-side.
-        dataBase64: z.string().max(SANDBOX_FILE_BASE64_MAX).optional(),
-      })
-    )
-    .max(SANDBOX_FILES_COUNT_MAX)
-    .refine(
-      (entries) =>
-        entries.reduce((n, e) => n + (e.dataBase64?.length ?? 0), 0) <=
-        SANDBOX_FILES_TOTAL_BASE64_MAX,
-      { message: 'sandboxFiles: total inline file data is too large.' }
-    )
-    .optional(),
-  /** I2I reference image for the next turn. Set by the "Remix" action
-   *  on a `GeneratedImagesGallery` tile. When present, the server
-   *  appends a system note instructing the model to call
-   *  `generateImage` with `referenceImageUrl` set; the tool's own
-   *  SSRF gate validates the URL before forwarding to Minimax. Cleared
-   *  by the client on send. */
-  referenceImage: z
-    .object({
-      url: z.string().url().max(4000),
+/** The skills enabled for a run, each with its optional per-skill
+ *  settings (the run's `forwardedProps.skills`; `SkillConfig` in
+ *  `packages/contract/openapi.yaml`). */
+const SkillsRequestSchema = z
+  .array(
+    z.object({
+      id: z.string().max(40),
+      /** Optional structured config — currently only the `webSearch`
+       *  skill reads it. Ignored for other skills. Provider toggles
+       *  and per-provider settings (search depth, freshness) live
+       *  inside `webSearchConfig`; see `lib/shared/skills/web-search-config.ts`. */
+      webSearchConfig: z
+        .object({
+          maxCalls: z.number().int().min(1).max(50).optional(),
+          tavily: z
+            .object({
+              enabled: z.boolean().optional(),
+              searchDepth: z.enum(["basic", "advanced"]).optional(),
+            })
+            .optional(),
+          brave: z
+            .object({
+              enabled: z.boolean().optional(),
+              freshness: z.enum(["any", "pd", "pw", "pm", "py"]).optional(),
+            })
+            .optional(),
+          exa: z
+            .object({
+              enabled: z.boolean().optional(),
+              type: z.enum(["auto", "neural", "keyword"]).optional(),
+            })
+            .optional(),
+        })
+        .optional(),
+      /** Optional structured config for the `webFetch` skill. Single
+       *  `maxCalls` field today; cascade machinery is in place for
+       *  future knobs. */
+      webFetchConfig: z
+        .object({
+          maxCalls: z.number().int().min(1).max(50).optional(),
+        })
+        .optional(),
+      /** Optional structured config for the `imageGen` skill (Minimax
+       *  T2I/I2I). Server clamps both `maxCalls` and `aspectRatio`
+       *  via `resolveImageGenConfig` so client-side garbage is safe. */
+      imageGenConfig: z
+        .object({
+          maxCalls: z.number().int().min(1).max(50).optional(),
+          aspectRatio: z
+            .enum(["1:1", "16:9", "9:16", "4:3", "3:4", "2:3", "3:2"])
+            .optional(),
+        })
+        .optional(),
+      /** Optional structured config for the `searchFiles` skill. Single
+       *  `maxCalls` field; server already clamps via clampMaxSearchFiles. */
+      fileSearchConfig: z
+        .object({
+          maxCalls: z.number().int().min(1).max(50).optional(),
+        })
+        .optional(),
     })
-    .optional(),
-})
+  )
+  .max(10)
+  .optional()
+
+/** MCP server configs (with cached capabilities + local-mode creds)
+ *  for tool registration. */
+const McpServersRequestSchema = z.array(McpRequestServerSchema).max(8).optional()
 
 // --- /api/ai/complete -------------------------------------------------------
 // Inline editor ghost-text autocomplete. Streaming plain-text response
@@ -338,7 +223,7 @@ export const COMPLETE_PREFIX_MAX = 8_000
 
 /** Max bytes of the current block's text. Plate sends one block via
  *  `getPrompt`, so the cap is generous but bounded. */
-export const COMPLETE_BLOCK_MAX = 4_000
+const COMPLETE_BLOCK_MAX = 4_000
 
 export const CompleteRequestSchema = z.object({
   /** Preceding-document context (markdown). Truncated to the trailing
@@ -349,55 +234,6 @@ export const CompleteRequestSchema = z.object({
   /** Model id override. Defaults to the fast model the editor uses
    *  elsewhere (`google/gemini-2.5-flash`). */
   model: z.string().max(100).optional(),
-})
-
-// --- /api/ai/command --------------------------------------------------------
-// Plate's AI menu (`components/editor/use-chat.ts` via `@platejs/ai`'s
-// `AIChatPlugin`). The body is the AI SDK `DefaultChatTransport` payload
-// (`id`, `messages: UIMessage[]`, `trigger`, …) merged with Plate's
-// `{ ctx }` and the settings dialog's `{ apiKey?, model? }`. The response
-// is an AI SDK UI message stream (see docs/API.md), so there is no JSON
-// response schema. Loose (`z.looseObject`) where the AI SDK / Slate own
-// the inner shape; strict on exactly the fields the route dereferences
-// so malformed input is a 400, not a TypeError → 500.
-
-const SlatePointSchema = z.object({
-  path: z.array(z.number().int().nonnegative()).max(64),
-  offset: z.number().int().nonnegative(),
-})
-
-export const AiCommandRequestSchema = z.object({
-  /** BYO AI Gateway key from the editor settings dialog. */
-  apiKey: z.string().max(500).nullish(),
-  model: z.string().max(100).nullish(),
-  ctx: z.object({
-    /** The editor document (`editor.children`) — Slate element nodes. */
-    children: z.array(z.looseObject({})).max(50_000),
-    /** Slate `Range` (or null when nothing is selected). */
-    selection: z
-      .object({ anchor: SlatePointSchema, focus: SlatePointSchema })
-      .nullish(),
-    /** Absent / null → the route asks the model to choose. */
-    toolName: z.enum(['comment', 'edit', 'generate']).nullish(),
-  }),
-  messages: z
-    .array(
-      z.looseObject({
-        role: z.enum(['system', 'user', 'assistant']),
-        parts: z
-          .array(
-            z.looseObject({
-              type: z.string().max(100),
-              text: z.string().max(200_000).optional(),
-            })
-          )
-          .max(100),
-      })
-    )
-    .min(1)
-    // The editor's AI chat keeps its history for the session; generous
-    // so a long editing session never trips it.
-    .max(1000),
 })
 
 // --- /api/extract -----------------------------------------------------------
@@ -540,7 +376,7 @@ export const RevokeShareResponseSchema = z.object({
 // GET /v1/share/{token} (agent-py, public): what the read-only share pages
 // render. Same shape as `resolveShare` (`lib/server/share/resolve.ts`) and
 // `ResolvedShare` in `packages/contract/openapi.yaml`.
-export const SharedMessageSchema = z.object({
+const SharedMessageSchema = z.object({
   id: z.string(),
   role: z.enum(['user', 'assistant']),
   content: z.string(),
@@ -596,11 +432,11 @@ export const TaskRequestSchema = z.object({
   /** Step ceiling for the loop. Clamped server-side. */
   maxSteps: z.number().int().min(1).max(50).optional(),
   /** Same per-skill entries as the chat request. */
-  skills: ChatRequestSchema.shape.skills,
+  skills: SkillsRequestSchema,
   /** Local-mode MCP servers (with creds), same shape as the chat
    *  request. Cloud-mode servers are looked up server-side from
    *  `workspaceId`, so this is only needed for local-mode. */
-  mcpServers: ChatRequestSchema.shape.mcpServers,
+  mcpServers: McpServersRequestSchema,
   /** Tool names (full, prefixed for MCP) that require human approval
    *  before running. The runner registers them without an `execute`;
    *  the model can call them but the SDK won't run them — the run
@@ -631,52 +467,6 @@ export const TaskRequestSchema = z.object({
     .optional(),
 })
 
-// --- /api/tasks/:id/respond -------------------------------------------------
-// Resolve a HITL pending input — approve/reject a gated tool, choose
-// one of the options, or supply a value. Only the fields for the
-// request's `kind` need to be set. Returns the continuation stream.
-
-/**
- * `POST /api/tasks` reply — `202 { runId }`. The client then opens
- * `GET /api/tasks/:id/stream` to watch events as the worker produces
- * them. There is no inline stream from POST after Phase 6 steps 3+4
- * (`PLAN-agent-task-queue.md`).
- */
-export const TaskStartResponseSchema = z.object({
-  runId: z.string().min(1),
-})
-
-/** `POST /api/tasks/:id/respond` reply — `202 { ok: true }`. The
- *  client uses its existing resume-stream subscription to see the
- *  continuation. */
-export const RespondResponseSchema = z.object({
-  ok: z.literal(true),
-})
-
-export const RespondRequestSchema = z.object({
-  requestId: z.string().min(1),
-  /** `requestKind: "approval"` — required for tool gates, and only a
-   *  boolean: absent never approves. The route knows the question's kind
-   *  and answers 400 without it; the executor checks again. */
-  approved: z.boolean().optional(),
-  /** `requestKind: "approval"` — edited args to use instead of what
-   *  the model proposed. Server validates before executing. */
-  args: z.unknown().optional(),
-  /** `requestKind: "choice"` — picked option ids. */
-  selection: z.array(z.string()).optional(),
-  /** `requestKind: "input"` — free-text value. */
-  value: z.string().optional(),
-  /** `requestKind: "ui-part"` — the user's structured answer to a
-   *  `renderUI` HITL gate. Shape mirrors the chat-mode `UiAnswer`
-   *  discriminated union. The runner runs `formatAnswerForChat` on
-   *  the server side to inject the answer as the tool's result on
-   *  continuation. See `docs/PLAN-generative-ui-parts.md` commit 3. */
-  uiAnswer: z.unknown().optional(),
-  /** Local-mode MCP creds re-supplied for the continuation. */
-  mcpServers: ChatRequestSchema.shape.mcpServers,
-})
-
-// --- Generic error envelope -------------------------------------------------
 // --- /api/tasks/schedules (recurring task runs) -----------------------------
 // Step 7 of PLAN-agent-task-queue.md. A schedule row is a saved spec for
 // a task plus a cron expression + IANA timezone; the tick walks due
@@ -707,7 +497,7 @@ export const ScheduleCreateSchema = z.object({
    *  default when null. */
   model: z.string().max(100).nullable().optional(),
   systemPrompt: z.string().max(20_000).nullable().optional(),
-  skills: ChatRequestSchema.shape.skills,
+  skills: SkillsRequestSchema,
   maxSteps: z.number().int().min(1).max(50).nullable().optional(),
 })
 
@@ -723,7 +513,7 @@ export const ScheduleResponseSchema = z.object({
   enabled: z.boolean(),
   model: z.string().nullable(),
   systemPrompt: z.string().nullable(),
-  skills: ChatRequestSchema.shape.skills,
+  skills: SkillsRequestSchema,
   maxSteps: z.number().nullable(),
   lastRunAt: z.string().nullable(),
   lastRunTaskId: z.string().nullable(),
@@ -736,22 +526,10 @@ export const ScheduleListResponseSchema = z.object({
   schedules: z.array(ScheduleResponseSchema),
 })
 
-// --- Generic error envelope -------------------------------------------------
 // --- POST /api/images/refresh-url -------------------------------------------
 //
 // Re-sign an expired generated-image URL. The bytes live in Supabase
 // Storage at `storagePath`; the route mints a fresh long-lived URL.
-
-export const RefreshImageUrlRequestSchema = z.object({
-  storagePath: z
-    .string()
-    .min(1)
-    .max(512)
-    // Defensive: the route also checks the first segment matches
-    // auth.uid(), but reject obvious path-traversal attempts up front.
-    .refine((p) => !p.includes(".."), "storagePath must not contain ..")
-    .refine((p) => !p.startsWith("/"), "storagePath must not start with /"),
-})
 
 export const RefreshImageUrlResponseSchema = z.object({
   url: z.string().min(1),
@@ -762,15 +540,6 @@ export const RefreshImageUrlResponseSchema = z.object({
 // Re-sign an expired generated-FILE URL. The bytes live in Supabase
 // Storage at `storagePath`; the route mints a fresh long-lived URL.
 // Mirrors the image refresh-url contract.
-
-export const RefreshFileUrlRequestSchema = z.object({
-  storagePath: z
-    .string()
-    .min(1)
-    .max(512)
-    .refine((p) => !p.includes(".."), "storagePath must not contain ..")
-    .refine((p) => !p.startsWith("/"), "storagePath must not start with /"),
-})
 
 export const RefreshFileUrlResponseSchema = z.object({
   url: z.string().min(1),
@@ -867,28 +636,9 @@ export const TaskChildSchema = z.object({
 
 export type TaskChild = z.infer<typeof TaskChildSchema>
 
-export const TaskChildrenResponseSchema = z.object({
-  children: z.array(TaskChildSchema),
-})
-
-export type TaskChildrenResponse = z.infer<typeof TaskChildrenResponseSchema>
-
-// Non-streaming routes return `{ error, code?, message? }` with a non-2xx
-// status on failure. Frontend categorisation lives in lib/api-errors.ts.
-
-export const ErrorResponseSchema = z.object({
-  error: z.string().optional(),
-  code: z.string().optional(),
-  message: z.string().optional(),
-})
-
 // --- TS types (inferred from the schemas above) -----------------------------
 
-export type ChatRequestInput = z.infer<typeof ChatRequestSchema>
 export type TaskRequestInput = z.infer<typeof TaskRequestSchema>
-export type RespondRequestInput = z.infer<typeof RespondRequestSchema>
-export type TaskStartResponse = z.infer<typeof TaskStartResponseSchema>
-export type RespondResponse = z.infer<typeof RespondResponseSchema>
 export type ScheduleCreateInput = z.infer<typeof ScheduleCreateSchema>
 export type ScheduleUpdateInput = z.infer<typeof ScheduleUpdateSchema>
 export type ScheduleResponse = z.infer<typeof ScheduleResponseSchema>
@@ -905,10 +655,7 @@ export type CreateShareResponse = z.infer<typeof CreateShareResponseSchema>
 export type ResolvedShareResponse = z.infer<typeof ResolvedShareResponseSchema>
 export type MemoryExtractRequestInput = z.infer<typeof MemoryExtractRequestSchema>
 export type MemoryExtractResponse = z.infer<typeof MemoryExtractResponseSchema>
-export type RefreshImageUrlRequestInput = z.infer<typeof RefreshImageUrlRequestSchema>
 export type RefreshImageUrlResponse = z.infer<typeof RefreshImageUrlResponseSchema>
-export type RefreshFileUrlRequestInput = z.infer<typeof RefreshFileUrlRequestSchema>
 export type RefreshFileUrlResponse = z.infer<typeof RefreshFileUrlResponseSchema>
 export type EmbedRequestInput = z.infer<typeof EmbedRequestSchema>
 export type EmbedResponse = z.infer<typeof EmbedResponseSchema>
-export type ErrorResponse = z.infer<typeof ErrorResponseSchema>

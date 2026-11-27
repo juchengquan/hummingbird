@@ -1,8 +1,9 @@
 import "client-only"
 /**
- * Client-side helper that POSTs a file to /api/extract and returns the
- * resulting text + kind. Network/HTTP failures resolve to `null`; the
- * caller decides how to mark the file ('failed').
+ * Client-side helper that POSTs a file to agent-py's extract endpoint
+ * (`apiClient.extract`) and returns the resulting text + kind.
+ * Network/HTTP failures resolve to `null`; the caller decides how to
+ * mark the file ('failed').
  */
 
 import { toast } from 'sonner'
@@ -10,8 +11,6 @@ import { toast } from 'sonner'
 import { apiClient, isAuthRequiredResult } from '@/client/api-client'
 import { indexFileEmbeddings } from '@/client/embeddings/index-file'
 import type { ExtractionResponse } from '@/shared/api-schemas'
-
-export const EXTRACTION_BUDGET = 100 * 1024 // 100 KB of extracted text per file
 
 /** Re-exported alias for callers that already import this name. */
 export type ExtractionResult = ExtractionResponse

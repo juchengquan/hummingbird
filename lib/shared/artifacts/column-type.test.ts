@@ -7,7 +7,6 @@ import {
   ColumnTypeSchema,
   compareForSort,
   isHttpUrl,
-  parseCellValue,
   resolveColumnType,
   validateCell,
 } from "./column-type"
@@ -31,25 +30,6 @@ describe("resolveColumnType", () => {
   })
   test("never throws", () => {
     expect(() => resolveColumnType({ type: undefined as unknown as string })).not.toThrow()
-  })
-})
-
-describe("parseCellValue", () => {
-  test("'number' + '200' → 200 (number)", () => {
-    expect(parseCellValue("200", "number")).toBe(200)
-  })
-  test("'number' + 'abc' → NaN", () => {
-    expect(parseCellValue("abc", "number")).toBeNaN()
-  })
-  test("'number' + '' → NaN", () => {
-    expect(parseCellValue("", "number")).toBeNaN()
-  })
-  test("'text' + anything → raw string (passthrough)", () => {
-    expect(parseCellValue("hello", "text")).toBe("hello")
-    expect(parseCellValue("", "text")).toBe("")
-  })
-  test("never throws", () => {
-    expect(() => parseCellValue("\u0000", "number")).not.toThrow()
   })
 })
 
@@ -216,16 +196,6 @@ describe("compareForSort (link)", () => {
   })
   test("descending flips", () => {
     expect(compareForSort(cell("http://a.test"), cell("http://b.test"), "link", "desc")).toBeGreaterThan(0)
-  })
-})
-
-describe("parseCellValue (date + link)", () => {
-  test("date → UTC timestamp for valid ISO, NaN otherwise", () => {
-    expect(parseCellValue("2024-01-15", "date")).toBe(Date.UTC(2024, 0, 15))
-    expect(parseCellValue("nope", "date")).toBeNaN()
-  })
-  test("link → raw string passthrough", () => {
-    expect(parseCellValue("https://x.test", "link")).toBe("https://x.test")
   })
 })
 

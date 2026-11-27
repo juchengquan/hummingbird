@@ -75,7 +75,7 @@ const ChatModelSchema = z.object({
    *  `claude-sonnet-4-6` for `anthropic/claude-sonnet-4.6` — the catalog
    *  id uses a dot, the API id a dash). Read only by the agent services
    *  (agent-py + agent-ts), which call Anthropic directly and accept
-   *  only `anthropic/*` entries; see `getAnthropicApiModelId`. Absent →
+   *  only `anthropic/*` entries; see `ANTHROPIC_SERVICE_MODELS`. Absent →
    *  the id with its `anthropic/` prefix stripped. The Next.js routes
    *  ignore it (they dispatch the catalog id through `routes`). */
   anthropicModelId: z.string().min(1).optional(),
@@ -162,12 +162,6 @@ export const ANTHROPIC_SERVICE_MODELS: ReadonlyMap<string, string> = new Map(
     .map((m) => [m.id, m.anthropicModelId ?? m.id.slice(ANTHROPIC_MODEL_PREFIX.length)])
 )
 
-/** Anthropic API model id for an allowed `anthropic/*` catalog id, or
- *  null when the id isn't on the agent-service allowlist. */
-export function getAnthropicApiModelId(id: string): string | null {
-  return ANTHROPIC_SERVICE_MODELS.get(id) ?? null
-}
-
 /** Sentinel model id for the smart-routing ("Auto") option — resolved
  *  server-side to a concrete model per prompt. Never sent to a provider
  *  directly. See `@/server/routing/router`. */
@@ -176,10 +170,6 @@ export const AUTO_MODEL_ID = "auto"
 /** The configured strong/weak routing pair, or null when unconfigured
  *  (in which case `auto` is hidden + treated as the default model). */
 export const ROUTING_CONFIG: RoutingConfig | null = config.routing ?? null
-
-/** Whether the `auto` smart-routing option is available (a routing pair
- *  is configured). Gates the picker entry + the server-side resolve. */
-export const ROUTING_AVAILABLE: boolean = ROUTING_CONFIG !== null
 
 /** Whether `id` is the smart-routing sentinel. */
 export function isAutoModel(id: string): boolean {
@@ -198,18 +188,4 @@ export function getChatModel(id: string): ChatModel | null {
  *  client sends `reasoningEffort` on the wire. Unknown id → false. */
 export function modelSupportsReasoningEffort(id: string): boolean {
   return getChatModel(id)?.supportsReasoningEffort === true
-}
-
-/** Whether a model supports native structured output (constrained
- *  decoding). Drives whether the deterministic call sites use
- *  `generateObject` or fall back to lenient text parsing. Unknown id →
- *  false. */
-export function modelSupportsStructuredOutput(id: string): boolean {
-  return getChatModel(id)?.supportsStructuredOutput === true
-}
-
-/** Whether a model accepts image input (vision). Gates the vision
- *  document-extraction path. Unknown id → false. */
-export function modelSupportsVision(id: string): boolean {
-  return getChatModel(id)?.supportsVision === true
 }

@@ -10,9 +10,7 @@ import "client-only";
 // exports to what `ai` imports.
 
 class NeverGatewayError extends Error {
-  static isInstance(_error: unknown): boolean {
-    return false;
-  }
+  static isInstance: (error: unknown) => boolean = () => false;
 }
 
 export class GatewayAuthenticationError extends NeverGatewayError {}

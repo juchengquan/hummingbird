@@ -4,9 +4,7 @@ import {
   ANTHROPIC_SERVICE_MODELS,
   CHAT_MODELS,
   DEFAULT_CHAT_MODEL,
-  getAnthropicApiModelId,
   getChatModel,
-  modelSupportsVision,
 } from "./models"
 
 describe("CHAT_MODELS — loaded from config/models.json", () => {
@@ -60,29 +58,19 @@ describe("getChatModel", () => {
   })
 })
 
-describe("modelSupportsVision", () => {
-  test("flagged model → true", () => {
-    expect(modelSupportsVision("anthropic/claude-sonnet-4.6")).toBe(true)
-  })
-  test("unflagged model → false", () => {
-    expect(modelSupportsVision("deepseek/deepseek-v4-flash")).toBe(false)
-  })
-  test("unknown id → false", () => {
-    expect(modelSupportsVision("does/not-exist")).toBe(false)
-  })
-})
+const apiIdOf = (id: string) => ANTHROPIC_SERVICE_MODELS.get(id) ?? null
 
 describe("agent-service allowlist (anthropic/* entries)", () => {
   test("maps catalog ids to Anthropic API ids (dash, not dot)", () => {
-    expect(getAnthropicApiModelId("anthropic/claude-sonnet-4.6")).toBe("claude-sonnet-4-6")
-    expect(getAnthropicApiModelId("anthropic/claude-haiku-4.5")).toBe("claude-haiku-4-5")
+    expect(apiIdOf("anthropic/claude-sonnet-4.6")).toBe("claude-sonnet-4-6")
+    expect(apiIdOf("anthropic/claude-haiku-4.5")).toBe("claude-haiku-4-5")
   })
 
   test("non-anthropic catalog ids and unknown ids are not allowed", () => {
-    expect(getAnthropicApiModelId("deepseek/deepseek-v4-flash")).toBeNull()
-    expect(getAnthropicApiModelId("openrouter/anthropic/claude-sonnet-4.5")).toBeNull()
-    expect(getAnthropicApiModelId("claude-sonnet-4-6")).toBeNull()
-    expect(getAnthropicApiModelId("anthropic/claude-opus-9")).toBeNull()
+    expect(apiIdOf("deepseek/deepseek-v4-flash")).toBeNull()
+    expect(apiIdOf("openrouter/anthropic/claude-sonnet-4.5")).toBeNull()
+    expect(apiIdOf("claude-sonnet-4-6")).toBeNull()
+    expect(apiIdOf("anthropic/claude-opus-9")).toBeNull()
   })
 
   test("every anthropic/* entry carries an explicit API id", () => {
