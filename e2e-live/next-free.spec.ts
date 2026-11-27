@@ -1,6 +1,6 @@
 /**
  * Q133 on the surfaces besides chat (wave 12, Q121–Q139): on the default
- * backend ("agent-py (runs)", no stored choice) a bookmark, a file upload
+ * backend ("agent-py (runs)", no stored choice) a bookmark fetch, a file upload
  * (signed out and in) and Explain on a selection all work without the
  * browser calling Next's `/api/*` — the guard fails a test that does.
  */
@@ -69,19 +69,24 @@ async function uploadAndExtract(page: Page) {
   await expect(page.getByRole("button", { name: `Re-extract "${name}"` })).toHaveCount(0)
 }
 
-test("signed out: a URL bookmark is fetched and saved", async ({ page }) => {
+test("signed out: a bookmark is fetched by agent-py, under its URL policy", async ({ page }) => {
+  // Bookmark fetches only reach public hosts (Next's and agent-py's rule
+  // alike), and the stack has none: what this shows is that a signed-out
+  // browser's fetch goes to agent-py, tokenless, and agent-py's policy
+  // answers it — the guard shows Next isn't asked.
   const name = crypto.randomUUID().slice(0, 8)
   await page.goto("/")
   await newChat(page)
   await resourcesTab(page, "Links")
+  const asked = page.waitForRequest((req) => req.url() === "http://127.0.0.1:8171/v1/url/fetch" && req.method() === "POST")
   await page.getByRole("button", { name: "Add a bookmark to the workspace" }).click()
   await page.getByPlaceholder("https://example.com/article").fill(`http://127.0.0.1:8172/page/${name}`)
   await page.getByRole("button", { name: "Save bookmark" }).click()
-  // The page's own title, fetched by the server, names the row and the toast.
-  await expect(page.getByText(`Saved "Live page ${name}"`)).toBeVisible()
-  await expect(page.getByText(`Live page ${name}`, { exact: true }).first()).toBeVisible()
+  const req = await asked
+  expect(await req.headerValue("authorization")).toBeNull()
+  await expect(page.getByText(/private range/)).toBeVisible()
   const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem("hummingbird-storage") ?? "{}").state?.urlBookmarks ?? [])
-  await expect.poll(saved).toEqual([expect.objectContaining({ title: `Live page ${name}`, content: expect.stringContaining(`Body text of ${name}.`) })])
+  expect(await saved()).toEqual([])
 })
 
 test("signed out: an uploaded file's text is extracted", async ({ page }) => {
