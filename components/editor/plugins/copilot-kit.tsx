@@ -105,14 +105,14 @@ export const CopilotKit = [
             const raw = init?.body;
             const parsed =
               typeof raw === 'string'
-                ? (JSON.parse(raw) as { apiKey?: string; prompt?: string })
+                ? (JSON.parse(raw) as { prompt?: string })
                 : null;
             const payloadString = parsed?.prompt;
             if (payloadString) {
               const payload = JSON.parse(payloadString) as CompleteRequestInput;
-              // agent-py where it serves chat, unless the settings hold a
-              // gateway key (Q103/Q105) — `/v1/ai/complete`, same body.
-              const target = await resolveEditorAiTarget(Boolean(parsed?.apiKey));
+              // agent-py where it serves chat (Q105) — `/v1/ai/complete`,
+              // same body. No own-key setting any more (Q124).
+              const target = await resolveEditorAiTarget();
               if (target) {
                 return fetch(
                   `${target.baseUrl}/v1/ai/complete`,

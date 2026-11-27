@@ -8,6 +8,7 @@ import { describe, expect, test } from "bun:test"
 import type { Message } from "@/shared/types"
 
 import {
+  buildExplainRunInput,
   buildRunInput,
   fitSandboxFilesToRun,
   LOCAL_MCP_STATE_KEY,
@@ -230,5 +231,37 @@ describe("buildRunInput — runCode's files (wave 8, Q92)", () => {
       { name: "tiny", fileId: "4", dataBase64: "AAAA" },
     ])
     expect(fitted.map((f) => f.name)).toEqual(["one", "cloud", "tiny"])
+  })
+})
+
+describe("buildRunInput — ephemeral (0.8.0, Q136)", () => {
+  test("ephemeral rides in forwardedProps only when true", () => {
+    const base = { conversationId: "c1", history: [msg("u1", "user", "hi")] }
+    expect(buildRunInput({ ...base, ephemeral: true }).forwardedProps).toEqual({ ephemeral: true })
+    expect(buildRunInput({ ...base, ephemeral: false }).forwardedProps).toBeUndefined()
+  })
+})
+
+describe("buildExplainRunInput (wave 12, Q125/Q135)", () => {
+  test("ephemeral, a fresh thread, the prompt last, model + workspace prompt, nothing else", () => {
+    const body = buildExplainRunInput({
+      history: [msg("u1", "user", "hi"), msg("a1", "assistant", ""), msg("a2", "assistant", "hello")],
+      prompt: "Explain X",
+      model: "anthropic/claude-haiku-4.5",
+      systemPrompt: "Be brief.",
+    })
+    expect(body.forwardedProps).toEqual({
+      ephemeral: true,
+      model: "anthropic/claude-haiku-4.5",
+      systemPrompt: "Be brief.",
+    })
+    expect(body.threadId).not.toBe(body.runId)
+    expect(body.state).toBeUndefined()
+    const messages = body.messages as Array<{ id: string; role: string; content: unknown }>
+    expect(messages.slice(0, 2)).toEqual([
+      { id: "u1", role: "user", content: "hi" },
+      { id: "a2", role: "assistant", content: "hello" },
+    ])
+    expect(messages[2]).toMatchObject({ role: "user", content: "Explain X" })
   })
 })

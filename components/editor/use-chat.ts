@@ -100,9 +100,9 @@ export const useChat = () => {
           ...bodyOptions,
         };
 
-        // agent-py serves the editor where it serves chat, unless the
-        // settings hold an AI Gateway key (only Next can bill it) — Q103/Q105.
-        const target = await resolveEditorAiTarget(Boolean(body.apiKey));
+        // agent-py serves the editor where it serves chat (Q105); there is
+        // no own-key setting any more (Q124).
+        const target = await resolveEditorAiTarget();
         let res: Response;
         if (target) {
           const command = agentPyCommand(body);

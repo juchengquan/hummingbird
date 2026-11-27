@@ -30,6 +30,7 @@ import {
   isAgentTsConfigured,
   type ChatBackendOption,
 } from "@/client/api-client"
+import { explainOnRuns } from "@/client/chat/explain-stream"
 import { useStore } from "@/client/hooks/use-store"
 import type { RunsTarget } from "@/client/runs/types"
 import { editorAiBackend } from "@/shared/editor-ai/routing"
@@ -126,6 +127,24 @@ export async function resolveRunsTarget(): Promise<RunsTarget | null> {
 }
 
 /**
+ * Where the Explain-selection popover's run goes (wave 12, Q125), or
+ * `null` for the Next route: agent-py's runs API on its backends —
+ * `python-runs` and `python` alike (`explainOnRuns`) — signed in (the
+ * bearer) or out (an anonymous run). `ts` / `ts-service` keep the Next
+ * route until wave 13.
+ */
+export async function resolveExplainTarget(): Promise<RunsTarget | null> {
+  if (!explainOnRuns(useStore.getState().chatBackend, isAgentPyConfigured())) return null
+  const session = await sessionAccessToken()
+  const authToken = session.ok ? session.token : null
+  return {
+    baseUrl: AGENT_PY_BASE_URL,
+    authToken,
+    ...(authToken ? { getAuthToken: currentAccessToken } : {}),
+  }
+}
+
+/**
  * Where the tasks panel's requests go (wave 6): agent-py's runs API for
  * the signed-in user, or `null` when agent-py isn't configured or nobody
  * is signed in (background runs are signed-in only). Unlike
@@ -151,19 +170,18 @@ export interface EditorAiTarget {
 /**
  * Where the editor's AI goes (wave 9, Q102–Q105): agent-py's
  * `/v1/ai/command` + `/v1/ai/complete` where agent-py serves chat
- * (`editorAiBackend`), else `null` — the Next routes. `ownKey`: the editor
- * settings hold an AI Gateway key, which only the Next route can bill (Q103).
+ * (`editorAiBackend`), else `null` — the Next routes, on the deploy's key
+ * (the own-key setting is gone, Q124).
  */
-export async function resolveEditorAiTarget(ownKey: boolean): Promise<EditorAiTarget | null> {
+export async function resolveEditorAiTarget(): Promise<EditorAiTarget | null> {
   const chatBackend = useStore.getState().chatBackend
-  if (ownKey || !isAgentPyConfigured()) return null
+  if (!isAgentPyConfigured()) return null
   if (chatBackend !== "python" && chatBackend !== "python-runs") return null
   const session = await sessionAccessToken()
   const authToken = session.ok ? session.token : null
   const backend = editorAiBackend({
     agentPyConfigured: true,
     chatBackend,
-    ownKey,
     signedIn: authToken !== null,
   })
   return backend === "agent-py" ? { baseUrl: AGENT_PY_BASE_URL, authToken } : null

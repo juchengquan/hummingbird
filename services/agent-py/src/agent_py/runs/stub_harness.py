@@ -23,6 +23,9 @@ an open `RunForwardedProps` key that every other harness ignores:
   how each interrupt was answered — after recording, as the native
   harness does, that it applies the answers (`RunInput.apply_answers`,
   Q63), so a resume steered to `fail` closes the question.
+* an **ephemeral** run (`forwardedProps.ephemeral`, Q135) has no tools,
+  so nothing to pause on: steered to `interrupt` it succeeds, as the
+  native harness's would.
 * `stepDelayMs` — a pause after each step (cancellable), so a run stays
   live long enough to cancel it or to rejoin it mid-flight.
 * `failBeforeApplying` — a resume fails at once, before it applies its
@@ -69,6 +72,8 @@ class StubHarness:
         raw = run_input.options.get("conformance")
         cfg = raw if isinstance(raw, dict) else {}
         outcome = cfg.get("outcome", "succeed")
+        if outcome == "interrupt" and run_input.options.get("ephemeral") is True:
+            outcome = "succeed"
         steps = _int(cfg.get("steps"), 1, 1, _MAX_STEPS)
         delay = _int(cfg.get("stepDelayMs"), 0, 0, _MAX_DELAY_MS) / 1000
 

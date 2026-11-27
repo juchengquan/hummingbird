@@ -61,7 +61,8 @@ import { FILE_SIZE_LIMIT, IMAGE_SIZE_LIMIT, ALLOWED_EXTENSIONS } from "@/shared/
 import type { Agent } from "@/shared/types"
 import { forkTargetForEdit, forkTargetForRegenerate } from "@/shared/branches/fork-target"
 import { useRestoreInterruptedTurns } from "@/client/runs/use-restore-interrupted-turns"
-import { useModelBackend, useModelBackendGuard } from "@/client/hooks/use-model-backend"
+import { useModelBackend, useModelBackendGuard, useNoModelProvider } from "@/client/hooks/use-model-backend"
+import { NO_MODEL_PROVIDER_HINT, NO_MODEL_PROVIDER_MESSAGE } from "@/shared/served-models"
 import { TASK_MODEL_BACKEND } from "@/shared/backend-models"
 import { taskProgress } from "@/client/agent/task-progress"
 
@@ -146,6 +147,15 @@ export function ChatPanel() {
   const modelBackend = useModelBackend()
   const pickerBackend = runAsTask ? TASK_MODEL_BACKEND : modelBackend
   useModelBackendGuard(pickerBackend, hydrated)
+  // Q131: agent-py serves this turn and has no model provider at all — say
+  // so (header + above the input) and refuse to send, instead of a 503
+  // bubble per message. A list that couldn't be read never blocks.
+  const noProvider = useNoModelProvider(pickerBackend)
+  const refuseNoProvider = useCallback((): boolean => {
+    if (!noProvider) return false
+    toast.error(NO_MODEL_PROVIDER_MESSAGE, { id: "no-model-provider", description: NO_MODEL_PROVIDER_HINT })
+    return true
+  }, [noProvider])
   const [inputValue, setInputValue] = useState("")
   // Send pipeline lives in its own hook (see lib/client/hooks/use-chat-send).
   // The hook owns the abort-controller map, the streaming-conv-ids Set,
@@ -526,6 +536,8 @@ export function ChatPanel() {
       if (textareaRef.current) textareaRef.current.style.height = "auto"
       return // ← no message added, no API call
     }
+    // No model provider (Q131): the message stays in the box.
+    if (refuseNoProvider()) return
     let taskModeForCall: TaskModeId | undefined
     let forcedSkillIds: SkillId[] | undefined
     let messageContent: string
@@ -656,6 +668,7 @@ export function ChatPanel() {
   const handleEditUserMessage = useCallback(
     (messageId: string, newContent: string) => {
       if (!activeConversationId) return
+      if (refuseNoProvider()) return
       const target = forkTargetForEdit(messages, messageId)
       if (!target) return
       // Non-destructive: fork the thread (original preserved), then apply
@@ -678,7 +691,7 @@ export function ChatPanel() {
       chatSendMessage(newHistory, { targetConversationId: fork.id, ...resendAs(newHistory) })
       toast.success("Edited — original kept as a branch")
     },
-    [activeConversationId, messages, forkConversation, updateMessage, chatSendMessage]
+    [activeConversationId, messages, forkConversation, updateMessage, chatSendMessage, refuseNoProvider]
   )
 
   /**
@@ -695,6 +708,7 @@ export function ChatPanel() {
     (text: string, sourceMessageId: string) => {
       const trimmed = text.trim()
       if (!trimmed) return
+      if (refuseNoProvider()) return
       const conv = conversations.find((c) => c.id === activeConversationId)
       if (!conv) return
       const source = conv.messages.findIndex((m) => m.id === sourceMessageId)
@@ -712,12 +726,13 @@ export function ChatPanel() {
       const history = [...conv.messages, userMessage]
       chatSendMessage(history, resendAs(history))
     },
-    [conversations, activeConversationId, addMessage, chatSendMessage],
+    [conversations, activeConversationId, addMessage, chatSendMessage, refuseNoProvider],
   )
 
   const handleRegenerateAssistantMessage = useCallback(
     (messageId: string) => {
       if (!activeConversationId) return
+      if (refuseNoProvider()) return
       const target = forkTargetForRegenerate(messages, messageId)
       if (!target) return
       // Non-destructive: fork at the prompting user message (original
@@ -733,7 +748,7 @@ export function ChatPanel() {
       })
       toast.success("Regenerated — previous kept as a branch")
     },
-    [activeConversationId, messages, forkConversation, chatSendMessage]
+    [activeConversationId, messages, forkConversation, chatSendMessage, refuseNoProvider]
   )
 
   const handleForkFromMessage = useCallback(
@@ -749,6 +764,7 @@ export function ChatPanel() {
 
   const handleRetryErrorMessage = useCallback(
     (messageId: string, modelOverride?: string) => {
+      if (refuseNoProvider()) return
       const conv = conversations.find((c) => c.id === activeConversationId)
       if (!conv) return
       const idx = conv.messages.findIndex((m) => m.id === messageId)
@@ -761,7 +777,7 @@ export function ChatPanel() {
         modelOverride || as.asTask ? { ...(modelOverride ? { modelOverride } : {}), ...as } : undefined
       )
     },
-    [conversations, activeConversationId, deleteMessage, chatSendMessage]
+    [conversations, activeConversationId, deleteMessage, chatSendMessage, refuseNoProvider]
   )
 
   // Picker may be opened from the bottom select OR from an error bubble's
@@ -872,6 +888,7 @@ export function ChatPanel() {
         <ChatHeader
           chatModel={chatModel}
           modelBackend={pickerBackend.kind}
+          noModelProvider={noProvider}
           onModelPick={handleModelPick}
           modelPickerOpen={modelPickerOpen}
           onModelPickerOpenChange={(open) => {
@@ -1004,6 +1021,16 @@ export function ChatPanel() {
             className="hidden"
             onChange={(e) => handleFileSelected(e.target.files)}
           />
+          {noProvider && (
+            <div
+              role="alert"
+              data-testid="no-model-provider"
+              className="max-w-3xl mx-auto mb-2 w-full pointer-events-auto rounded-lg border border-[var(--destructive)]/40 bg-[var(--card)] px-3 py-2 text-xs text-[var(--foreground)]"
+            >
+              <p className="font-medium">{NO_MODEL_PROVIDER_MESSAGE}</p>
+              <p className="mt-0.5 text-[var(--muted-foreground)]">{NO_MODEL_PROVIDER_HINT}</p>
+            </div>
+          )}
           {/* Inline task pointer — until a task launched from this
               conversation ends, show a one-line status that opens the
               Tasks panel. The full live surface lives in the panel.

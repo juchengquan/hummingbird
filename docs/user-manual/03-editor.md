@@ -26,8 +26,12 @@ open an existing one.
 - With the **agent-py** or **agent-py (runs)** backend selected, the
   editor's AI menu and ghost-text suggestions run on agent-py too. The
   editor's own settings (the gear at the bottom right) then offer only
-  the models agent-py runs; typing your own AI Gateway key there keeps
-  the editor on the built-in route, which bills that key.
+  the models agent-py runs; on the built-in route they offer the
+  deploy's model catalog.
+- The editor always uses **this deploy's models** and keys. The old
+  "AI Gateway API Key" field in the editor settings is gone (the
+  agent service never takes a personal key); the first time you open
+  the settings afterwards, a one-time note says so.
 
 ## Tips & gotchas
 - Documents are auto-saved. There's no save button by design.

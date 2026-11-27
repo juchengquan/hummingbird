@@ -600,7 +600,11 @@ class InMemoryRunRepository:
             return (r.created_at.isoformat(), r.id)
 
         index = self._index(owner)
-        runs = sorted((self._view(row, index) for row in index.rows), key=key, reverse=True)
+        runs = sorted(
+            (self._view(row, index) for row in index.rows if self._listed(row.record.id)),
+            key=key,
+            reverse=True,
+        )
         runs = [r for r in runs if matches(r) and (after is None or key(r) < after)]
         page = runs[:page_size]
         token = None
@@ -657,6 +661,10 @@ class InMemoryRunRepository:
         return self._view(row)
 
     # -- task fields (0047's functions, over the rows) --
+
+    def _listed(self, run_id: str) -> bool:
+        """Whether `list_runs` may return `run_id` (a subclass hides some)."""
+        return True
 
     def _index(self, owner: RunOwner) -> _TaskIndex:
         """The owner's rows by previous run, parent and root (a run's

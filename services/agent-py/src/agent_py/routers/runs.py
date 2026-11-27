@@ -26,6 +26,14 @@ an anonymous run, its `X-Run-Token`:
 * `listRuns`, `answerRun` and `markRunDelivered` take a bearer token
   only.
 
+**Ephemeral runs** (`forwardedProps.ephemeral`, contract 0.8.0, Q136 —
+the Explain popover): interactive only and never a resume (`400
+invalid_request`); kept in the in-memory store and log even for a
+signed-in caller (`RunServices.stores_for` / `stores_of_run`), so never a
+`tasks` row and never listed, while the bearer still reads and cancels
+them and the signed-in start limit applies. The harness offers them no
+tools (`native_harness`).
+
 **Idempotent `runId`.** The client mints it. A repeat from the run's
 owner with the same `threadId` and `mode` replays (interactive: the
 stream from cursor `0`; background: `202` with the current status)
@@ -213,7 +221,8 @@ def run_owner(
 async def _owned_run(services: RunServices, owner: RunOwner, run_id: str) -> RunRecord:
     if not _is_uuid(run_id):
         _not_found()
-    run = await services.repo_for(owner).get(owner, run_id)
+    repo, _log = services.stores_of_run(owner, run_id)
+    run = await repo.get(owner, run_id)
     if run is None:
         _not_found()
     return run
@@ -225,14 +234,15 @@ async def _run_json(services: RunServices, owner: RunOwner, run: RunRecord) -> d
     bug 9); otherwise the event log answers."""
     last_seq = run.last_seq
     if last_seq is None:
-        last_seq = await services.log_for(owner).last_seq(run.id)
+        _repo, log = services.stores_of_run(owner, run.id)
+        last_seq = await log.last_seq(run.id)
     return run_to_contract(run, last_seq=last_seq)
 
 
 def _event_stream(
     services: RunServices, owner: RunOwner, run: RunRecord, after: RunCursor | None
 ) -> AsyncIterator[str]:
-    repo = services.repo_for(owner)
+    repo, log = services.stores_of_run(owner, run.id)
 
     async def load_run() -> RunRecord | None:
         return await repo.get(owner, run.id)
@@ -240,7 +250,7 @@ def _event_stream(
     return services.stream(
         run_id=run.id,
         after=after,
-        log=services.log_for(owner),
+        log=log,
         encoder=services.encoder_factory(run),
         load_run=load_run,
     )
@@ -327,6 +337,13 @@ async def start_run(
     # background run refuses them rather than silently dropping them.
     if mode == "background" and fp.attachments:
         _raise(400, "invalid_request", "Background runs do not take attachments.")
+    # Q136: an ephemeral run (Explain) lives in memory, so it is
+    # interactive and never a resume (it has no tools to pause on).
+    ephemeral = fp.ephemeral is True
+    if ephemeral and mode == "background":
+        _raise(400, "invalid_request", "An ephemeral run is interactive only.")
+    if ephemeral and (fp.previousRunId is not None or body.resume):
+        _raise(400, "invalid_request", "An ephemeral run cannot resume another run.")
     # Q93: `runCode` mounts a background run's cloud files by id only.
     if mode == "background" and any(f.dataBase64 is not None for f in fp.sandboxFiles or ()):
         _raise(
@@ -382,7 +399,7 @@ async def start_run(
     existing: RunRecord | None = None
     if caller.user_id is not None:
         owner = RunOwner.user(caller.user_id)
-        existing = await services.repo_for(owner).get(owner, body.runId)
+        existing = await services.stores_for(owner, ephemeral=ephemeral)[0].get(owner, body.runId)
     else:
         if caller.presented_token is not None:
             presented = RunOwner.anonymous(caller.presented_token)
@@ -395,8 +412,7 @@ async def start_run(
         if token is None:
             token = mint_run_token()
             owner = RunOwner.anonymous(token)
-    repo = services.repo_for(owner)
-    log = services.log_for(owner)
+    repo, log = services.stores_for(owner, ephemeral=ephemeral)
 
     retry = existing is not None and existing.thread_id == body.threadId and existing.mode == mode
     if not retry and (existing is not None or await _id_taken(services, body.runId)):
@@ -488,6 +504,8 @@ async def start_run(
     if created:
         if anonymous:
             services.memory_repo.tag_client(run.id, client_key)
+        if ephemeral:
+            services.memory_repo.mark_unlisted(run.id)
         services.driver.start(
             run=run,
             run_input=build_run_input(
@@ -665,7 +683,8 @@ async def cancel_run(
     services: Annotated[RunServices, Depends(get_run_services)],
 ) -> JSONResponse:
     await _owned_run(services, owner, run_id)
-    run = await services.repo_for(owner).cancel(owner, run_id)
+    repo, _log = services.stores_of_run(owner, run_id)
+    run = await repo.cancel(owner, run_id)
     if run is None:
         _not_found()
     if run.internal_status == "cancelled":

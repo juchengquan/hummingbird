@@ -22,6 +22,7 @@ them yet — wave 5b does:
 | `localFilesOnly` | `local_files_only` | C |
 | `localMcpServers[]` | `local_mcp_servers` (`LocalMcpServer`) | D |
 | `sandboxFiles[]` (0.5.2) | `sandbox_files` (`MountManifestEntry`) | wave 8: `runCode`'s mounts |
+| `ephemeral` (0.8.0) | `ephemeral` | wave 12: memory-only, no tools (Q135/Q136) |
 
 Local MCP **credentials** are not options: they ride in `state`
 (`runs.credentials`).
@@ -178,6 +179,12 @@ class RunOptions:
     sandbox_files: tuple[MountManifestEntry, ...] = ()
     """The files `runCode` may mount (wave 8): cloud ones by id, a
     signed-out caller's with their bytes."""
+    ephemeral: bool = False
+    """Contract 0.8.0 (Q135/Q136, the Explain popover): the run is kept in
+    the in-memory store and log only — never a `tasks` row, even signed in
+    (`routers/runs.py`) — and offers the model no tools at all: not the
+    skills, MCP or client tools it was sent, nor `askUser` / `renderUI`
+    (`native_harness`), so it never runs a tool and never pauses."""
 
 
 def _sandbox_file(raw: object) -> MountManifestEntry | None:
@@ -371,6 +378,7 @@ def parse_run_options(options: Mapping[str, object]) -> RunOptions:
             for f in (_sandbox_file(r) for r in _list(options.get("sandboxFiles")))
             if f is not None
         ),
+        ephemeral=_flag(options.get("ephemeral")),
     )
 
 

@@ -53,6 +53,8 @@ interface RunBodyOptions {
   previousRunId?: string
   model?: string
   text?: string
+  /** 0.8.0: a memory-only, tool-less run (Q135/Q136). */
+  ephemeral?: boolean
 }
 
 function runBody(o: RunBodyOptions = {}): Json {
@@ -61,6 +63,7 @@ function runBody(o: RunBodyOptions = {}): Json {
   if (o.conformance) forwardedProps.conformance = o.conformance
   if (o.previousRunId) forwardedProps.previousRunId = o.previousRunId
   if (o.model) forwardedProps.model = o.model
+  if (o.ephemeral) forwardedProps.ephemeral = true
   if (o.mode === "background") Object.assign(forwardedProps, { goal: "Conformance probe", maxSteps: 1 })
   const body: Json = {
     threadId: o.threadId ?? randomUUID(),
@@ -273,6 +276,7 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
         { referenceImage: { url: "" } },
         { localMcpServers: [{ id: "s1" }] },
         { localMcpServers: [{ id: "s1", name: "S", url: "https://mcp.example", transport: "stdio" }] },
+        { ephemeral: "maybe" },
       ]
       for (const props of bad) {
         const body = runBody()
@@ -283,6 +287,31 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
         expect(code(ex)).toBe("invalid_request")
         expect(ex.headers.get("x-run-token")).toBeNull()
       }
+    })
+
+    test("an ephemeral resume → 400 invalid_request (0.8.0), and no run exists", async () => {
+      for (const token of env.authToken ? [undefined, env.authToken] : [undefined]) {
+        const body = runBody({
+          ephemeral: true,
+          previousRunId: randomUUID(),
+          resume: [{ interruptId: "x", status: "cancelled" }],
+        })
+        const ex = await call(op("startRun"), { body, token })
+        expect(ex.status).toBe(400)
+        contract.assertConforms("startRun", ex)
+        expect(code(ex)).toBe("invalid_request")
+        expect(ex.headers.get("x-run-token")).toBeNull()
+      }
+    })
+
+    test.skipIf(!env.authToken)("an ephemeral background start → 400 invalid_request (0.8.0)", async () => {
+      const body = runBody({ ephemeral: true, mode: "background", threadId: env.threadId ?? undefined })
+      const ex = await call(op("startRun"), { body, token: env.authToken })
+      expect(ex.status).toBe(400)
+      contract.assertConforms("startRun", ex)
+      expect(code(ex)).toBe("invalid_request")
+      const run = await call(op("getRun"), { token: env.authToken, pathParams: { runId: body.runId as string } })
+      expect(run.status).toBe(404)
     })
 
     test("anonymous background start → 401 auth_required", async () => {
@@ -392,6 +421,47 @@ describe.skipIf(!env.baseUrl)(`conformance: runs @ ${env.baseUrl}`, () => {
         const run = await getRun(runId, { runToken: ex.headers.get("x-run-token")! })
         expect(run.status).toBe("succeeded")
         expect(JSON.stringify(run)).not.toContain("conformance-secret")
+      },
+      TIMEOUT,
+    )
+
+    test(
+      "ephemeral run (0.8.0): never pauses — steered to interrupt it still succeeds",
+      async () => {
+        const { ex, runId, threadId } = await startInteractive({ ephemeral: true, conformance: { outcome: "interrupt" } })
+        const { events } = assertRunStream(ex, { runId, threadId })
+        expect(events.at(-1)!.type).toBe("RUN_FINISHED")
+        expect((events.at(-1) as Json).outcome).not.toMatchObject({ type: "interrupt" })
+        const run = await getRun(runId, { runToken: ex.headers.get("x-run-token")! })
+        expect(run.status).toBe("succeeded")
+      },
+      TIMEOUT,
+    )
+
+    test.skipIf(!env.authToken)(
+      "signed-in ephemeral run (0.8.0): the bearer reads and cancels it; never listed; another user's 404",
+      async () => {
+        const { ex, runId, threadId } = await startInteractive({ token: env.authToken, ephemeral: true })
+        assertRunStream(ex, { runId, threadId })
+        expect(ex.headers.get("x-run-token")).toBeNull()
+        const run = await getRun(runId, { token: env.authToken })
+        expect(run).toMatchObject({ id: runId, threadId, mode: "interactive", status: "succeeded" })
+        const replay = await callSse(op("streamRunEvents"), {
+          token: env.authToken,
+          pathParams: { runId },
+          query: { after: "0" },
+        })
+        assertRunStream(replay, { runId, threadId })
+        const cancelled = await call(op("cancelRun"), { token: env.authToken, pathParams: { runId } })
+        expect(cancelled.status).toBe(200)
+        contract.assertConforms("cancelRun", cancelled)
+        const listed = await call(op("listRuns"), { token: env.authToken, query: { threadId } })
+        expect(listed.status).toBe(200)
+        expect((listed.body as { runs: Json[] }).runs).toEqual([])
+        if (env.authToken2) {
+          const foreign = await call(op("getRun"), { token: env.authToken2, pathParams: { runId } })
+          expect(foreign.status).toBe(404)
+        }
       },
       TIMEOUT,
     )
