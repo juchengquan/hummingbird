@@ -37,6 +37,15 @@ const nextConfig: NextConfig = {
   // defense-in-depth against Image Optimization advisories (SSRF, AVIF/SVG
   // RCE) — there's no reason to expose that attack surface.
   images: { unoptimized: true },
+  // The browser never runs the Vercel AI Gateway provider, but `ai` (the
+  // editor's chat hook) imports it at its top level, and it names the
+  // gateway's key variable — which the bundle audit forbids (Q143). Browser
+  // builds get a stub with the same exports (lib/client/stubs/ai-sdk-gateway.ts).
+  turbopack: {
+    resolveAlias: {
+      "@ai-sdk/gateway": { browser: "./lib/client/stubs/ai-sdk-gateway.ts" },
+    },
+  },
   // Allow the dev server to be hit from LAN IPs (e.g. for testing on a
   // phone on the same Wi-Fi). Without this, Next.js 16+ warns about
   // cross-origin requests to `/_next/*` and will eventually block them.
