@@ -23,8 +23,25 @@ const PUBLIC_V1_OPERATIONS = new Set(["getShare", "reportCspViolation", "listMod
  *  - startRun: anonymous callers may start interactive runs (Q2/Q16/Q20);
  *    the run's `X-Run-Token` is their credential afterwards.
  *  - editorAiCommand / editorAiComplete: the editor's AI, as on Next
- *    (Q105; `REQUIRE_AUTH_FOR_AI` refuses anonymous callers). */
-const ANONYMOUS_ALLOWED_V1_OPERATIONS = new Set(["startRun", "editorAiCommand", "editorAiComplete"])
+ *    (Q105; `REQUIRE_AUTH_FOR_AI` refuses anonymous callers).
+ *  - extractFile, summarize, extractTable, fetchUrl, mcpProxy, embedFile:
+ *    the non-chat calls a signed-out browser makes (0.8.0, Q123/Q134),
+ *    served under per-IP limits; `REQUIRE_AUTH_FOR_AI` refuses anonymous
+ *    callers (extractFile: serves them without its vision pass). mcpProxy
+ *    only on the local-credentials path; embedFile indexes nothing for
+ *    them. The account-bound operations (share, schedules, memory, the
+ *    storage links, upsertMcpServer) stay bearer-only. */
+const ANONYMOUS_ALLOWED_V1_OPERATIONS = new Set([
+  "startRun",
+  "editorAiCommand",
+  "editorAiComplete",
+  "extractFile",
+  "summarize",
+  "extractTable",
+  "fetchUrl",
+  "mcpProxy",
+  "embedFile",
+])
 
 /** The operations an anonymous run's `runToken` authorises — only the
  *  ones addressing that one run. */
@@ -108,7 +125,10 @@ describe("contract: openapi.yaml", () => {
     const withBody = contract.all().filter((op) => op.raw.requestBody)
     expect(Object.keys(validRequestBodies).sort()).toEqual(withBody.map((o) => o.operationId).sort())
     for (const op of withBody) {
-      const schema = op.raw.requestBody?.content?.["application/json"]?.schema
+      const content = op.raw.requestBody?.content
+      // JSON bodies, and multipart ones (extractFile: the fixture is its
+      // form fields).
+      const schema = (content?.["application/json"] ?? content?.["multipart/form-data"])?.schema
       expect(schema).toBeDefined()
       const validate = ajv.compile(schema!)
       const ok = validate(validRequestBodies[op.operationId])
