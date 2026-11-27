@@ -218,6 +218,7 @@ it would not replace hand-written cases for auth and lifecycle.)
 | `CONTRACT_AUTH_TOKEN_2` | Optional JWT of a **second** user: foreign runs answer the same 404, are never listed, and a reused `runId` gets the same 409 |
 | `CONTRACT_THREAD_ID` | Optional id of a synced conversation `CONTRACT_AUTH_TOKEN`'s user owns — the background `startRun` → 202 case (the contract has no operation that creates one) |
 | `CONTRACT_COMPACTED_RUN_ID` | Optional id of a compacted run of that user — the `gap` + `MESSAGES_SNAPSHOT` replay case (compaction runs a retention window after a run ends, so the suite cannot produce one) |
+| `CONTRACT_REQUIRE_AUTH_FOR_AI` | `1` when the backend runs with `REQUIRE_AUTH_FOR_AI` on: `anonymous.test.ts` then expects `401 auth_required` where it would be served (`extractFile` is still served) |
 
 Cases today:
 
@@ -243,6 +244,13 @@ Cases today:
   with an empty body; malformed JSON → 400 `invalid_request`, an
   unsupported media type → 415 `unsupported_content_type`, both with the
   standard `ApiError` body.
+- `anonymous.test.ts` — the signed-out non-chat calls (0.8.0, Q123/Q134):
+  `extractFile`, `summarize`, `extractTable`, `fetchUrl`, `mcpProxy` and
+  `embedFile` with no token are served, each on a probe that spends
+  nothing (a text file; an unknown model → 400 `unknown_model`; an
+  unparseable URL → 400 `invalid_url`; a link-local MCP endpoint → 400
+  `invalid_server_url`; embed → 200 `skipped`). A multipart body
+  (`extractFile`) is sent as form fields from its `fixtures.ts` entry.
 - `runs.test.ts` — the runs operations beyond the generic cases; see
   "The runs cases" below. `harness.ts` has the SSE reader they use
   (`callSse`, `parseSse`): `assertConforms` checks JSON bodies only, so
@@ -300,7 +308,9 @@ without / with a bad credential — `startRun`'s fixture is a
   `dataUrl` is not an image / PDF / text file (0.4.1); a malformed 0.4.0 run
   option (`research`, `allowedMcpServerIds`, an `attachments[]` entry of
   each kind, `referenceImage`, `localMcpServers[]`) → 422
-  `invalid_request`; anonymous background start → 401 `auth_required`.
+  `invalid_request`; anonymous background start → 401 `auth_required`;
+  an `ephemeral` resume (0.8.0) → 400 `invalid_request`, and with a token
+  an `ephemeral` background start too; `ephemeral: "maybe"` → 422.
 - **credentials**: `getRun` / `streamRunEvents` / `cancelRun` with no
   credential or a malformed `X-Run-Token` → 401; `listRuns` with only a
   run token → 401; an unknown run → one identical 404 body from all three
@@ -314,6 +324,11 @@ without / with a bad credential — `startRun`'s fixture is a
   `goal` / `maxSteps` / `step` are null. Every 0.4.0 run option is
   accepted, with local MCP credentials in `state`, and the credential
   appears in neither the stream nor the run resource.
+- **ephemeral runs** (stub, 0.8.0, Q135/Q136): steered to `interrupt`,
+  an `ephemeral` run still finishes succeeded (it has no tools to pause
+  on); with a token, no `X-Run-Token`, the bearer reads, replays and
+  cancels it, `listRuns` on its thread is empty, and a second user gets
+  404.
 - **idempotency** (stub): the same body again (anonymous: with its run
   token) replays the identical stream; a taken `runId` — anonymous
   without its token, on another thread, from a signed-in user, the

@@ -63,6 +63,9 @@ export interface UseTaskRunResult {
   start: (body: TaskRequestInput) => Promise<TaskEnqueueResult | null>
   /** Watch an existing run from the start of its log. */
   resume: (runId: string) => void
+  /** Stop watching, settling nothing: another path follows the run now
+   *  (the runs list, Q126). */
+  stop: () => void
   /** Cancel the run (a child: skip it). */
   cancel: () => Promise<void>
   /** Re-read the run now. */
@@ -276,6 +279,13 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
     [switchTo, watch]
   )
 
+  const stop = useCallback(() => {
+    if (runIdRef.current === null) return
+    cancelledRef.current = false
+    switchTo(null)
+    setIsStarting(false)
+  }, [switchTo])
+
   const refresh = useCallback(() => {
     if (runIdRef.current && !endedRef.current) watch(runIdRef.current)
   }, [watch])
@@ -316,6 +326,7 @@ export function useTaskRun(options?: UseTaskRunOptions): UseTaskRunResult {
     error: actionError ?? watchError,
     start,
     resume,
+    stop,
     cancel,
     refresh,
   }

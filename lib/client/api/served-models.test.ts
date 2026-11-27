@@ -5,7 +5,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test"
 
-import { servedModels, servedModelsSettled, setServedModels } from "@/shared/served-models"
+import { noModelProvider, servedModels, servedModelsSettled, setServedModels } from "@/shared/served-models"
 
 import { loadServedModels, resetServedModelsLoad } from "./served-models"
 
@@ -48,6 +48,23 @@ describe("loadServedModels", () => {
     await loadServedModels("https://api.example", f.fn)
     expect(servedModelsSettled()).toBe(true)
     expect(servedModels()).toBeNull()
+  })
+
+  test("an empty list read (Q131): no model provider on this deploy; the built-in list still stands for the rules", async () => {
+    const f = fetcher([Response.json({ models: [], defaultModel: "anthropic/claude-haiku-4.5", auto: false })])
+    expect(noModelProvider()).toBe(false)
+    await loadServedModels("https://api.example", f.fn)
+    expect(noModelProvider()).toBe(true)
+    expect(servedModelsSettled()).toBe(true)
+    expect(servedModels()).toBeNull()
+  })
+
+  test("a list that could not be read is not 'no provider'", async () => {
+    const f = fetcher([new Error("offline"), new Response("nope", { status: 503 }), Response.json({ models: "x" })])
+    for (let i = 0; i < 3; i++) {
+      await loadServedModels("https://api.example", f.fn)
+      expect(noModelProvider()).toBe(false)
+    }
   })
 
   test("a failed read keeps the built-in list and is tried again", async () => {

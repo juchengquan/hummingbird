@@ -28,6 +28,10 @@
  *                             background `startRun` → 202 case).
  *   CONTRACT_COMPACTED_RUN_ID optional id of a compacted run of that user
  *                             (the gap + MESSAGES_SNAPSHOT replay case).
+ *   CONTRACT_REQUIRE_AUTH_FOR_AI "1" when the backend runs with
+ *                             REQUIRE_AUTH_FOR_AI on: the anonymous cases
+ *                             (anonymous.test.ts) then expect
+ *                             `401 auth_required` where they would be served.
  *
  * Operations the spec marks `x-planned` (specified, implemented in a
  * later wave) are skipped automatically — see `Operation.planned`. A
@@ -61,6 +65,7 @@ export const env = {
   authToken2: process.env.CONTRACT_AUTH_TOKEN_2 || null,
   threadId: process.env.CONTRACT_THREAD_ID || null,
   compactedRunId: process.env.CONTRACT_COMPACTED_RUN_ID || null,
+  requireAuthForAi: process.env.CONTRACT_REQUIRE_AUTH_FOR_AI === "1",
 }
 
 export type HttpMethod = "get" | "post" | "put" | "patch" | "delete"
@@ -199,14 +204,34 @@ interface RequestOptions {
   query?: Query
 }
 
+/** A multipart body (0.8.0, `extractFile`): each fixture field becomes a
+ *  form field, and a field the schema marks as file content
+ *  (`contentMediaType`) a small text file. */
+function formBody(schema: JsonSchema, fields: Record<string, unknown>): FormData {
+  const props = (schema.properties ?? {}) as Record<string, JsonSchema>
+  const form = new FormData()
+  for (const [key, value] of Object.entries(fields)) {
+    if (props[key]?.contentMediaType !== undefined) {
+      form.append(key, new File([String(value)], "conformance.txt", { type: "text/plain" }))
+    } else form.append(key, String(value))
+  }
+  return form
+}
+
 function buildRequest(
-  op: Pick<Operation, "method" | "path">,
+  op: Pick<Operation, "method" | "path"> & { raw?: OperationObject },
   opts: RequestOptions,
   accept: string,
 ): [string, RequestInit] {
   if (!env.baseUrl) throw new ConformanceError("CONTRACT_BASE_URL is not set")
   const headers: Record<string, string> = { accept, ...opts.headers }
-  if (opts.body !== undefined) headers["content-type"] = "application/json"
+  const multipart = op.raw?.requestBody?.content?.["multipart/form-data"]?.schema
+  const form =
+    multipart && opts.body !== undefined && typeof opts.body === "object"
+      ? formBody(multipart, opts.body as Record<string, unknown>)
+      : null
+  // A FormData body sets its own multipart content type (with the boundary).
+  if (opts.body !== undefined && !form) headers["content-type"] = "application/json"
   if (opts.token) headers.authorization = `Bearer ${opts.token}`
   const path = op.path.replace(/\{(\w+)\}/g, (_, name: string) => {
     const value = opts.pathParams?.[name] ?? pathParams[name]
@@ -223,7 +248,7 @@ function buildRequest(
     {
       method: op.method.toUpperCase(),
       headers,
-      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      body: form ?? (opts.body === undefined ? undefined : JSON.stringify(opts.body)),
     },
   ]
 }
@@ -304,7 +329,7 @@ export class Contract {
 
 /** One HTTP exchange with the backend under test. */
 export async function call(
-  op: Pick<Operation, "method" | "path">,
+  op: Pick<Operation, "method" | "path"> & { raw?: OperationObject },
   opts: RequestOptions = {},
 ): Promise<Exchange> {
   const [url, init] = buildRequest(op, opts, "application/json")
@@ -361,7 +386,7 @@ export function parseSse(text: string): { messages: SseMessage[]; rest: string }
  * mid-stream). A non-SSE answer (an error) is read like `call` does.
  */
 export async function callSse(
-  op: Pick<Operation, "method" | "path">,
+  op: Pick<Operation, "method" | "path"> & { raw?: OperationObject },
   opts: RequestOptions & {
     /** Called per message as it arrives, with the response headers. */
     onMessage?: (message: SseMessage, index: number, headers: Headers) => void | Promise<void>

@@ -24,6 +24,13 @@ or click the **+** next to the **Chats** group to start a new one.
   actions.
 - Switch the model on the fly with `/model <name>`. With no name it
   opens the picker.
+- Select text in a message and pick **Explain** (or `Ctrl+E`) for a
+  short explanation in a popover. It uses the conversation so far, the
+  chat model and the workspace prompt. On the agent-py backends it is a
+  throwaway run: it uses no tools (no web search, no questions), it is
+  not saved to the conversation or your tasks, and closing the popover
+  stops it. To keep an explanation, **Pin** it
+  ([Notes & bookmarks](11-notes-and-bookmarks.md)).
 
 ## Tips & gotchas
 - Streaming tokens render as they arrive - long replies can be

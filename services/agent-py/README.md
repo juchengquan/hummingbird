@@ -269,6 +269,19 @@ refuses anonymous starts with `401 auth_required`. Per-IP limits:
 `RUNS_ANONYMOUS_DAILY_BUDGET` and `RUNS_ANONYMOUS_MAX_CONCURRENT` →
 `429 rate_limit`.
 
+**Ephemeral runs (wave 12, Q135/Q136, contract 0.8.0).**
+`forwardedProps.ephemeral: true` — the Explain-selection popover's runs,
+on a temporary thread no conversation owns. Kept in the in-memory store
+and log like an anonymous run, even signed in with a database (so never a
+`tasks` row, never in `GET /v1/runs`, dropped `RUNS_MEMORY_TTL_SECONDS`
+after it ends), while staying the user's: their bearer reads, rejoins and
+cancels it (`RunServices.stores_of_run`) and `RUNS_RATE_PER_MINUTE`
+counts it. The native harness offers it **no tools** — it ignores the
+skills, MCP servers, local MCP servers and AG-UI `tools` it was sent and
+drops `askUser` / `renderUI` — and asks for no suggestions, so it never
+runs a tool or pauses. With `mode: background`, `previousRunId` or
+`resume[]` it is `400 invalid_request`.
+
 **What runs wire to** (`runs/wiring.py`, one instance of each per
 process). Event logs: `runs/event_log_pg.py` over `task_events` for
 signed-in runs with a database, `runs/event_log_memory.py` (TTL'd,
@@ -419,6 +432,43 @@ After changing a TS prompt, regenerate the fixtures and port the change:
 `EDITOR_AI_PARITY_WRITE=1 bun test components/editor/ai/editor-ai.parity.test.ts`
 and `EDITOR_AI_STREAMS_WRITE=1 bun test app/api/ai/command/stream.fixture.test.ts`.
 
+## Signed-out calls (wave 12, Q123/Q134)
+
+The non-chat endpoints a signed-out browser uses take an optional caller
+(`caller.py`, `optional_caller`): a bearer is verified as everywhere (a bad
+or non-Bearer one is `401 auth`, never anonymous); without one the caller
+is anonymous, keyed by client IP (`rate_limit_key`, as anonymous runs), and
+refused `401 auth_required` under `REQUIRE_AUTH_FOR_AI`. Anonymous callers
+get the Next routes' per-IP limits (`429 rate_limit` + `Retry-After`);
+signed-in limits are each route's own, unchanged.
+
+| Endpoint | Anonymous | Under `REQUIRE_AUTH_FOR_AI` |
+|---|---|---|
+| `POST /v1/url/fetch` | 30 / min per IP | refused |
+| `POST /v1/summarize` | no rate limit (the Next route has none); the response cache, scoped per caller (user, else a hash of the IP) | refused |
+| `POST /v1/extract` | 60 / min per IP; the vision pass 10 / min per IP (every caller) | **served**, without the vision pass |
+| `POST /v1/extract-table` | no rate limit (as the Next route) | refused |
+| `POST /v1/mcp/{id}/{action}` | **only on a deploy without accounts** (no token can be verified) — elsewhere `401 auth_required`, as Next's route: never an anonymous open relay. 120 / min per IP; local credentials (`X-MCP-Credentials`) only — never a cloud-mode lookup | refused |
+| `POST /v1/embed` | 30 / min per IP; answers `200 skipped / not_signed_in` (nothing to index without a user) | refused |
+
+Still signed-in only (account-bound): `/v1/share` (create / revoke),
+`/v1/tasks/schedules*`, `/v1/memory/extract`, `/v1/images/refresh-url`,
+`/v1/files/refresh-url`, `/v1/mcp/server`, background runs.
+
+**Caches** (`response_cache.py`, a port of `lib/server/cache/`): summaries
+by exact key plus an embedding near match (`file`, title-less
+`project-breakdown`; needs an embedder), scoped per caller; extractions by
+file content and effective vision mode. In memory: 1 h, 500 entries,
+~64 MB.
+
+**The PDF vision pass** (`extraction_vision.py`, a port of
+`lib/server/extraction/`): a low-yield or table-dense PDF is rendered
+(pypdfium2, ≤ 30 pages) and each page transcribed to markdown by
+`VISION_MODEL` (or the first `supportsVision` catalog model served here),
+merged into `text` / `fullText`. The `vision` form field forces it on /
+off. Best effort: no model, the budget spent or any failure → text only,
+and that degraded result is not cached.
+
 ## Models and providers (wave 10)
 
 Every `config/models.json` model runs here when a provider for it is
@@ -440,6 +490,11 @@ Anthropic key. `GET /v1/models` lists what runs (public).
 | AI Gateway | `AI_GATEWAY_API_KEY` | **no** — no key; recorded fixtures only. The Gateway documents `/v1/messages` with Anthropic models; whether it takes the others there is unverified |
 | OpenRouter | `OPENROUTER_API_KEY` | **no** — and whether it honours the `models` fallback list is unverified |
 | Ollama | `OLLAMA_BASE_URL` (+ `OLLAMA_API_KEY`) | on the real stack's scripted server only |
+
+With **no** provider configured `GET /v1/models` lists nothing, and the
+browser then says "No model provider is configured on this deploy" in the
+model picker and the chat and refuses to send (wave 12, Q131) — set one of
+the variables above.
 
 `scripts/probe_providers.py` makes one real call per model with a key in
 the repo's `.env` (stream, a tool call, thinking where flagged, an image
@@ -466,9 +521,10 @@ for the thinking in ghost text).
 | `JOB_LEASE_SECONDS` | No | Default `120`. Lease a claim holds on a `task_jobs` row (`lease_expires_at`, migration 0032). A job whose worker died is reclaimed once it lapses (or reaped as failed, with its task, once `max_attempts` is spent). |
 | `JOB_HEARTBEAT_SECONDS` | No | Default `30` (clamped to a third of the lease). How often an executing job extends its lease. |
 | `SHUTDOWN_GRACE_SECONDS` | No | Default `8`. On shutdown the in-flight job may finish within this window; after it, the job is cancelled and handed back (lease expired on the spot) for the next worker. Keep it under the container stop timeout (Docker's default is 10 s). The stop starts on SIGTERM itself (the server's signal handler is chained), not after uvicorn has drained open SSE streams; the image also runs uvicorn with `--timeout-graceful-shutdown 8` so the lifespan (which closes the DB pool) isn't held past the stop timeout by a chat stream. `/readyz` reports `poller_alive` / `poller_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
-| `SCHEDULER_ENABLED` | No | Default `false`. Run the schedule dispatcher loop (`scheduler.py`) in this process: it fires due `task_schedules` rows exactly like the Vercel Cron's `/api/tasks/jobs/tick`. Needs `SUPABASE_DB_URL`. Safe alongside that cron and on several replicas — see [Scheduled tasks](#scheduled-tasks-replacing-the-vercel-cron). `/readyz` reports `scheduler_alive` / `scheduler_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
+| `SCHEDULER_ENABLED` | No | Unset: follows the worker (Q130) — on where the worker runs tasks (`WORKER_DRY_RUN=false`) with `SUPABASE_DB_URL` set, off otherwise. An explicit `true` / `false` wins (`false` keeps it off beside a live worker); empty counts as unset. Runs the schedule dispatcher loop (`scheduler.py`) in this process: it fires due `task_schedules` rows exactly like the Vercel Cron's `/api/tasks/jobs/tick`, which is redundant from wave 12 and deleted in wave 13. Needs `SUPABASE_DB_URL`. Safe alongside that cron and on several replicas — see [Scheduled tasks](#scheduled-tasks-replacing-the-vercel-cron). `/readyz` reports `scheduler_alive` / `scheduler_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
 | `SCHEDULER_INTERVAL_SECONDS` | No | Default `60` (the Vercel Cron's cadence). Seconds between dispatcher ticks. |
-| `REQUIRE_AUTH_FOR_AI` | No | Default off. `true` / `1` (with `SUPABASE_JWT_SECRET` or a JWKS URL set) refuses anonymous runs with `401 auth_required`. Strict values (`true` / `false` / `1` / `0`); anything else fails anonymous starts with 500 — never silently open. Same variable as the Next.js routes. |
+| `VISION_MODEL` | No | The catalog model `/v1/extract`'s PDF vision pass uses when it is flagged `supportsVision` and served here; else the first such model; none → no vision pass. Same variable as the Next.js route. |
+| `REQUIRE_AUTH_FOR_AI` | No | Default off. `true` / `1` (with `SUPABASE_JWT_SECRET` or a JWKS URL set) refuses anonymous runs with `401 auth_required`, and anonymous calls to the signed-out endpoints ([Signed-out calls](#signed-out-calls-wave-12-q123q134); `/v1/extract` is served without its vision pass). Strict values (`true` / `false` / `1` / `0`); anything else fails anonymous starts with 500 — never silently open. Same variable as the Next.js routes. |
 | `RUNS_STUB_HARNESS` | No | Default `false` (runs use the native harness and `ANTHROPIC_API_KEY`; without a key every run fails `unavailable`). `true` runs every run on the model-free stub (`runs/stub_harness.py`, steered by `forwardedProps.conformance`) — for the contract conformance suite only. |
 | `RUNS_LEASE_SECONDS` / `RUNS_HEARTBEAT_SECONDS` | No | Defaults `60` / `5`. An executing interactive run's lease and how often it is extended (also the latency of a cancel served by another replica). |
 | `RUNS_REAPER_INTERVAL_SECONDS` | No | Default `15`. Runs maintenance loop: reap lapsed interactive runs, drop expired in-memory runs and their logs (the Postgres retention sweep runs every 10 min regardless). |
@@ -536,18 +592,21 @@ Vercel Cron that calls `/api/tasks/jobs/tick` every minute
   path writes them one by one, so a failure there can leave a partial
   run).
 
-**Switching from the Vercel Cron.** Both dispatchers can run at the same
-time: the guarded claim lets exactly one of them fire each occurrence
-(tested with concurrent dispatchers against Postgres, including the TS
-dispatcher racing this one).
+**On where the worker runs (Q130).** Since wave 12 the dispatcher is on
+by default in every agent-py whose worker is live (`WORKER_DRY_RUN=false`
+with `SUPABASE_DB_URL`): a deployment that runs tasks fires its schedules
+too, with nothing to set. Look for `lifespan.scheduler.started`, then
+`scheduler.fired` as schedules come due; `/readyz` shows
+`scheduler_alive: true`. `SCHEDULER_ENABLED=false` turns it off (say, to
+keep one dispatching replica of several — not needed for safety).
 
-1. Set `SCHEDULER_ENABLED=true` (with `SUPABASE_DB_URL`) on one or more
-   agent-py instances and deploy. Look for `lifespan.scheduler.started`,
-   then `scheduler.fired` as schedules come due; `/readyz` shows
-   `scheduler_alive: true`.
-2. Remove the `/api/tasks/jobs/tick` entry from `vercel.json`'s `crons`
-   (and, once nothing calls the route, `CRON_SECRET`). Until then the
-   two simply share the work.
+**The Vercel Cron is redundant.** Both dispatchers can run at the same
+time: the guarded claim lets exactly one of them fire each occurrence
+(`tests/test_schedules_pg.py`: concurrent agent-py dispatchers, and the
+cron's own claim racing this one either way round). Until wave 13
+deletes the cron entry in `vercel.json` (and the route and
+`CRON_SECRET` with it), the two simply share the work; removing the
+entry sooner is safe.
 
 ## Crash recovery and side-effecting tools
 

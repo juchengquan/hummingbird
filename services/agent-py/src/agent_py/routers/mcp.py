@@ -1,5 +1,14 @@
 """`/v1/mcp/{server_id}/{action}` — MCP-server proxy with cloud-mode
 credential fallback. Mirrors `app/api/mcp/[serverId]/[action]/route.ts`.
+
+The proxy takes signed-out callers (wave 12, Q123/Q134 —
+`caller.optional_caller`) only where no token can be verified (a deploy
+without accounts): elsewhere they are `401 auth_required`, as on Next
+(`requireSessionWhenSupabaseConfigured`) — never an anonymous open relay.
+An anonymous call takes the local-credentials path only (never a
+cloud-mode lookup), is refused under `REQUIRE_AUTH_FOR_AI`, and is limited
+to Next's 120 calls per IP per minute. `/v1/mcp/server` (cloud mode) stays
+signed-in only.
 """
 
 from __future__ import annotations
@@ -10,7 +19,8 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
-from ..auth import get_current_user
+from ..auth import auth_configured, get_current_user
+from ..caller import AUTH_REQUIRED_MESSAGE, AnonymousWindow, Caller, optional_caller
 from ..db import get_pool, has_pool
 from ..mcp_client import McpEndpoint, McpUrlBlockedError, mcp_outbound_policy
 from ..mcp_client import call_tool as mcp_call_tool
@@ -20,11 +30,23 @@ from ..mcp_credentials import (
     fetch_cloud_server,
     upsert_server_with_credentials,
 )
+from ..settings import Settings, get_settings
 from ..url_validate import ValidationOk, validate_outbound_url
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["mcp"])
+
+#: Next's `mcpProxyLimit` for a caller without an account: 120 per IP.
+ANONYMOUS_PER_MINUTE = 120
+_anonymous_limit = AnonymousWindow(
+    per_minute=ANONYMOUS_PER_MINUTE, message="Too many MCP requests."
+)
+
+
+def reset_limits() -> None:
+    """Forget the anonymous window (tests)."""
+    _anonymous_limit.reset()
 
 
 class McpServerBody(BaseModel):
@@ -207,7 +229,8 @@ async def mcp_proxy(
     server_id: str,
     action: str,
     body: McpProxyBody,
-    claims: Annotated[dict[str, object], Depends(get_current_user)],
+    caller: Annotated[Caller, Depends(optional_caller)],
+    settings: Annotated[Settings, Depends(get_settings)],
     x_mcp_credentials: Annotated[str | None, Header(alias="X-MCP-Credentials")] = None,
 ) -> dict[str, Any]:
     """MCP proxy — Phase 4-4b of PLAN-agent-api. Python mirror of
@@ -234,6 +257,15 @@ async def mcp_proxy(
     proxy surfaces it as 502 — same as TS."""
     if action not in ("discover", "call", "read"):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    # Never an anonymous open relay (Next's `requireSessionWhenSupabaseConfigured`):
+    # where accounts exist the caller must be signed in; only a deploy without
+    # accounts serves anonymous local-mode calls.
+    if caller.anonymous and auth_configured(settings):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "auth_required", "message": AUTH_REQUIRED_MESSAGE},
+        )
+    _anonymous_limit.check(caller)
 
     # Path / body server id mismatch protects against a buggy
     # client accidentally hitting the wrong server config.
@@ -246,21 +278,19 @@ async def mcp_proxy(
     credentials = _decode_mcp_credential_header(x_mcp_credentials)
     server_name = body.server.name
     server_url = body.server.url
-    # Cloud lookup only when the header didn't supply a cred AND
-    # we can resolve a user id from the JWT. When the caller owns a
+    # Cloud lookup only when the header didn't supply a cred AND the
+    # caller is signed in (an anonymous caller has no rows). When the caller owns a
     # cloud-mode row for this id, the row's url/name REPLACE the body's:
     # decrypted cloud credentials must only ever go to the URL the user
     # stored, never to an arbitrary URL in the request body (otherwise
     # any caller could exfiltrate the stored secret to a server they
     # control).
-    if credentials is None and has_pool():
-        user_id = claims.get("sub")
-        if isinstance(user_id, str) and user_id:
-            cloud = await fetch_cloud_server(get_pool(), user_id=user_id, server_id=server_id)
-            if cloud is not None:
-                server_name = cloud.name
-                server_url = cloud.url
-                credentials = cloud.credentials
+    if credentials is None and caller.user_id is not None and has_pool():
+        cloud = await fetch_cloud_server(get_pool(), user_id=caller.user_id, server_id=server_id)
+        if cloud is not None:
+            server_name = cloud.name
+            server_url = cloud.url
+            credentials = cloud.credentials
 
     # SSRF gate on whichever URL we're about to call. The proxy runs
     # server-side, so a body URL like http://169.254.169.254/ would

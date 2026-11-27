@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_AGENT_MODEL = "anthropic/claude-haiku-4.5"
@@ -121,14 +121,28 @@ class Settings(BaseSettings):
         raise ValueError("WORKER_STUB_MODEL must be `true` or `false`")
 
     # --- Schedule dispatcher -----------------------------------------------
-    SCHEDULER_ENABLED: bool = False
+    SCHEDULER_ENABLED: bool | None = None
     """Run the `task_schedules` dispatcher loop (`agent_py.scheduler`) in
     this process: every `SCHEDULER_INTERVAL_SECONDS` it fires due
     schedules exactly like the Vercel Cron's `/api/tasks/jobs/tick`
-    (`dispatchDueSchedules`). Off by default. Safe to run alongside that
-    cron and on several replicas: each occurrence is claimed with a
+    (`dispatchDueSchedules`). Unset (or empty) it follows the worker
+    (Q130): on where the worker runs tasks (`WORKER_DRY_RUN=false`) with
+    `SUPABASE_DB_URL` set, off otherwise; an explicit `true` / `false`
+    wins either way. Always a bool once loaded. Safe to run alongside
+    that cron and on several replicas: each occurrence is claimed with a
     guarded `next_run_at` update, so only one dispatcher fires it. Needs
     `SUPABASE_DB_URL`."""
+
+    @field_validator("SCHEDULER_ENABLED", mode="before")
+    @classmethod
+    def _empty_scheduler_enabled_is_unset(cls, value: object) -> object:
+        return None if value == "" else value
+
+    @model_validator(mode="after")
+    def _scheduler_follows_the_worker(self) -> Settings:
+        if self.SCHEDULER_ENABLED is None:
+            self.SCHEDULER_ENABLED = not self.WORKER_DRY_RUN and bool(self.SUPABASE_DB_URL)
+        return self
 
     SCHEDULER_INTERVAL_SECONDS: float = 60.0
     """Seconds between dispatcher ticks. 60 matches the Vercel Cron's
@@ -432,6 +446,11 @@ class Settings(BaseSettings):
     client IP (e.g. `cf-connecting-ip`, `x-real-ip`, `fly-client-ip`).
     When set and present it wins over `X-Forwarded-For`. Only set this
     if the edge proxy overwrites the header — otherwise it's spoofable."""
+
+    VISION_MODEL: str = ""
+    """The catalog model `/v1/extract`'s PDF vision pass uses, if it is
+    flagged `supportsVision` and served here; else the first such model in
+    catalog order; none → no vision pass. Next's `VISION_MODEL`."""
 
     EXTRACT_MAX_BYTES: int = 5 * 1024 * 1024
     """Upload cap for `/v1/extract`. Matches the Next.js route's

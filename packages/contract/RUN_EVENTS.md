@@ -21,7 +21,7 @@ harness adapter ──emits──▶ internal events ──append──▶ run e
   `TaskEvent` union (`services/agent-py/src/agent_py/events.py`). Every
   harness adapter emits them; nothing outside the backend sees them.
 - **The run event log** stores them, one entry per event, `seq` 1, 2, …
-  per run (`task_events`, or memory for anonymous runs).
+  per run (`task_events`, or memory for anonymous and ephemeral runs, § 8).
 - **The encoder** is stateful per stream and deterministic: the same
   log always encodes to the same AG-UI events, ids included. It is the
   only place AG-UI shapes are built, so a later AG-UI version, or
@@ -658,7 +658,7 @@ error; `status`), and the row (`outcome`: result / error / open
 interrupts). What it loses: step boundaries, sub-agent markers,
 step errors, the timing of deltas.
 
-## 8. Anonymous runs (Q16, Q20)
+## 8. Anonymous and ephemeral runs (Q16, Q20, Q136)
 
 Same events, same encoder, same stream rules. The log lives in the
 backend process's memory (interactive runs execute there anyway, Q28)
@@ -671,6 +671,16 @@ operation on the run answers 404. A process restart loses anonymous
 runs. A backend without a database keeps signed-in interactive runs
 the same way (memory, same TTL); their background runs are `503
 unavailable`.
+
+**Ephemeral runs** (`forwardedProps.ephemeral`, 0.8.0, Q135/Q136 — the
+Explain-selection popover, on a temporary thread no conversation owns)
+live the same way for every caller, signed in or not: in memory, never
+stored with the caller's tasks, never in `listRuns`, 404 once dropped. A
+signed-in caller's bearer still reads, streams and cancels one (no
+`X-Run-Token` is minted for it). Such a run offers the model no tools,
+so it emits no `TOOL_CALL_*` events and never ends with an `interrupt`
+outcome (no § 4), and no follow-up suggestions; it is interactive only
+and never a resume (`400 invalid_request`).
 
 ## 9. Example
 

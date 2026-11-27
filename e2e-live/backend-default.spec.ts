@@ -5,7 +5,7 @@
  * saved on the account (`profiles.chat_backend`) and a second browser takes
  * it on sign-in.
  */
-import { expect, test, type BrowserContext, type Page } from "@playwright/test"
+import { expect, test, type BrowserContext, type Page } from "./guard"
 
 const SUPA = "http://127.0.0.1:54871"
 const { LIVE_ANON: ANON, LIVE_SVC: SVC } = process.env as Record<string, string>
@@ -99,6 +99,10 @@ test("a browser on the old default is moved to runs and told once", async ({ pag
   await expect(page.getByRole("switch", { name: "Switch to the agent-py (runs) chat backend" })).toBeVisible()
 })
 
+test.describe("the account's choice", () => {
+  // The choice it syncs is the Next.js route, so its chat turn reaches Next on purpose.
+  test.use({ nextApi: "allowed" })
+
 test("a signed-in choice follows the account into a second browser", async ({ browser }) => {
   const { id, session } = await signUp()
 
@@ -123,4 +127,5 @@ test("a signed-in choice follows the account into a second browser", async ({ br
   await chat(b, "second browser hello", false)
   expect(seen).toEqual({ runs: 0, next: 1 })
   await second.close()
+})
 })

@@ -25,8 +25,16 @@ only. What is wired:
 | caller                           | runs live in            | event log        |
 |----------------------------------|-------------------------|------------------|
 | signed in, `SUPABASE_DB_URL` set | Postgres (`tasks`, 0041) | Postgres log     |
+| signed in, an ephemeral run      | memory (TTL)            | memory log       |
 | signed in, no database           | memory (TTL)            | memory log       |
 | anonymous                        | memory (TTL)            | memory log       |
+
+An **ephemeral** run (`forwardedProps.ephemeral`, Q136 — the Explain
+popover, whose temporary thread no conversation owns, so a `tasks` row of
+it would never be deleted) is kept in memory like an anonymous run while
+still being the signed-in user's: their bearer reads and cancels it
+(`stores_of_run` finds it there), their start limits apply, it is never
+listed. `stores_for(owner, ephemeral=…)` picks a new run's store.
 
 Without a database, signed-in callers keep interactive runs — chat keeps
 working on a DB-less deployment, as `/v1/chat` does — but they are not
@@ -124,6 +132,23 @@ class RunServices:
         if owner.user_id is not None and self.pg_log is not None:
             return self.pg_log
         return self.memory_log
+
+    def stores_for(
+        self, owner: RunOwner, *, ephemeral: bool = False
+    ) -> tuple[RunRepository, RunEventLog]:
+        """Where a new run of `owner` lives: memory for an ephemeral run
+        (Q136), else `repo_for` / `log_for`."""
+        if ephemeral:
+            return self.memory_repo, self.memory_log
+        return self.repo_for(owner), self.log_for(owner)
+
+    def stores_of_run(self, owner: RunOwner, run_id: str) -> tuple[RunRepository, RunEventLog]:
+        """Where `owner`'s existing run `run_id` lives: a signed-in
+        caller's ephemeral run is in memory; everything else where
+        `repo_for` / `log_for` put it."""
+        if owner.user_id is not None and self.memory_repo.holds(owner, run_id):
+            return self.memory_repo, self.memory_log
+        return self.repo_for(owner), self.log_for(owner)
 
     async def run_id_taken_elsewhere(self, owner: RunOwner, run_id: str) -> bool:
         """Whether `run_id` exists in a store other than the owner's — run

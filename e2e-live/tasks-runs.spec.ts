@@ -4,7 +4,7 @@
  * delivery into the chat once, through real GoTrue, PostgREST, agent-py's
  * worker, the scripted model and the effect-counting MCP server.
  */
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Page } from "./guard"
 
 import { STORE_VERSION } from "../lib/client/hooks/store/migrate"
 

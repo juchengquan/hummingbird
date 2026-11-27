@@ -62,7 +62,20 @@ const AGENT_PY_ENV: Record<string, string> = {
   SUPABASE_JWT_SECRET: "",
   SUPABASE_DB_URL: "",
   REQUIRE_AUTH_FOR_AI: "",
-  ANTHROPIC_API_KEY: "",
+  // One served provider, so `GET /v1/models` lists exactly the built-in
+  // `anthropic/*` models the specs expect (Q131: an *empty* list now means
+  // "no model provider" and blocks sending). The stub harness never calls a
+  // model; the key is a dummy and the base URL a closed loopback port, so
+  // nothing can reach Anthropic. Every other provider is pinned off so a
+  // developer's `.env` can't widen the list.
+  ANTHROPIC_API_KEY: "e2e-stub-not-a-key",
+  ANTHROPIC_BASE_URL: "http://127.0.0.1:9",
+  AI_GATEWAY_API_KEY: "",
+  OPENROUTER_API_KEY: "",
+  MINIMAX_CN_BASE_URL: "",
+  MINIMAX_CN_API_KEY: "",
+  OLLAMA_BASE_URL: "",
+  OLLAMA_API_KEY: "",
   // Rate-limit key = the socket peer (no proxy in front).
   TRUSTED_PROXY_HOPS: "0",
   CLIENT_IP_HEADER: "",

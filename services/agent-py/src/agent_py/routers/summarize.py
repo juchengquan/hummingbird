@@ -1,17 +1,32 @@
 """`/v1/summarize` — discriminated union over file / conversation /
 compress / project-breakdown modes. Mirrors `app/api/summarize/route.ts`.
+
+Signed in or anonymous (wave 12, Q123/Q134 — `caller.optional_caller`):
+an anonymous caller is refused under `REQUIRE_AUTH_FOR_AI`, and gets the
+Next route's budget, which is no rate limit; what the route does have is
+its response cache (`response_cache`), scoped per caller (the user, else
+a hash of the client IP) — exact key, plus a near match on `file` and
+title-less `project-breakdown` requests when an embedder is configured.
 """
 
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from ..auth import get_current_user
+from ..caller import Caller, optional_caller
 from ..chat import ChatMessage, resolve_anthropic_client
+from ..embeddings import embed_texts, embedding_config
 from ..model_allowlist import UnknownModelError, resolve_optional_target
+from ..response_cache import (
+    caller_scope,
+    get_response_cache,
+    response_cache_key,
+    summarize_similarity_target,
+)
 from ..summarise import (
     SummariseError,
     summarise_compress,
@@ -19,6 +34,8 @@ from ..summarise import (
     summarise_file,
     summarise_project_breakdown,
 )
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["summarize"])
 
@@ -64,7 +81,7 @@ SummariseRequest = Annotated[
 @router.post("/v1/summarize")
 async def summarize(
     body: SummariseRequest,
-    _claims: Annotated[dict[str, object], Depends(get_current_user)],
+    caller: Annotated[Caller, Depends(optional_caller)],
 ) -> dict[str, Any]:
     """Summarisation endpoint — Phase 4-4b of PLAN-agent-api.
     Python mirror of `app/api/summarize/route.ts`.
@@ -86,6 +103,33 @@ async def summarize(
         ) from exc
 
     model = target.api_id
+
+    # The cache (as the Next route's): the body minus `model` is the input,
+    # the resolved catalog id a key part of its own, so "model omitted" and
+    # "model = the default" share an entry.
+    scope = caller_scope(user_id=caller.user_id, client_key=caller.client_key)
+    cache = get_response_cache()
+    cache_input = body.model_dump(by_alias=True, exclude_none=True, exclude={"model"})
+    cache_key = response_cache_key(
+        kind="summarize", model=target.catalog_id, input=cache_input, scope=scope
+    )
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return dict(cached)
+    similarity = summarize_similarity_target(cache_input, target.catalog_id, scope)
+    sim_embedding: list[float] | None = None
+    config = embedding_config() if similarity is not None else None
+    if similarity is not None and config is not None:
+        try:
+            sim_embedding = (await embed_texts([similarity[1]], config=config))[0]
+        except Exception as exc:  # advisory: any failure → run the model
+            logger.info("summarize.similarity_skipped", error=type(exc).__name__)
+            sim_embedding = None
+        if sim_embedding is not None:
+            hit = cache.find_similar(scope=similarity[0], embedding=sim_embedding)
+            if hit is not None:
+                return dict(hit)
+
     client = resolve_anthropic_client(target)
     if client is None:
         raise HTTPException(
@@ -127,4 +171,8 @@ async def summarize(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={"code": result.code, "message": result.message},
         )
+    if similarity is not None and sim_embedding is not None:
+        cache.set(cache_key, result.payload, embedding=sim_embedding, scope=similarity[0])
+    else:
+        cache.set(cache_key, result.payload)
     return result.payload

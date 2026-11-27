@@ -103,10 +103,9 @@ export interface paths {
          *     a `file` field and returns a structured `ExtractionResponse`
          *     matching `ExtractionResponseSchema` on the TS side.
          *
-         *     Auth-protected (JWT) — Phase 4 cuts the frontend over to this
-         *     endpoint, at which point the existing Next.js route can be
-         *     deleted. Until then both producers exist and the wire schema
-         *     keeps them aligned.
+         *     Signed in or anonymous; the limits, the vision pass and the cache
+         *     are in the module docstring. `fullText` is camelCase, as the
+         *     contract's `ExtractionResponse` (and the browser) read it.
          *
          *     File-size cap (`EXTRACT_MAX_BYTES`, default 5 MB) matches the
          *     Next.js side (`FILE_SIZE_LIMIT` in `lib/shared/upload-config.ts`);
@@ -287,8 +286,9 @@ export interface paths {
          *     flags the model `supportsStructuredOutput`, then the lenient JSON
          *     text path; unparseable / off-schema output → 502 `provider`; a
          *     provider error → `categorize_error` (port of `categorizeError`).
-         *     Sign-in is always required — like every agent-py AI route, there is
-         *     no anonymous mode here.
+         *     Signed in or anonymous (wave 12, Q123/Q134): an anonymous caller is
+         *     refused under `REQUIRE_AUTH_FOR_AI` (`401 auth_required`) and otherwise
+         *     gets the Next route's budget — no rate limit.
          */
         post: operations["extract_table_v1_extract_table_post"];
         delete?: never;
@@ -516,8 +516,11 @@ export interface paths {
          *     500 `embed_failed` on an embedder / database failure.
          *
          *     Differences from the Next.js route:
-         *       - Sign-in is checked first (every agent-py route requires a bearer
-         *         token), and an invalid body is FastAPI's 422, not 400.
+         *       - A bad bearer is 401 before the body is read, and an invalid body
+         *         is FastAPI's 422, not 400.
+         *       - Signed out it is a `200 skipped / not_signed_in` (limited 30/min
+         *         per IP, refused under `REQUIRE_AUTH_FOR_AI`) where Next answers
+         *         401 `not_signed_in` (Q123: signed-out calls never reach Next).
          *       - No DB pool (`SUPABASE_DB_URL` unset) with an embedder configured →
          *         503 `db_unconfigured` (the Next.js route answers 401 when Supabase
          *         is not configured — it cannot tell the cases apart).
@@ -854,28 +857,31 @@ export interface components {
              * @description The uploaded file to extract text from.
              */
             file: string;
+            /**
+             * Vision
+             * @description Force the PDF vision pass on or off; absent → auto.
+             */
+            vision?: ("true" | "false") | null;
         };
         /**
-         * BookmarkSnapshotModel
-         * @description Mirrors `BookmarkSnapshot` in `lib/server/url/fetch.ts`. Kept
-         *     snake_case on the wire to match the rest of the Python service's
-         *     convention (see `ExtractionResponse.full_text`).
+         * BookmarkSnapshot
+         * @description Mirrors `BookmarkSnapshot` (`lib/server/url/fetch.ts`).
          */
-        BookmarkSnapshotModel: {
+        BookmarkSnapshot: {
             /** Url */
             url: string;
             /** Title */
             title: string;
             /** Content */
             content: string;
-            /** Content Truncated */
-            content_truncated: boolean;
-            /** Content Hash */
-            content_hash: string;
+            /** Contenttruncated */
+            contentTruncated: boolean;
+            /** Contenthash */
+            contentHash: string;
             /** Description */
             description?: string | null;
-            /** Favicon Url */
-            favicon_url?: string | null;
+            /** Faviconurl */
+            faviconUrl?: string | null;
         };
         /** Brave */
         Brave: {
@@ -1235,7 +1241,7 @@ export interface components {
             /** Sections */
             sections: number;
             /** Reason */
-            reason?: ("not_configured" | "empty" | "already_indexed" | "file_not_found") | null;
+            reason?: ("not_configured" | "empty" | "already_indexed" | "file_not_found" | "not_signed_in") | null;
         };
         /** Exa */
         Exa: {
@@ -1276,29 +1282,22 @@ export interface components {
             /** Snippet */
             snippet: string;
         };
+        /** @enum {string} */
+        ExtractionKind: "pdf" | "docx" | "markdown" | "csv" | "json" | "text" | "image" | "html" | "code" | "spreadsheet" | "unsupported";
         /**
          * ExtractionResponse
-         * @description Mirrors `ExtractionResponseSchema` in
-         *     `lib/shared/api-schemas.ts` for kind / text / truncated / language.
-         *     Keeps snake_case on `full_text` to match the rest of the Python
-         *     service's wire format (see `WhoAmIResponse.user_id`); the
-         *     generated TS types reflect that so the Phase 4 cutover doesn't
-         *     have to recase fields.
+         * @description Mirrors `ExtractionResponseSchema` (`lib/shared/api-schemas.ts`).
          */
         ExtractionResponse: {
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "pdf" | "docx" | "markdown" | "csv" | "json" | "text" | "image" | "html" | "code" | "spreadsheet" | "unsupported";
+            kind: components["schemas"]["ExtractionKind"];
             /** Text */
             text: string;
             /** Truncated */
             truncated: boolean;
-            /** Full Text */
-            full_text?: string | null;
             /** Language */
             language?: string | null;
+            /** Fulltext */
+            fullText?: string | null;
         };
         /** File */
         File: {
@@ -1929,6 +1928,8 @@ export interface components {
             sandboxFiles?: components["schemas"]["RunSandboxFile"][] | null;
             /** Localmcpservers */
             localMcpServers?: components["schemas"]["LocalMcpServer"][] | null;
+            /** Ephemeral */
+            ephemeral?: boolean | null;
         } & {
             [key: string]: unknown;
         };
@@ -2304,20 +2305,19 @@ export interface components {
             encryptedValue?: string | null;
             metadata?: components["schemas"]["Metadata"] | null;
         };
-        /**
-         * UrlFetchRequest
-         * @description Mirrors the TS `{ url }` body schema. Length capped to defeat
-         *     pathological inputs — the SSRF gate runs after this.
-         */
+        /** UrlFetchRequest */
         UrlFetchRequest: {
             /** Url */
             url: string;
         };
         /** UrlFetchResponse */
         UrlFetchResponse: {
-            /** Ok */
-            ok: boolean;
-            bookmark: components["schemas"]["BookmarkSnapshotModel"];
+            /**
+             * Ok
+             * @constant
+             */
+            ok: true;
+            bookmark: components["schemas"]["BookmarkSnapshot"];
         };
         /**
          * UrlSource

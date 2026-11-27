@@ -22,12 +22,13 @@ import { useStore } from "@/client/hooks/use-store"
 import {
   modelSwitchFor,
   resolveModelBackend,
+  sendRefusedNoProvider,
   TASK_MODEL_BACKEND,
   usesAgentPyList,
   type ModelBackend,
 } from "@/shared/backend-models"
 import { getChatModel, isAutoModel } from "@/shared/models"
-import { servedModelsSettled, subscribeServedModels } from "@/shared/served-models"
+import { noModelProvider, servedModelsSettled, subscribeServedModels } from "@/shared/served-models"
 
 import { useServedModels } from "./use-served-models"
 
@@ -40,6 +41,15 @@ export function useModelBackend(): ModelBackend {
     agentPy: isAgentPyConfigured(),
     agentTs: isAgentTsConfigured(),
   })
+}
+
+/** Q131: agent-py serves `backend` and has no model provider at all (its
+ *  list settled empty): the picker and the chat say so, and sends are
+ *  refused (`sendRefusedNoProvider`). Re-renders when the list arrives. */
+export function useNoModelProvider(backend: ModelBackend): boolean {
+  useServedModels()
+  useSyncExternalStore(subscribeServedModels, noModelProvider, () => false)
+  return sendRefusedNoProvider(backend.kind, isAgentPyConfigured())
 }
 
 function labelFor(id: string): string {

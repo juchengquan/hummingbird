@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from agent_py.chat import ChatMessage
 from agent_py.main import create_app
 from agent_py.routers import summarize as summarize_router
+from agent_py.settings import get_settings
 from agent_py.summarise import (
     SummariseError,
     SummariseOk,
@@ -238,11 +239,6 @@ async def test_summarise_project_breakdown_includes_existing_titles_in_prompt() 
 # --- /v1/summarize route --------------------------------------------
 
 
-def test_summarize_rejects_missing_token(client: TestClient) -> None:
-    r = client.post("/v1/summarize", json={"mode": "file", "text": "hello"})
-    assert r.status_code == 401
-
-
 def test_summarize_503_when_no_anthropic_key(client: TestClient) -> None:
     with patch.object(summarize_router, "resolve_anthropic_client", return_value=None):
         r = client.post(
@@ -424,3 +420,121 @@ def test_summarize_compress_requires_two_messages(client: TestClient) -> None:
         headers=_auth(),
     )
     assert r.status_code == 422
+
+
+# --- signed out + the response cache (wave 12, Q134) -----------------------
+
+
+def _file(text: str = "hello world") -> dict[str, Any]:
+    return {"mode": "file", "name": "doc", "text": text}
+
+
+def test_summarize_serves_anonymous_callers(client: TestClient) -> None:
+    fake = _FakeClient('{"summary":"hi","keyTopics":["t"]}')
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
+        r = client.post("/v1/summarize", json=_file())
+    assert r.status_code == 200
+    assert r.json() == {"summary": "hi", "keyTopics": ["t"]}
+
+
+def test_summarize_rejects_a_bad_token(client: TestClient) -> None:
+    r = client.post("/v1/summarize", json=_file(), headers={"Authorization": "Bearer nope"})
+    assert r.status_code == 401
+    assert r.json()["code"] == "auth"
+
+
+def test_summarize_refuses_anonymous_under_require_auth(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REQUIRE_AUTH_FOR_AI", "true")
+    get_settings.cache_clear()
+    fake = _FakeClient('{"summary":"hi","keyTopics":[]}')
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
+        r = client.post("/v1/summarize", json=_file())
+        assert r.status_code == 401
+        assert r.json()["code"] == "auth_required"
+        assert fake.messages.calls == []
+        assert client.post("/v1/summarize", json=_file(), headers=_auth()).status_code == 200
+
+
+def test_summarize_puts_no_rate_limit_on_anonymous_callers(client: TestClient) -> None:
+    """The Next route has none (only the gate and the cache): ported as is."""
+    fake = _FakeClient('{"summary":"hi","keyTopics":[]}')
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
+        for i in range(70):
+            assert client.post("/v1/summarize", json=_file(f"t{i}")).status_code == 200
+
+
+def test_summarize_caches_per_caller(client: TestClient) -> None:
+    """A repeat is served from the cache, scoped by caller: the same IP
+    (anonymous) or user hits; another IP, or a user, misses."""
+    fake = _FakeClient('{"summary":"hi","keyTopics":[]}')
+    ip_a = {"X-Forwarded-For": "203.0.113.1"}
+    ip_b = {"X-Forwarded-For": "203.0.113.2"}
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
+        assert client.post("/v1/summarize", json=_file(), headers=ip_a).status_code == 200
+        assert len(fake.messages.calls) == 1
+        r = client.post("/v1/summarize", json=_file(), headers=ip_a)
+        assert r.json() == {"summary": "hi", "keyTopics": []}
+        assert len(fake.messages.calls) == 1
+        client.post("/v1/summarize", json=_file(), headers=ip_b)
+        assert len(fake.messages.calls) == 2
+        client.post("/v1/summarize", json=_file(), headers={**ip_a, **_auth()})
+        assert len(fake.messages.calls) == 3
+        client.post("/v1/summarize", json=_file(), headers={**ip_b, **_auth()})
+        assert len(fake.messages.calls) == 3  # the same user, from another IP
+        # `model` omitted and `model` = the default share the entry.
+        client.post(
+            "/v1/summarize",
+            json={**_file(), "model": "anthropic/claude-haiku-4.5"},
+            headers=_auth(),
+        )
+        assert len(fake.messages.calls) == 3
+
+
+def test_summarize_does_not_cache_failures(client: TestClient) -> None:
+    bad = _FakeClient("not json")
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=bad):
+        assert client.post("/v1/summarize", json=_file()).status_code == 502
+        assert client.post("/v1/summarize", json=_file()).status_code == 502
+    assert len(bad.messages.calls) == 2
+
+
+def test_summarize_near_match_within_a_caller(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With an embedder configured, a near-identical file text is served
+    the earlier summary — for the same caller only."""
+    vectors = {"alpha text": [1.0, 0.0], "alpha text!": [0.999, 0.01], "beta": [0.0, 1.0]}
+
+    async def fake_embed(texts: list[str], **_: Any) -> list[list[float]]:
+        return [vectors[t] for t in texts]
+
+    monkeypatch.setattr(summarize_router, "embedding_config", lambda: object())
+    monkeypatch.setattr(summarize_router, "embed_texts", fake_embed)
+    fake = _FakeClient('{"summary":"alpha","keyTopics":[]}')
+    ip = {"X-Forwarded-For": "203.0.113.5"}
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
+        client.post("/v1/summarize", json=_file("alpha text"), headers=ip)
+        r = client.post("/v1/summarize", json=_file("alpha text!"), headers=ip)
+        assert r.json()["summary"] == "alpha"
+        assert len(fake.messages.calls) == 1
+        client.post("/v1/summarize", json=_file("beta"), headers=ip)
+        assert len(fake.messages.calls) == 2
+        client.post(
+            "/v1/summarize", json=_file("alpha text!"), headers={"X-Forwarded-For": "203.0.113.6"}
+        )
+        assert len(fake.messages.calls) == 3
+
+
+def test_summarize_near_match_survives_an_embedder_failure(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def broken(texts: list[str], **_: Any) -> list[list[float]]:
+        raise RuntimeError("embedder down")
+
+    monkeypatch.setattr(summarize_router, "embedding_config", lambda: object())
+    monkeypatch.setattr(summarize_router, "embed_texts", broken)
+    fake = _FakeClient('{"summary":"s","keyTopics":[]}')
+    with patch.object(summarize_router, "resolve_anthropic_client", return_value=fake):
+        assert client.post("/v1/summarize", json=_file()).status_code == 200

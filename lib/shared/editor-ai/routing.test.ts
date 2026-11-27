@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 
-import { ANTHROPIC_SERVICE_MODELS } from '@/shared/models';
+import { ANTHROPIC_SERVICE_MODELS, CHAT_MODELS } from '@/shared/models';
 
-import { editorAiAgentModels, editorAiBackend, editorAiModelFor } from './routing';
+import { editorAiAgentModels, editorAiBackend, editorAiModelFor, editorAiModels } from './routing';
 
 describe('editorAiBackend (Q103, Q105)', () => {
-  const base = { agentPyConfigured: true, ownKey: false, signedIn: true } as const;
+  const base = { agentPyConfigured: true, signedIn: true } as const;
 
   test('agent-py serves the editor where it serves chat', () => {
     expect(editorAiBackend({ ...base, chatBackend: 'python-runs' })).toBe('agent-py');
@@ -20,9 +20,11 @@ describe('editorAiBackend (Q103, Q105)', () => {
     expect(editorAiBackend({ ...base, chatBackend: 'python-runs', agentPyConfigured: false })).toBe('next');
   });
 
-  test('a browser with its own gateway key keeps the Next route', () => {
+  test('no own-key branch any more (Q124): a stray key never keeps the editor on Next', () => {
     for (const chatBackend of ['python', 'python-runs'] as const) {
-      expect(editorAiBackend({ ...base, chatBackend, ownKey: true })).toBe('next');
+      // An old caller still passing the removed flag: ignored.
+      const withKey = { ...base, chatBackend, ownKey: true } as unknown as Parameters<typeof editorAiBackend>[0];
+      expect(editorAiBackend(withKey)).toBe('agent-py');
     }
   });
 });
@@ -49,5 +51,12 @@ describe('editorAiModelFor (Q102)', () => {
     const ids = editorAiAgentModels().map((m) => m.id);
     expect(ids.length).toBeGreaterThan(0);
     expect(ids.every((id) => ANTHROPIC_SERVICE_MODELS.has(id))).toBe(true);
+  });
+});
+
+describe('editorAiModels (Q124)', () => {
+  test("on agent-py: what agent-py runs; on Next: the deploy's catalog, not the gateway's whole list", () => {
+    expect(editorAiModels('agent-py').map((m) => m.id)).toEqual(editorAiAgentModels().map((m) => m.id));
+    expect(editorAiModels('next').map((m) => m.id)).toEqual(CHAT_MODELS.map((m) => m.id));
   });
 });

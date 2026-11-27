@@ -1,7 +1,8 @@
 """In-memory `RunRepository` for runs that are not persisted (Q16).
 
-Holds anonymous runs, and signed-in interactive runs when agent-py has
-no database (`SUPABASE_DB_URL` unset). It is the 3a reference fake
+Holds anonymous runs, signed-in **ephemeral** runs (`forwardedProps.ephemeral`,
+the Explain popover — Q136), and signed-in interactive runs when agent-py
+has no database (`SUPABASE_DB_URL` unset). It is the 3a reference fake
 (`InMemoryRunRepository`, same rules as 0041's `create_run` and the
 transitions) plus what a long-lived process needs:
 
@@ -49,9 +50,24 @@ class MemoryRunRepository(InMemoryRunRepository):
         self._ttl = timedelta(seconds=max(0.0, ttl_seconds))
         self._max_runs = max(1, max_runs)
         self._client_keys: dict[str, str] = {}
+        self._unlisted: set[str] = set()
 
     def contains(self, run_id: str) -> bool:
         return run_id in self._rows
+
+    def mark_unlisted(self, run_id: str) -> None:
+        """Keep `run_id` out of `list_runs` (an ephemeral run, Q136 — on a
+        DB-less deploy a signed-in user's other runs are listed here)."""
+        if run_id in self._rows:
+            self._unlisted.add(run_id)
+
+    def _listed(self, run_id: str) -> bool:
+        return run_id not in self._unlisted
+
+    def holds(self, owner: RunOwner, run_id: str) -> bool:
+        """Whether `run_id` is here and `owner`'s — how a signed-in
+        caller's ephemeral run (Q136) is found in this store."""
+        return self._owned(owner, run_id) is not None
 
     def __len__(self) -> int:
         return len(self._rows)
@@ -94,4 +110,5 @@ class MemoryRunRepository(InMemoryRunRepository):
         for run_id in expired:
             del self._rows[run_id]
             self._client_keys.pop(run_id, None)
+            self._unlisted.discard(run_id)
         return expired

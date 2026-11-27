@@ -4,9 +4,12 @@
  * and an MCP server that counts what ran. What the mocked e2e suites can't
  * show: that it all works together.
  */
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Page } from "./guard"
 
 import { STORE_VERSION } from "../lib/client/hooks/store/migrate"
+
+// These drive the old task routes on the `ts` backend on purpose (removed in wave 13).
+test.use({ nextApi: "allowed" })
 
 const SUPA = "http://127.0.0.1:54871", FAKE = "http://127.0.0.1:8172"
 const HAIKU = "anthropic/claude-haiku-4.5"

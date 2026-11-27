@@ -166,6 +166,29 @@ class AssistantMessage(BaseMessage):
     """
 
 
+class BookmarkSnapshot(BaseModel):
+    """
+    Mirrors `BookmarkSnapshot` (`lib/server/url/fetch.ts`).
+    """
+
+    url: str
+    """
+    The final URL, after redirects.
+    """
+    title: str
+    content: str
+    """
+    The page's readable text (≤ 200 KB).
+    """
+    contentTruncated: bool
+    contentHash: str
+    """
+    A hash of `content`, to tell a refresh that changed nothing.
+    """
+    description: str | None = None
+    faviconUrl: str | None = None
+
+
 class Brave(BaseModel):
     enabled: bool | None = None
     freshness: Literal["any", "pd", "pw", "pm", "py"] | None = None
@@ -236,6 +259,19 @@ How a citation-table column's values are formatted and sorted.
 """
 
 
+class CompressSummarizeRequest(BaseModel):
+    mode: Literal["compress"]
+    messages: Annotated[list[SummarizeMessage], Field(max_length=200, min_length=2)]
+    model: SummarizeModel | None = None
+
+
+class CompressSummary(BaseModel):
+    recap: Annotated[str, Field(min_length=1)]
+    """
+    Markdown bullets that replace the compressed messages.
+    """
+
+
 class Context(BaseModel):
     """
     A named piece of ambient information given to the agent for the run, distinct from the conversation.
@@ -252,6 +288,18 @@ class Context(BaseModel):
     """
     The context itself.
     """
+
+
+class ConversationSummarizeRequest(BaseModel):
+    mode: Literal["conversation"]
+    messages: Annotated[list[SummarizeMessage], Field(max_length=200, min_length=1)]
+    model: SummarizeModel | None = None
+
+
+class ConversationSummary(BaseModel):
+    summary: str
+    keyPoints: list[str] | None = None
+    decisions: list[str] | None = None
 
 
 class CreateConversationShareRequest(BaseModel):
@@ -490,9 +538,18 @@ class EmbedResponse(BaseModel):
     """
     Chunks written (`indexed`) or already present (`already_indexed`); otherwise 0.
     """
-    reason: Literal["not_configured", "empty", "already_indexed", "file_not_found"] | None = None
+    reason: (
+        Literal[
+            "not_configured",
+            "empty",
+            "already_indexed",
+            "file_not_found",
+            "not_signed_in",
+        ]
+        | None
+    ) = None
     """
-    Why the request was skipped. Absent when `indexed`.
+    Why the request was skipped (`not_signed_in`, 0.8.0, an anonymous caller). Absent when `indexed`.
     """
 
 
@@ -507,6 +564,20 @@ class ErrorResponse(ApiError):
 class Exa(BaseModel):
     enabled: bool | None = None
     type: Literal["auto", "neural", "keyword"] | None = None
+
+
+type ExistingTitle = Annotated[str, Field(max_length=300)]
+
+
+class ExtractFileRequest(BaseModel):
+    file: Annotated[str, Field(json_schema_extra={"contentMediaType": "application/octet-stream"})]
+    """
+    The file (≤ the backend's upload cap, 5 MB by default). Its name and media type pick the extractor.
+    """
+    vision: Literal["true", "false"] | None = None
+    """
+    Force the PDF vision pass on or off; absent means decide from the text yield.
+    """
 
 
 class ExtractTableRequest(BaseModel):
@@ -529,6 +600,45 @@ class ExtractTableSource(BaseModel):
     title: Annotated[str, Field(max_length=300)]
     url: Annotated[str, Field(max_length=2000)]
     snippet: Annotated[str, Field(max_length=2000)]
+
+
+type ExtractionKind = Literal[
+    "pdf",
+    "docx",
+    "markdown",
+    "csv",
+    "json",
+    "text",
+    "image",
+    "html",
+    "code",
+    "spreadsheet",
+    "unsupported",
+]
+
+
+class ExtractionResponse(BaseModel):
+    """
+    Mirrors `ExtractionResponseSchema` (`lib/shared/api-schemas.ts`).
+    """
+
+    kind: ExtractionKind
+    text: str
+    """
+    The inline text (≤ ~100 KB).
+    """
+    truncated: bool
+    """
+    `text` was cut at the inline budget.
+    """
+    language: str | None = None
+    """
+    A code file's language.
+    """
+    fullText: Annotated[str | None, Field(max_length=1200000)] = None
+    """
+    The full text (≤ ~1 MB), only when it is longer than `text`.
+    """
 
 
 class File(BaseModel):
@@ -567,6 +677,18 @@ class FileSource(BaseModel):
     """
     What the file is, when the producer knows. Optional, because the provider that holds the bytes knows.
     """
+
+
+class FileSummarizeRequest(BaseModel):
+    mode: Literal["file"]
+    name: Annotated[str | None, Field(max_length=500)] = None
+    text: Annotated[str, Field(max_length=50000, min_length=1)]
+    model: SummarizeModel | None = None
+
+
+class FileSummary(BaseModel):
+    summary: str
+    keyTopics: list[str] | None = None
 
 
 class FunctionCall(BaseModel):
@@ -753,6 +875,105 @@ class MaxCallsSkillConfig(BaseModel):
     maxCalls: Annotated[int | None, Field(ge=1, le=50)] = None
 
 
+class McpCallResult(BaseModel):
+    result: Result
+
+
+class McpCapabilities(BaseModel):
+    """
+    What the server lists; a list it doesn't support is `null` or absent.
+    """
+
+    tools: list[McpToolInfo] | None = None
+    resources: list[McpResourceInfo] | None = None
+    prompts: list[McpPromptInfo] | None = None
+
+
+class McpDiscoverResult(BaseModel):
+    capabilities: McpCapabilities
+
+
+class McpPromptInfo(BaseModel):
+    name: str
+    description: str | None = None
+
+
+class McpProxyRequest(BaseModel):
+    server: McpProxyServer
+    tool: Annotated[str | None, Field(min_length=1)] = None
+    """
+    The tool to call (`call`).
+    """
+    input: dict[str, Any] | None = None
+    """
+    The tool's arguments (`call`).
+    """
+    uri: Annotated[str | None, Field(min_length=1)] = None
+    """
+    The resource to read (`read`).
+    """
+
+
+class McpProxyServer(BaseModel):
+    id: Annotated[str, Field(min_length=1)]
+    """
+    Must equal the path's `serverId`.
+    """
+    name: Annotated[str, Field(min_length=1)]
+    url: Annotated[str, Field(min_length=1)]
+    """
+    The MCP endpoint; ignored for the caller's own cloud-mode server, whose stored URL is used.
+    """
+    transport: Literal["http"] | None = None
+
+
+class McpReadResult(BaseModel):
+    result: Result1
+
+
+type McpProxyResponse = McpDiscoverResult | McpCallResult | McpReadResult
+"""
+The action's result — `discover`, `call` or `read`.
+"""
+
+
+class McpResourceInfo(BaseModel):
+    uri: str
+    name: str | None = None
+    description: str | None = None
+    mimeType: str | None = None
+
+
+class McpServerUpsertRequest(BaseModel):
+    """
+    Mirrors the Next route's body (`app/api/mcp/server/route.ts`).
+    """
+
+    id: Annotated[str, Field(max_length=64, min_length=1)]
+    workspaceId: Annotated[str, Field(max_length=64, min_length=1)]
+    name: Annotated[str, Field(max_length=200, min_length=1)]
+    url: Annotated[str, Field(max_length=2000, min_length=1)]
+    credentials: LocalMcpCredential
+    capabilities: dict[str, Any] | None = None
+    """
+    The server's cached capabilities, stored as is.
+    """
+    enabled: bool | None = True
+
+
+class McpToolInfo(BaseModel):
+    name: str
+    description: str | None = None
+    inputSchema: Any | None = None
+    """
+    The tool's JSON Schema, as the server declares it.
+    """
+    uiResourceUri: str | None = None
+    """
+    The `ui://` resource of an MCP App tool.
+    """
+
+
 class MemoryExtractRequest(BaseModel):
     turnText: Annotated[str, Field(max_length=50000, min_length=1)]
     """
@@ -801,6 +1022,24 @@ class ModelList(BaseModel):
     """
     Whether `auto` (smart routing) runs here — both models of the catalog's routing pair are served.
     """
+
+
+class OkResponse(BaseModel):
+    ok: Literal[True]
+
+
+class ProjectBreakdown(BaseModel):
+    titles: list[str]
+
+
+class ProjectBreakdownRequest(BaseModel):
+    mode: Literal["project-breakdown"]
+    goal: Annotated[str, Field(max_length=4000, min_length=1)]
+    existingTitles: Annotated[list[ExistingTitle] | None, Field(max_length=100)] = None
+    """
+    Cards already on the board, not to be proposed again.
+    """
+    model: SummarizeModel | None = None
 
 
 class ReadinessChecks(BaseModel):
@@ -953,6 +1192,16 @@ type ResolvedShare = Annotated[
 """
 What a share page renders, by `kind`.
 """
+
+
+class Result(BaseModel):
+    text: str
+    isError: bool
+
+
+class Result1(BaseModel):
+    text: str | None = None
+    mimeType: str | None = None
 
 
 class ResumeEntry(BaseModel):
@@ -1380,6 +1629,24 @@ class RunForwardedProps(BaseModel):
     runs only — a background run refuses them. **No
     credentials here**: they ride in `RunAgentInput.state` under
     `hummingbird.localMcp` (see `StartRunRequest`).
+
+    """
+    ephemeral: bool | None = None
+    """
+    0.8.0 (Q135, Q136): a throwaway run on a temporary thread —
+    the Explain-selection popover. The backend keeps it in
+    memory only, as it keeps an anonymous run: never stored
+    with the caller's tasks, never in `listRuns`, gone a while
+    after it ends (agent-py: `RUNS_MEMORY_TTL_SECONDS`). A
+    signed-in caller still owns it — their bearer reads, streams
+    and cancels it, and their limits apply. It offers the model
+    **no tools**: the backend ignores `skills`, MCP servers,
+    `localMcpServers` and AG-UI `tools`, and offers no `askUser`
+    / `renderUI` either, so the run never runs a tool and never
+    ends `interrupted`; no follow-up suggestions. Interactive
+    only and never a resume: with `mode: background`,
+    `previousRunId` or `resume[]` it is `400 invalid_request`.
+    Absent means false.
 
     """
 
@@ -1837,6 +2104,32 @@ An opaque handle for one subagent invocation, not a reusable name for a subagent
 """
 
 
+class SummarizeMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: Annotated[str, Field(max_length=200000, min_length=1)]
+
+
+type SummarizeModel = Annotated[str, Field(max_length=100)]
+"""
+A catalog model id (`config/models.json`); absent means the backend's default.
+"""
+
+
+type SummarizeRequest = Annotated[
+    FileSummarizeRequest
+    | ConversationSummarizeRequest
+    | CompressSummarizeRequest
+    | ProjectBreakdownRequest,
+    Field(discriminator="mode"),
+]
+
+
+type SummarizeResponse = FileSummary | ConversationSummary | CompressSummary | ProjectBreakdown
+"""
+The request mode's result (the modes' shapes do not overlap on their required keys).
+"""
+
+
 class SystemMessage(BaseMessage):
     """
     Instructions from the system.
@@ -1990,6 +2283,25 @@ class TypedColumnHint(BaseModel):
 
 
 type ColumnHint = ColumnHint1 | TypedColumnHint
+
+
+class UrlFetchError(ApiError):
+    status: int | None = None
+    """
+    The target's HTTP status (`http_error`).
+    """
+
+
+class UrlFetchRequest(BaseModel):
+    url: Annotated[str, Field(max_length=2000, min_length=1)]
+    """
+    An absolute URL or a bare domain (`https://` is assumed).
+    """
+
+
+class UrlFetchResponse(BaseModel):
+    ok: Literal[True]
+    bookmark: BookmarkSnapshot
 
 
 class UrlSource(BaseModel):

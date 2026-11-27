@@ -13,11 +13,19 @@ import {
   modelSwitchFor,
   modelsForBackend,
   resolveModelBackend,
+  sendRefusedNoProvider,
   TASK_MODEL_BACKEND,
   taskModelFor,
 } from "./backend-models"
 import { ANTHROPIC_SERVICE_MODELS, AUTO_MODEL_ID } from "./models"
-import { parseServedModels, servedModels, setServedModels, subscribeServedModels } from "./served-models"
+import {
+  isEmptyModelList,
+  markNoModelProvider,
+  parseServedModels,
+  servedModels,
+  setServedModels,
+  subscribeServedModels,
+} from "./served-models"
 
 const MINIMAX_DEPLOY = {
   models: [
@@ -114,5 +122,33 @@ describe("the rules on agent-py follow its list", () => {
     const agentTs = resolveModelBackend("ts-service", true, { agentPy: true, agentTs: true })
     expect(agentTs).toEqual({ kind: "agent-ts", name: "agent-ts" })
     expect(modelsForBackend(agentTs.kind).map((m) => m.id)).toEqual([...ANTHROPIC_SERVICE_MODELS.keys()])
+  })
+})
+
+describe("no model provider on the deploy (Q131)", () => {
+  test("agent-py's backends refuse to send once the list has settled empty", () => {
+    markNoModelProvider()
+    for (const kind of ["agent-service", "agent-runs", "agent-tasks"] as const) {
+      expect(sendRefusedNoProvider(kind, true)).toBe(true)
+    }
+    // The model rules keep the built-in list (nothing is switched around).
+    expect(modelsForBackend("agent-runs").map((m) => m.id)).toEqual([...ANTHROPIC_SERVICE_MODELS.keys()])
+  })
+
+  test("not on the Next routes or agent-ts, not without agent-py, not before / without an empty answer", () => {
+    expect(sendRefusedNoProvider("agent-runs", true)).toBe(false) // list not read yet
+    markNoModelProvider()
+    expect(sendRefusedNoProvider("any", true)).toBe(false)
+    expect(sendRefusedNoProvider("agent-ts", true)).toBe(false)
+    expect(sendRefusedNoProvider("agent-runs", false)).toBe(false)
+    setServedModels(parseServedModels(MINIMAX_DEPLOY))
+    expect(sendRefusedNoProvider("agent-runs", true)).toBe(false)
+  })
+
+  test("a well-formed empty list is told apart from an unreadable one", () => {
+    expect(isEmptyModelList({ models: [], defaultModel: "anthropic/claude-haiku-4.5", auto: false })).toBe(true)
+    for (const bad of [null, {}, { models: [] }, { models: "x", defaultModel: "a", auto: false }, MINIMAX_DEPLOY]) {
+      expect(isEmptyModelList(bad)).toBe(false)
+    }
   })
 })

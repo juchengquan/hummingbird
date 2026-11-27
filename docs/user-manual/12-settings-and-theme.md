@@ -35,6 +35,11 @@ Click your avatar or initial at the bottom of the left sidebar.
 - **AI review changes** - when on (default), AI `edit`-mode output
   lands as Plate suggestion marks you accept/reject per chunk. When
   off, the AI's output replaces the selected text directly.
+- **Editor AI model** (the gear at the editor's bottom right) - the
+  model the editor's AI menu and ghost text use, from this deploy's
+  models. There is no personal AI Gateway key setting any more: the
+  editor always runs on the deploy's keys (a one-time note says so the
+  first time you open it).
 
 ### Backend
 - **Chat backend** - pick the user-facing chat producer. The default is
@@ -82,6 +87,11 @@ Click your avatar or initial at the bottom of the left sidebar.
   each message between them, and the reply shows which one it used) but
   not on `python` or `ts-service`. Switching back to `ts` brings the full
   list back.
+- **No model provider.** On the agent-py backends, if the deploy has no
+  model provider key at all, the model picker and the chat say "No model
+  provider is configured on this deploy" and sending is blocked (with a
+  pointer to [Model providers](23-model-providers.md)) — there is no
+  stand-in answer. An admin adds a provider key for agent-py to fix it.
 
 ## Tips & gotchas
 - The Chat backend toggle is only visible when the corresponding

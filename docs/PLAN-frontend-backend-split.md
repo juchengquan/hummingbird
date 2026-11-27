@@ -1,6 +1,6 @@
 # Plan: Frontend / backend split
 
-Status: **Waves 1–8 shipped (#294–#308): Phases 0–2, chat and the tasks panel on runs, the backend catch-up (Phase 3's checklist is done). Wave 9 is Phase 4 — the editor's AI on agent-py — plus agent-py verifying asymmetric Supabase tokens. Wave 10 brought every catalog model to agent-py (provider parity, Q109 — the Gateway and OpenRouter routes unverified live); wave 11 makes "agent-py (runs)" the default with the switch synced on the account (built); Phase 5 (removal) follows.** Decided in a design interview
+Status: **Waves 1–11 shipped (#294–#311): Phases 0–4, chat and the tasks panel on runs, every catalog model on agent-py, and "agent-py (runs)" the default with the switch synced on the account (the Gateway and OpenRouter routes unverified live). Phase 5 (removal, Q121–Q139) runs as waves 12–15: wave 12 closes the last gaps without removing anything (built).** Decided in a design interview
 on 2026-11-21. Supersedes the open parts of
 [`PLAN-backend-extraction.md`](PLAN-backend-extraction.md), whose Phase 1
 (single `apiClient` + Zod schemas + `docs/API.md`) shipped and is the
@@ -179,6 +179,26 @@ three times. The goals:
 | Q118 | OpenRouter `fallbacks` go as OpenRouter's `models` list (checked by the probe; dropped with a README note if ignored); `openrouter/auto` as is; the app's `auto` uses the catalog's `routing` pair whatever its provider |
 | Q119 | `GET /v1/models` (contract 0.7.0, additive) lists the ids agent-py has a provider key for, with the catalog's flags and whether tasks can run on it; the chat picker, the model-switch rule and the editor's list read it instead of the built-in Anthropic-only list. agent-ts stays Anthropic-only (frozen) **Built:** each entry is `{id, tasks}` (the browser has the catalog's flags already). The switch guard waits for the first answer, so a stored pick the built-in list lacks isn't switched away on reload; until then, or when it can't be read, the built-in `anthropic/*` list stands |
 | Q120 | The probe and the smoke use real keys the owner puts in `.env` (`AI_GATEWAY_API_KEY`, and `OPENROUTER_API_KEY` / `MINIMAX_CN_*` / an Ollama if used); only those lines are read, never printed. A provider without a key is covered by recorded fixtures only, and the PR says so **Done:** the keys came from the owner's workspace file: Anthropic and Minimax (priority, with M3.1 Flash added to the catalog alongside M3). The Q65 smoke passed (after fixing the empty `ANTHROPIC_BASE_URL` that sent every agent-py call to `""`), and with Minimax 9/9 |
+| **Phase 5 (2026-11-27)** | |
+| Q121 | agent-py becomes required and the chat-backend switch goes: `ts`, `python` and `ts-service` are removed, runs is the only path. A later TypeScript backend would be a deploy URL, not a user setting. The dev docs say to run agent-py too |
+| Q122 | Phase 5 is four waves: **12** closes the gaps (nothing removed; every Next-only surface onto agent-py; ends with a real-stack guard against any `/api/*` request); **13** removes (Next API routes + `lib/server` behind them, the server cookie client, the switch, agent-ts, agent-py's `/v1/chat` router, the cron, the frontend's server secrets); **14** moves the Next app into `apps/web`; **15** the table reshape (Q27), grilled when reached |
+| Q123 | Signed-out non-chat calls (URL fetch, summarize, extract, extract-table, the local-mode MCP proxy, embed) are served by agent-py anonymously, under per-IP limits and `REQUIRE_AUTH_FOR_AI`, as anonymous runs are. Account-bound ones (share, schedules, memory extract, stored-file links, cloud MCP) stay signed-in only |
+| Q124 | The editor's own-gateway-key setting is removed (agent-py never takes a user's key, Q103): a store migration drops it and shows one note |
+| Q125 | The Explain-selection popover moves onto runs: an interactive run on a temporary thread, not saved to the conversation, no tools (Q135) |
+| Q126 | Tasks started the old way (their pointers, children and answers) are followed through `/v1/runs` — the same `tasks` rows, nothing migrated |
+| Q127 | Share pages always read from agent-py; the server-rendered admin-key fallback goes |
+| Q128 | Next stays a server (the per-request CSP nonce makes every page dynamic), with no secrets. A static export with a hash-based CSP is a revisit |
+| Q129 | agent-ts is deleted in wave 13 (the service, its CI job, the `ts-service` option); a future TypeScript backend starts fresh against the conformance suite |
+| Q130 | Wave 12 turns agent-py's scheduler loop on where its worker runs (checked on the real stack); wave 13 deletes the Vercel Cron and `vercel.json`. Both claim fires the same guarded way, so they overlap safely |
+| Q131 | No mock answer: with no model provider configured, the picker and the chat say so plainly, with a pointer to the setup docs. The e2e suites keep the scripted model server |
+| Q132 | `app/auth/callback` (no caller: sign-in is password-only) and `/api/tasks/sweep` (agent-py's reconciler does it) are deleted in wave 13, the callback off the local GoTrue allow-list too |
+| Q133 | Beyond the usual gates: from wave 12 the real-stack suite fails on any browser request to `/api/*` on the default backend; wave 13 adds a build check that the frontend env and bundle name no AI key, service-role key, `MCP_ENCRYPTION_KEY` or `CODE_SANDBOX_*` |
+| Q134 | Signed-out calls on agent-py: an optional-user dependency (a bearer if sent, else anonymous keyed by IP, refused `401 auth_required` under `REQUIRE_AUTH_FOR_AI`); anonymous callers get Next's per-IP limits as they are (URL fetch 30/min, embed 30/min, MCP proxy 120/min, text extraction 60/min, vision 10/min; summarize and extract-table their route's budget); an anonymous extraction skips the vision pass under `REQUIRE_AUTH_FOR_AI`, as Next does; signed-in limits unchanged | **Corrected while building:** Next's MCP proxy refuses anonymous callers whenever Supabase is configured (never an anonymous open relay), so agent-py serves an anonymous proxy call only on a deploy without accounts and answers `401 auth_required` elsewhere. agent-py had no vision pass, so extract's was ported (`extraction_vision.py`, `pypdfium2`); summarize and extract-table have no per-IP limit on Next either, only the sign-in gate. `/v1/url/fetch` and `/v1/extract` answered snake_case the browser never read (a live bug for `python` bookmarks): both camelCase now
+| Q135 | (corrects Q125's "same prompt as today") Explain sends the conversation history, the chat model and the workspace prompt but not the enabled skills: no tools, so no web search and a popover never pauses on an approval |
+| Q136 | Explain runs live in agent-py's memory log (as anonymous runs do), never in `tasks`, flagged by a run option; signed in, they still count against the user's limits and use the deploy's keys |
+| Q137 | A deploy without `NEXT_PUBLIC_AGENT_PY_URL` still builds; the app shows a full-page "This deploy has no backend configured" screen pointing at the setup docs |
+| Q138 | Wave 13: store v37 drops `chatBackend`; a browser that had picked `ts` / `python` / `ts-service` gets one note that chat now runs on agent-py. `profiles.chat_backend` stays until wave 15 drops it with the reshape |
+| Q139 | Wave 12 is three parallel workstreams in their own worktrees — **A** signed-out calls (Q134), the `extract` dispatch, contract entries for `extract` / `mcp` / `summarize` / `url/fetch`; **B** Explain on memory-only runs (Q135, Q136), the editor key removed (Q124), the no-provider message (Q131); **C** old tasks on runs (Q126), the scheduler on (Q130) — then integration and the `/api/*` guard (Q133). It merges after the real-model smoke passes on its head (Q112), Explain included. `ts` keeps working until wave 13 | **Built:** `e2e-live/guard.ts` fails a live test on any browser request to Next's `/api/*` (the `ts` task specs and one synced-choice test opt out until wave 13); `e2e-live/next-free.spec.ts` drives a signed-out bookmark fetch, uploads signed out and in, and Explain on the default backend. The real-model smoke (Anthropic + MiniMax M3.1 Flash) passed 12/12 with Explain's ephemeral runs, signed in and out
 
 ## Run contract (v1)
 
@@ -310,6 +330,10 @@ has shipped behind the existing per-account backend switch.
 | 9 (Phase 4) | the editor's AI on agent-py (Q101–Q105), asymmetric Supabase tokens (Q106), housekeeping (Q107) | Wave 8 merged (#308) |
 | 10 (Phase 3) | provider parity: every catalog model on agent-py through its route (Q114–Q118), `GET /v1/models` (Q119); starts with the provider probe (Q120) | Wave 9 merged (#309) |
 | 11 (Phase 3) | "agent-py (runs)" the default (Q110), the switch synced on `profiles` (Q111), gated on the real-model smoke (Q112) | Wave 10 merged |
+| 12 (Phase 5) | **A** signed-out calls on agent-py (Q134), `extract` dispatch, contract entries · **B** Explain on runs (Q135–Q136), the editor key removed (Q124), the no-provider message (Q131) · **C** old tasks on runs (Q126), the scheduler on (Q130); then the `/api/*` guard (Q133) | Wave 11 merged (#311) |
+| 13 (Phase 5) | removal (Q122, Q129, Q132, Q138) | Wave 12 merged |
+| 14 (Phase 5) | the Next app into `apps/web` | Wave 13 merged |
+| 15 (Phase 5) | the table reshape (Q27) | Wave 14 merged |
 
 Each wave merges into one integration branch and ships as one PR
 against `dev`.
@@ -398,6 +422,7 @@ Read from the code at #302; the first twelve were also checked by hand.
 - **Supabase** as the platform (Q3).
 - **Same origin** vs a separate API origin (Q21).
 - **A2A** at the backend edge (Q14).
+- **A static frontend** (Q128): a static export with a hash-based CSP instead of the per-request nonce, so the frontend needs no server.
 - **The backend switch** is per browser (Q33); make it a synced account setting. *(wave 11, Q111)*
 - **MCP 2026-07-28** dropped sessions and SSE resumability — check
   `lib/server/mcp/` and agent-py's MCP client against it.

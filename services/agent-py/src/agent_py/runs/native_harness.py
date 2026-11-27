@@ -18,6 +18,7 @@ prompt). `forwardedProps` (`RunInput.options`, `RunForwardedProps`):
 | `maxSteps` | model calls per run, 1 to 50; absent → `DEFAULT_MAX_STEPS` (chat's 6) |
 | `requireApprovalFor[]` | tool names that wait for the user's approval |
 | `workspaceId` | scopes `searchFiles` and adds the workspace's cloud MCP tools (signed-in runs) |
+| `ephemeral` | no tools at all (none of the above, no client tools, no `askUser` / `renderUI`) and no suggestions — the Explain popover (Q135); its storage is the router's (Q136) |
 | `reasoningEffort` | `low` / `medium` / `high` → extended thinking with that tier's budget, as the Next chat route maps it (`reasoning_effort.py`); ignored for a model the catalog does not flag `supportsReasoningEffort`, and on a call continuing a tool-use turn whose assistant turns carry no thinking blocks (a resume of a run that did not think — Anthropic rejects thinking there) |
 
 User messages may carry images and documents (`runs.history`,
@@ -573,13 +574,18 @@ class NativeHarness:
         if cancel.is_set():
             return HarnessResult(Cancelled())
 
-        toolset = (
-            await self._build_tools(run_input)
-            if self._build_tools is not None
-            else await build_toolset(hooks.tool_contributors, run_input, opts, ctx)
-        )
+        if opts.ephemeral:
+            # Q135: an ephemeral run (Explain) offers nothing to call —
+            # whatever skills, MCP or client tools it was sent.
+            toolset = Toolset(tools={}, gated=frozenset())
+        else:
+            toolset = (
+                await self._build_tools(run_input)
+                if self._build_tools is not None
+                else await build_toolset(hooks.tool_contributors, run_input, opts, ctx)
+            )
         tools = dict(toolset.tools)
-        client_tools = _client_tools(run_input.tools, set(tools))
+        client_tools = {} if opts.ephemeral else _client_tools(run_input.tools, set(tools))
         tools.update(client_tools)
         if not get_model_allowlist().supports_tools(model.catalog_id):
             # Q116: a model the catalog marks `supportsTools: false` chats only.
@@ -630,7 +636,7 @@ class NativeHarness:
             max_steps=opts.max_steps,
             gated=gated,
             cancel=cancel,
-            on_answer=on_answer if self._suggestions else None,
+            on_answer=on_answer if self._suggestions and not opts.ephemeral else None,
             tainted_by=prepared.tainted_by,
             usage=meter,
             run_context=ctx.run_tools,
