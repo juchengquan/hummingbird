@@ -363,7 +363,6 @@ function InterruptSlot({
  *  tab's resume continues the turn) keeps the notice until dismissed. */
 async function recheckRun(turn: InterruptedTurn): Promise<void> {
   const target = await resolveRunsTarget()
-  if (!target) return
   const state = await recheckAnsweredRun(turn.runId, (runId) =>
     apiClient.runs.status(runId, { target }),
   )

@@ -9,7 +9,7 @@ import { isInlineDataUrl, messageBlobKey, messageBlobRef } from "@/shared/messag
  * step in `runMigrations`. Wired into the `version` field of the persist
  * config in `use-store.ts`.
  */
-export const STORE_VERSION = 36
+export const STORE_VERSION = 37
 
 /**
  * Sequential schema migrations from older persisted shapes to the
@@ -681,6 +681,24 @@ export function runMigrations(
     } else if (!(KNOWN_CHAT_BACKENDS as readonly unknown[]).includes(value)) {
       state.chatBackend = null
     }
+  }
+  if (fromVersion < 37) {
+    // Wave 13 (Q138/Q145): the chat-backend setting is gone — chat runs on
+    // agent-py's runs API, the only path. The key goes. A browser that had
+    // picked another backend — an explicit `'ts'` / `'python'` /
+    // `'ts-service'` that survived v36, or a `'ts'` v36 just moved in this
+    // same pass — gets ONE note (`backendSettingRemoved`, in memory only:
+    // `partializeState` doesn't keep it), which replaces v36's notice.
+    const value = state.chatBackend
+    const note =
+      state.chatBackendMoved === true ||
+      value === "ts" ||
+      value === "python" ||
+      value === "ts-service"
+    delete state.chatBackend
+    delete state.chatBackendExplicit
+    delete state.chatBackendMoved
+    if (note) state.backendSettingRemoved = true
   }
   return persistedState
 }
