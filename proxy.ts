@@ -49,7 +49,10 @@ export function proxy(request: NextRequest) {
 
   const response = NextResponse.next({ request: { headers: requestHeaders } })
   response.headers.set(headerName, policy)
-  response.headers.set("Reporting-Endpoints", reportingEndpointsHeader(options.reportUri))
+  // Reports go only to agent-py; without it there is nowhere to send them.
+  if (options.reportUri) {
+    response.headers.set("Reporting-Endpoints", reportingEndpointsHeader(options.reportUri))
+  }
   return response
 }
 

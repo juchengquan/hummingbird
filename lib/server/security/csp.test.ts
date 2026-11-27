@@ -5,7 +5,6 @@ import {
   buildCsp,
   buildCspDirectives,
   CSP_REPORT_GROUP,
-  CSP_REPORT_PATH,
   cspHeaderName,
   cspOptionsFromEnv,
   cspReportUri,
@@ -103,7 +102,16 @@ describe("buildCsp", () => {
     expect(d.get("form-action")).toEqual(["'self'"])
     expect(d.get("frame-ancestors")).toEqual(["'none'"])
     expect(d.get("frame-src")).toEqual(["'self'", ...EMBED_FRAME_ORIGINS])
-    expect(d.get("report-uri")).toEqual([CSP_REPORT_PATH])
+    // No agent-py → nowhere to report (Q140): neither directive.
+    expect(d.has("report-uri")).toBe(false)
+    expect(d.has("report-to")).toBe(false)
+  })
+
+  test("a report URI adds report-uri + report-to", () => {
+    const d = directives(
+      buildCsp({ nonce: NONCE, isDev: false, reportUri: "https://api.example.com/v1/csp-report" }),
+    )
+    expect(d.get("report-uri")).toEqual(["https://api.example.com/v1/csp-report"])
     expect(d.get("report-to")).toEqual([CSP_REPORT_GROUP])
   })
 
@@ -212,30 +220,37 @@ describe("cspOptionsFromEnv", () => {
       NEXT_PUBLIC_SUPABASE_URL: "https://abc.supabase.co",
       NEXT_PUBLIC_API_BASE_URL: "https://api.example.com",
       NEXT_PUBLIC_AGENT_PY_URL: "http://localhost:8000",
-      NEXT_PUBLIC_AGENT_TS_URL: undefined,
+      // agent-ts is gone (wave 13): its URL no longer reaches the policy.
+      NEXT_PUBLIC_AGENT_TS_URL: "http://localhost:8787",
     })
     expect(opts).toEqual({
       nonce: NONCE,
       isDev: false,
       supabaseUrl: "https://abc.supabase.co",
-      backendUrls: ["https://api.example.com", "http://localhost:8000", undefined],
+      backendUrls: ["https://api.example.com", "http://localhost:8000"],
       reportUri: "http://localhost:8000/v1/csp-report",
     })
     expect(cspOptionsFromEnv(NONCE, { NODE_ENV: "development" }).isDev).toBe(true)
   })
 
-  test("reports go to the in-Next route when no backend is configured", () => {
-    expect(cspOptionsFromEnv(NONCE, {}).reportUri).toBe(CSP_REPORT_PATH)
-    expect(cspOptionsFromEnv(NONCE, { NEXT_PUBLIC_AGENT_PY_URL: "  " }).reportUri).toBe(CSP_REPORT_PATH)
+  test("no agent-py configured → no report target, and the policy names none", () => {
+    for (const env of [{}, { NEXT_PUBLIC_AGENT_PY_URL: "  " }]) {
+      const opts = cspOptionsFromEnv(NONCE, env)
+      expect(opts.reportUri).toBeNull()
+      const policy = buildCsp(opts)
+      expect(policy).not.toContain("report-uri")
+      expect(policy).not.toContain("report-to")
+      expect(policy).not.toContain("/api/csp-report")
+    }
   })
 })
 
 describe("cspReportUri", () => {
-  test("unset / blank → the in-Next route", () => {
-    expect(cspReportUri(undefined)).toBe("/api/csp-report")
-    expect(cspReportUri(null)).toBe("/api/csp-report")
-    expect(cspReportUri("")).toBe("/api/csp-report")
-    expect(cspReportUri("   ")).toBe("/api/csp-report")
+  test("unset / blank → none (there is no in-Next route)", () => {
+    expect(cspReportUri(undefined)).toBeNull()
+    expect(cspReportUri(null)).toBeNull()
+    expect(cspReportUri("")).toBeNull()
+    expect(cspReportUri("   ")).toBeNull()
   })
 
   test("same origin (`/` or a path prefix) → /v1/csp-report on the page's origin", () => {
@@ -250,30 +265,30 @@ describe("cspReportUri", () => {
     expect(cspReportUri("http://localhost:8000")).toBe("http://localhost:8000/v1/csp-report")
   })
 
-  test("a value that could break out of the policy falls back to the in-Next route", () => {
-    expect(cspReportUri("https://a.com; script-src *")).toBe(CSP_REPORT_PATH)
-    expect(cspReportUri('/x"; script-src *')).toBe(CSP_REPORT_PATH)
-    expect(cspReportUri("/a,b")).toBe(CSP_REPORT_PATH)
-    expect(cspReportUri("javascript:alert(1)")).toBe(CSP_REPORT_PATH)
-    expect(cspReportUri("not a url")).toBe(CSP_REPORT_PATH)
+  test("a value that could break out of the policy → none", () => {
+    expect(cspReportUri("https://a.com; script-src *")).toBeNull()
+    expect(cspReportUri('/x"; script-src *')).toBeNull()
+    expect(cspReportUri("/a,b")).toBeNull()
+    expect(cspReportUri("javascript:alert(1)")).toBeNull()
+    expect(cspReportUri("not a url")).toBeNull()
   })
 
   test("buildCsp + reportingEndpointsHeader carry the chosen URI", () => {
     for (const [env, expected] of [
-      [undefined, "/api/csp-report"],
       ["/", "/v1/csp-report"],
       ["https://api.example.com", "https://api.example.com/v1/csp-report"],
     ] as const) {
       const opts = cspOptionsFromEnv(NONCE, { NEXT_PUBLIC_AGENT_PY_URL: env })
+      expect(opts.reportUri).toBe(expected)
       expect(directives(buildCsp(opts)).get("report-uri")).toEqual([expected])
       expect(directives(buildCsp(opts)).get("report-to")).toEqual([CSP_REPORT_GROUP])
-      expect(reportingEndpointsHeader(opts.reportUri)).toBe(`${CSP_REPORT_GROUP}="${expected}"`)
+      expect(reportingEndpointsHeader(expected)).toBe(`${CSP_REPORT_GROUP}="${expected}"`)
     }
   })
 })
 
 describe("reportingEndpointsHeader", () => {
   test("names the report-to group and points it at the report route", () => {
-    expect(reportingEndpointsHeader()).toBe(`${CSP_REPORT_GROUP}="${CSP_REPORT_PATH}"`)
+    expect(reportingEndpointsHeader("/v1/csp-report")).toBe(`${CSP_REPORT_GROUP}="/v1/csp-report"`)
   })
 })
