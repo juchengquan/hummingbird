@@ -1,6 +1,7 @@
 """Q65: a few real Anthropic calls through the real worker and agent-py chat; with
-LIVE_MINIMAX_KEY / LIVE_MINIMAX_URL, MiniMax M3.1 Flash too (wave 10, Q112). No
-output of a key."""
+LIVE_MINIMAX_KEY / LIVE_MINIMAX_URL, MiniMax M3.1 Flash too (wave 10, Q112); and
+the Explain popover's ephemeral runs, signed in and out (wave 12, Q135/Q136/Q139).
+No output of a key."""
 
 import asyncio
 import base64
@@ -13,6 +14,7 @@ import asyncpg
 import httpx
 
 NEXT, PYAPI, SUPA = "http://127.0.0.1:3171", "http://127.0.0.1:8171", "http://127.0.0.1:54871"
+FAKE = "http://127.0.0.1:8172"
 HAIKU = "anthropic/claude-haiku-4.5"
 MINIMAX = "minimax/minimax-m3.1-flash"
 
@@ -190,6 +192,58 @@ async def main():
 
     ok &= await chat_with_tool(HAIKU, "smoke-chat", 4)
 
+    async def explain(model, step, headers):
+        """The Explain popover's run (Q135/Q136): ephemeral — streamed text, no
+        tools even when asked for one (with a workspace whose MCP tool a normal
+        run would have), never a `tasks` row."""
+        label = f"smoke-explain-{uuid.uuid4().hex[:6]}"
+        rid = str(uuid.uuid4())
+        text = []
+        async with http.stream(
+            "POST",
+            f"{PYAPI}/v1/runs",
+            headers=headers,
+            json={
+                "threadId": str(uuid.uuid4()),
+                "runId": rid,
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "user",
+                        "content": f"Call the mcp tool once with label '{label}'. Then explain in "
+                        'one sentence what the word "ok" means in a chat reply.',
+                    }
+                ],
+                "forwardedProps": {"model": model, "ephemeral": True, "workspaceId": str(ws)},
+            },
+        ) as r:
+            run_token = r.headers.get("x-run-token")
+            async for line in r.aiter_lines():
+                if line.startswith("data:"):
+                    ev = json.loads(line[5:])
+                    if ev.get("type") == "TEXT_MESSAGE_CONTENT":
+                        text.append(ev["delta"])
+        reread = {**headers, **({"x-run-token": run_token} if run_token else {})}
+        status = (await http.get(f"{PYAPI}/v1/runs/{rid}", headers=reread)).json()
+        rows = await db.fetchval("select count(*) from public.tasks where id = $1", uuid.UUID(rid))
+        effects = (await http.get(f"{FAKE}/state")).json().get("effects", {})
+        ran = sum(v for k, v in effects.items() if k.startswith(label + ":"))
+        who = "signed in" if "authorization" in headers else "signed out"
+        answer = "".join(text)
+        print(
+            f"{step} explain, ephemeral ({model}, {who}):",
+            r.status_code,
+            status.get("status"),
+            f"tasks rows={rows} tool calls={ran}",
+            answer[:160].replace("\n", " "),
+        )
+        return (
+            status.get("status") == "succeeded" and bool(answer.strip()) and rows == 0 and ran == 0
+        )
+
+    ok &= await explain(HAIKU, 10, api)
+    ok &= await explain(HAIKU, 11, {})
+
     if os.environ.get("LIVE_MINIMAX_KEY"):
         # Wave 10 (Q112): one provider besides Anthropic, through its own route.
         served = (await http.get(f"{PYAPI}/v1/models")).json()
@@ -230,6 +284,7 @@ async def main():
         res = await result(rid) if r.status_code == 202 else None
         print("9 background task on", MINIMAX, r.status_code, row["status"], (res or "")[:200])
         ok &= row["status"] == "done"
+        ok &= await explain(MINIMAX, 12, api)
     print("SMOKE", "PASS" if ok else "FAIL")
     return ok
 

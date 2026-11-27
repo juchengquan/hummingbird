@@ -27,8 +27,10 @@ a task without a system prompt, a tool task approved and resumed, and a
 chat run with a tool. With `LIVE_MINIMAX_KEY` and `LIVE_MINIMAX_URL` (e.g.
 `https://api.minimaxi.com/anthropic/v1`) it also runs MiniMax M3.1 Flash
 through agent-py's own route: `/v1/models` lists it, a chat run with an
-approved tool call and its resume, and a background task. Run it before
-deploying a change to how agent-py calls a model.
+approved tool call and its resume, and a background task. Each model also
+answers the Explain popover's ephemeral run (signed in, and Haiku signed out):
+streamed text, no `tasks` row, and no tool run even when the prompt asks for
+one. Run it before deploying a change to how agent-py calls a model.
 
 `stack.sh` starts and removes only its own containers and processes and
 refuses to run where a `.env` is present, so a developer's real Supabase
