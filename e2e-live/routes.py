@@ -252,6 +252,35 @@ async def main():
             st == "failed" and "no model" in (ev or "").lower(),
             (st, ev),
         )
+        # Q130: nothing here calls the Vercel Cron's route, and stack.sh
+        # leaves SCHEDULER_ENABLED unset: agent-py's scheduler fires this
+        # because its worker is live, and the task runs to the end.
+        sid = uuid.uuid4()
+        await db.execute(
+            """insert into public.task_schedules(id,user_id,workspace_id,name,prompt,cron,timezone,enabled,next_run_at,model)
+            values($1,$2,$3,'s2','SCENARIO:quick/schedok','0 8 * * *','UTC',true,now()-interval '1 minute',$4)""",
+            sid,
+            uuid.UUID(uid),
+            ws,
+            MODEL,
+        )
+        t = None
+        for _ in range(100):
+            t = await db.fetchval(
+                "select last_run_task_id::text from public.task_schedules where id=$1", sid
+            )
+            if t:
+                break
+            await asyncio.sleep(0.2)
+        st = await wait(t, ENDED) if t else "never fired"
+        nxt = await db.fetchval(
+            "select next_run_at > now() from public.task_schedules where id=$1", sid
+        )
+        check(
+            "schedule: fired by agent-py's scheduler by default, runs to done, next occurrence set",
+            st == "done" and nxt is True,
+            (st, nxt),
+        )
 
     async def multi():
         t = await begin("multi", "ma")

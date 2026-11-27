@@ -10,6 +10,10 @@ import "client-only"
  * would fight the sync model), the research hand-off, the board card, the
  * notification — is `settleTask`, once per run.
  *
+ * All of this is the old `/api/tasks` path, off "agent-py (runs)" only.
+ * On runs, a saved pointer to a task started the old way is handed to the
+ * runs list (`./old-pointer.ts`, Q126): nothing here reads `/api/tasks`.
+ *
  * Mount once near the dashboard root, above both consumers.
  */
 
@@ -27,11 +31,14 @@ import { toast } from "sonner"
 import { clearActiveTask, loadActiveTask, saveActiveTask } from "@/client/agent/active-task"
 import { ensureTaskNotificationPermission, notifyTaskNeedsAnswer } from "@/client/agent/notify"
 import { settleTask, type TaskMeta } from "@/client/agent/settle-task"
+import { pathOf, pointerPlan, runsHandOff } from "@/client/agent/old-pointer"
 import { useChildRuns, type ChildRuns } from "@/client/agent/use-child-runs"
 import { useAuth } from "@/client/hooks/use-auth"
 import { modelSwitchNote } from "@/client/hooks/use-model-backend"
 import { useHydrated, useStore } from "@/client/hooks/use-store"
 import { useTaskRun } from "@/client/hooks/use-task-run"
+import { useTasks } from "@/client/runs/tasks/context"
+import { useTaskFocus } from "@/components/agent/tasks/focus"
 import { isTerminalStatus } from "@/shared/agent/events"
 import type { ActiveTaskRecord } from "@/shared/agent/active-task"
 import type { TaskRunView } from "@/shared/agent/project"
@@ -211,28 +218,62 @@ export function TaskRunProvider({ children }: { children: ReactNode }) {
   // (the view is empty; `settleTask` keeps the replay from repeating side
   // effects, which is also why this waits for the store to hydrate). The
   // stream reconciles dead runs when it opens, so a run that died while
-  // away replays its synthetic failure and settles.
+  // away replays its synthetic failure and settles. Off runs only: on
+  // "agent-py (runs)" the runs list follows it (Q126, below).
+  const tasks = useTasks()
+  // Which path follows the pointer, once the store and the session are
+  // read. Only that is a dependency, not the pointer: one this provider
+  // writes itself (`startTask`) is never resumed over its own watch.
+  const path = !hydrated || userId === undefined ? null : pathOf(tasks.availability)
+  const availabilityRef = useRef(tasks.availability)
   useEffect(() => {
-    if (!hydrated || userId === undefined) return
-    const pointer = loadActiveTask(userId)
-    if (!pointer) return
-    if (isTerminalStatus(pointer.status)) {
-      clearActiveTask(pointer.runId, userId)
-      return
-    }
+    availabilityRef.current = tasks.availability
+  }, [tasks.availability])
+  useEffect(() => {
+    if (path === null) return
+    const owner = userId ?? null
+    const pointer = loadActiveTask(owner)
+    const plan = pointerPlan(pointer, availabilityRef.current)
+    if (plan === "clear" && pointer) clearActiveTask(pointer.runId, owner)
+    if (plan !== "old_path" || !pointer || runIdRef.current === pointer.runId) return
     const mode = pointer.mode ?? "default"
     metaRef.current.set(pointer.runId, {
       conversationId: pointer.conversationId,
       title: pointer.title,
       mode,
-      userId,
+      userId: owner,
     })
     setRunConversationId(pointer.conversationId)
     setRunTitle(pointer.title ?? null)
     setRunMode(mode)
     setTasksPanelOpen(true)
     resume(pointer.runId)
-  }, [hydrated, userId, resume, setTasksPanelOpen])
+  }, [path, userId, resume, setTasksPanelOpen])
+
+  // On runs (Q126): the task is the same `tasks` row the runs list shows,
+  // watches (`/v1/runs/{id}/events`), answers, cancels and delivers. An
+  // old-path watch still going (the backend just moved to runs) stops; the
+  // panel opens on the task once, as a reload did; the pointer goes once
+  // the list shows the task ended (it is delivered from there) or doesn't
+  // list it.
+  const onRuns = path === "runs"
+  const handedOffRef = useRef<string | null>(null)
+  const { stop } = run
+  useEffect(() => {
+    if (onRuns) stop()
+  }, [onRuns, stop])
+  useEffect(() => {
+    if (!onRuns) return
+    const owner = userId ?? null
+    const pointer = loadActiveTask(owner)
+    if (!pointer || isTerminalStatus(pointer.status)) return
+    const next = runsHandOff(pointer, { tasks: tasks.tasks, listError: tasks.listError })
+    if (next === "clear") clearActiveTask(pointer.runId, owner)
+    if (next !== "focus" || handedOffRef.current === pointer.runId) return
+    handedOffRef.current = pointer.runId
+    useTaskFocus.getState().focus(pointer.runId)
+    setTasksPanelOpen(true)
+  }, [onRuns, userId, tasks.tasks, tasks.listError, setTasksPanelOpen])
 
   // A question for the user — the task's own or a sub-agent's — notifies a
   // hidden tab, once per question (Q74, survey bug 3).

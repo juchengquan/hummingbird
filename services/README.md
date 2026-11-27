@@ -38,11 +38,13 @@ worker; its stale-run reconciler fails a task no worker started within
 `TASK_NO_WORKER_TIMEOUT_MINUTES` (default 10) with "No task worker
 available".
 
-Recurring runs (`task_schedules`) are enqueued by a dispatcher: today the
-Vercel Cron calling `/api/tasks/jobs/tick` every minute, and — when
-`SCHEDULER_ENABLED=true` — agent-py's own loop (`scheduler.py`). The two
-can run side by side (a guarded `next_run_at` claim fires each occurrence
-once); see `services/agent-py/README.md` § "Scheduled tasks".
+Recurring runs (`task_schedules`) are enqueued by a dispatcher:
+agent-py's own loop (`scheduler.py`), on by default wherever its worker
+runs (`WORKER_DRY_RUN=false` with `SUPABASE_DB_URL`; `SCHEDULER_ENABLED`
+overrides, Q130), and — until wave 13 deletes it — the now-redundant
+Vercel Cron calling `/api/tasks/jobs/tick` every minute. The two can run
+side by side (a guarded `next_run_at` claim fires each occurrence once);
+see `services/agent-py/README.md` § "Scheduled tasks".
 
 ## Why the third backend doesn't live under `services/`
 

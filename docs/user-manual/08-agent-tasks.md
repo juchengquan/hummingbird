@@ -27,7 +27,10 @@ tasks wait for your answer. Click a task to expand it: its text, steps,
 plan, sub-agents and its question. A task that asks opens by itself.
 
 With any other backend, the panel shows the one task this browser
-started, as before.
+started, as before. A task started that way (under another backend, or
+before agent-py (runs) became the default) is in the list like any other
+once you are on agent-py (runs): a reload opens the panel on it while it
+runs, and you answer, cancel and get its result from there.
 
 Either way a task is titled by its goal (the first line of what you
 asked), with its conversation's name under it.

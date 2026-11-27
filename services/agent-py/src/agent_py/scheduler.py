@@ -3,7 +3,8 @@ Cron that calls `/api/tasks/jobs/tick` every minute
 (docs/PLAN-frontend-backend-split.md, Q9).
 
 Started from FastAPI's lifespan next to the job poller when
-`SCHEDULER_ENABLED` is true (and `SUPABASE_DB_URL` is set). Every
+`SCHEDULER_ENABLED` is true (and `SUPABASE_DB_URL` is set) — by default
+wherever the worker is live (`WORKER_DRY_RUN=false`, Q130). Every
 `SCHEDULER_INTERVAL_SECONDS` it runs one `schedules.dispatch_due_schedules`
 pass, which fires due `task_schedules` rows exactly like the TS tick.
 
@@ -11,8 +12,8 @@ Running it at the same time as the Vercel Cron — or on several replicas —
 is safe: every fire is preceded by a guarded update
 (`… WHERE next_run_at = <the value read>`), and under Postgres' row lock
 only the first dispatcher's update matches; the others touch nothing and
-skip the row. So the switch-over is: enable this, watch it fire, then
-remove the cron from `vercel.json`.
+skip the row. So the cron is redundant beside it; wave 13 deletes it
+from `vercel.json`.
 
 Like the poller, the loop survives transient errors (a failed tick is
 logged and retried next interval), only a real `task.cancel()` stops it,
