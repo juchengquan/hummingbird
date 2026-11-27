@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Humm is a Next.js 16.4.6 chat assistant application with a multi-panel interface featuring chat, rich text editor (Plate.js), and file management capabilities.
+Humm is a Next.js 16.4.6 chat assistant application with a multi-panel interface featuring chat, rich text editor (Plate.js), and file management capabilities. The Next app is the frontend only (no API routes, no server secrets); every API surface is served by the Python agent service, agent-py (`services/agent-py/`), which is required (wave 13 of `docs/PLAN-frontend-backend-split.md`, Q121).
 
 ## Commands
 
 ```bash
 # Development
-bun dev              # Start development server on http://localhost:3000
+bun dev              # Start development server on http://localhost:3000 (run agent-py too — see below)
 
 # Build & Production
 bun run build        # Build for production
@@ -21,12 +21,12 @@ bun run lint         # Run ESLint
 bun run typecheck    # Run `tsc --noEmit`
 bun run check        # typecheck + lint (fast — mirrors CI without build/audit)
 bun run check:ci     # typecheck + lint + build + audit:bundle (full CI gate locally)
-bun run test         # split runner (scripts/run-tests.sh): isolates app/api/tasks/ (process-global mock.module mocks) + excludes services/ (own CI jobs); a coverage guard fails if a *.test.ts sits outside the configured roots
+bun run test         # root unit tests (scripts/run-tests.sh): excludes services/ (own CI jobs); a coverage guard fails if a *.test.ts sits outside the configured roots
 bun run test:e2e     # Playwright smoke: starts agent-py (stub harness) + a Next production build; see playwright.config.ts
 bun run test:e2e:wire  # the runs task UI with its real provider over a fake /v1/runs + Supabase (e2e/tasks-wire.config.ts)
-bun run test:e2e:live  # the real stack: Supabase containers, agent-py worker, Next build, scripted model (e2e-live/README.md)
+bun run test:e2e:live  # the real stack: Supabase containers, agent-py worker, Next build, scripted model; fails on any browser request to Next's /api/* (e2e-live/README.md)
 
-# Agent service (Python — Phase 0 of PLAN-agent-api.md)
+# Agent service (Python — the one backend; the app needs it running)
 docker compose up agent-py            # run service in container
 docker compose up proxy agent-py      # + Caddy on :8080, same origin (NEXT_PUBLIC_AGENT_PY_URL=/; README "Same-origin backend")
 bun run codegen:agent-types           # regen lib/shared/agent-py-types.generated.ts
@@ -152,20 +152,102 @@ function MessageTime({ timestamp }) {
 
 ## Environment Variables
 
-See `.env.example` for the full list. Two groups:
+See `.env.example` for the full list. Since wave 13 the Next app reads
+only `NODE_ENV`, `CSP_MODE` and `NEXT_PUBLIC_*` (a check fails the build
+on any other `process.env` read, and `bun run audit:bundle` greps the
+bundle for every server secret's name — Q143). Every server secret and
+setting is agent-py's: see `services/agent-py/README.md` § Configuration
+for the full table. One `.env` is still shared by both; splitting it
+waits for wave 14.
 
-- **AI Gateway** (`AI_GATEWAY_API_KEY`) — required for real chat/editor AI. Without it, the chat panel falls back to a clearly-labeled mock response. Only model ids declared in `config/models.json` are dispatched on this key; any other id is rejected with 400 `unknown_model` unless the request brings its own gateway key (the route still reads a BYO `apiKey`, but the editor no longer has a setting for one — wave 12, Q124). See `selectModel` in `lib/server/model-provider.ts`.
-- **Trusted proxy hops** (`TRUSTED_PROXY_HOPS`, default `1`) — how many reverse proxies in front of Next.js append to `X-Forwarded-For`. `rateLimitKey` (`lib/server/rate-limit.ts`) takes the client IP from the entry that many positions from the right (left entries are client-spoofable); on Vercel (`VERCEL` set) the platform `x-real-ip` / `x-vercel-forwarded-for` headers win. `0` ignores XFF (all anonymous traffic shares one bucket). The same key, hashed, scopes anonymous callers in the summarize response cache. **A reverse proxy is required for per-IP limits** — `next start` only sets XFF when the client sent none, so with Next exposed directly clients pick their own key; production boot warns (`instrumentation.ts` → `warnOnProxyConfig`) when the var is unset or `0` outside a known platform. See `docs/SECURITY.md`.
-- **Minimax-CN override** (`MINIMAX_CN_BASE_URL`, `MINIMAX_CN_API_KEY`) — optional. When both are set, any `minimax/*` model id is dispatched through an OpenAI-compatible client at the configured base URL instead of going through the Vercel AI Gateway. Useful for the Minimax China endpoint or a self-hosted Minimax-compatible gateway. Either var unset → fallthrough to the gateway, as if the override didn't exist. See `lib/server/model-provider.ts`. The same key powers the `generateImage` skill; the image endpoint is derived from `MINIMAX_CN_BASE_URL`'s origin (image and chat share a host but live under different paths), falling back to `https://api.minimaxi.com/` when `MINIMAX_CN_BASE_URL` is unset. See `lib/server/skills/minimax-image-client.ts`.
-- **Ollama** (`OLLAMA_BASE_URL`, optional `OLLAMA_API_KEY`). When `OLLAMA_BASE_URL` is set (typically `http://localhost:11434/v1`), `ollama/*` models route through Ollama's OpenAI-compatible endpoint. The `ollama` provider in `config/providers.json` carries `allowInsecureBaseUrl: true` which relaxes two checks: the SSRF gate accepts `http://localhost` / loopback / private-network hosts, and the API key becomes optional (Ollama doesn't enforce auth). Only enable this for endpoints you control — by setting it you take responsibility for the upstream URL not being a credential-exfiltration sink. A malformed URL still fails at boot.
-- **OpenRouter** (`OPENROUTER_API_KEY`). When set, the `openrouter` provider activates and any `openrouter/*` model id dispatches against `https://openrouter.ai/api/v1`. Special model `openrouter/auto` lets OpenRouter pick the upstream per request based on prompt length, latency budget, and price; specific upstream ids (`openrouter/anthropic/claude-sonnet-4.5`, etc.) route to that exact model. The base URL is fixed in `config/providers.json` (not env-overridable) because OpenRouter is a hosted gateway with no self-host story.
-- **Supabase** (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`) — optional. Enables email magic-link sign-in and (eventually) cloud sync of workspaces, conversations, files, and conversation assets. Without it the app runs anonymously on `localStorage` only; the auth UI is hidden.
-- **Require sign-in for AI** (`REQUIRE_AUTH_FOR_AI`) — optional, default off. When `true`/`1` **and** Supabase is configured, the model-spending routes (`/api/chat`, `/api/summarize`, `/api/ai/command`, `/api/ai/complete`, `/api/extract-table`, `/api/memory/extract`) return `401 { code: "auth_required" }` to anonymous callers, checked with `getUser()` before the body is read; `/api/extract` stays open but skips the vision pass for them. Off / Supabase unset → anonymous mode unchanged. Strict parsing (`true`/`false`/`1`/`0`); any other value throws, so the gated routes 500 rather than silently staying open. Helper: `lib/server/auth/require-ai-auth.ts` (`requireAiAuth()`). The client maps `auth_required` to a "Sign in required" error bubble / toast with a Sign in action (`lib/client/auth/auth-required.ts`), never the no-key mock fallback (that's the separate `auth` code).
-- **MCP encryption** (`MCP_ENCRYPTION_KEY`) — required when any user picks Cloud-mode credentials for an MCP server. Generate with `openssl rand -base64 32`. Stored only in the Next.js server env; never persisted to Postgres. Rotating it invalidates existing cloud-mode credentials (users have to re-add).
-- **MCP private hosts** (`MCP_ALLOW_PRIVATE_HOSTS`) — optional, default off. Every MCP server URL (proxy route, chat `mcpServers`, cloud rows, `/api/mcp/server` saves) passes `validateOutboundUrl` and must be public; outbound MCP + bookmark fetches go through `lib/server/url/guarded-fetch.ts`, whose undici dispatcher re-checks the resolved IP at connect time (DNS-rebinding guard) and re-validates every redirect. Set `true` to allow loopback / RFC 1918 / `.local` hosts for a local dev MCP server; link-local + cloud-metadata addresses stay blocked regardless. Never enable on a shared deployment. See `lib/server/mcp/outbound.ts`. agent-py reads the same variable for its MCP traffic (`url_validate.OutboundUrlPolicy`, checked at validation and at connect time) but parses it strictly: only `true` enables it, any value other than `true` / `false` / empty stops it at boot.
-- **Code interpreter sandbox** (`CODE_SANDBOX_BASE_URL`, optional `CODE_SANDBOX_API_KEY`) — optional. When `CODE_SANDBOX_BASE_URL` is set, the `runCode` skill registers and runs model-written Python in a local **microsandbox** microVM (libkrun; HVF on Apple Silicon / KVM on Linux). Network is OFF inside the sandbox (airgapped); the pre-baked `python` image carries pandas/numpy/matplotlib; charts are produced via `savefig('/tmp/*.png')` and read back. Absent → the skill is simply not in `SERVER_SKILLS` (no mock — code execution has no meaningful mock), exactly like image-gen degrades without a Minimax key. Adapter lives in `lib/server/code-sandbox/` behind the `CodeSandbox` interface, so another provider drops in via the env seam. Caps via `CODE_SANDBOX_TIMEOUT_MS` / `_STDOUT_CAP` / `_RESULT_CAP` / `_MEM_MIB` / `_CPUS`. See `docs/PLAN-execution-sandbox.md` (runtime) + `docs/PLAN-code-interpreter.md` (consumer). agent-py reads the same variables for `runCode` on runs (wave 8: Python SDK `microsandbox==0.8.2`, the `sandbox` extra, a short `MSB_HOME` of its own; registered only where a startup check passes) — `services/agent-py/README.md` § Code interpreter.
-- **Vision document extraction** (`VISION_MODEL`) — optional. On top of the text-only extraction (`lib/server/extraction.ts`), layout-rich or scanned PDFs get a best-effort vision pass: pages are rendered to images (`pdf-to-img`, isolated in a Node worker thread so its bundled pdfjs can't collide with `pdf-parse`'s — see `lib/server/extraction/render-pdf.ts`) and transcribed to markdown (tables → markdown tables, figures → captions) by a vision-capable model, merged into the result's `text`/`fullText`. Gated by `shouldUseVision` (PDF + low text-yield or table-dense) and a per-IP budget; never fatal (any failure → text-only). `VISION_MODEL` overrides which model is used; it must be flagged `supportsVision` in `config/models.json`. Unset → first `supportsVision` model; none flagged → vision skipped. PR-1 of `docs/PLAN-multimodal-docs.md` (structured blocks + `file_sections` indexing + table rendering are PR-2/PR-3).
-- **Content-Security-Policy** (`CSP_MODE`) — optional, `report-only` (default) | `enforce` | `off`; unset/unknown → `report-only`. `proxy.ts` (Next 16's renamed middleware) mints a per-request nonce, puts the policy on the request (Next reads the nonce from it and stamps its own scripts; `app/layout.tsx` reads `x-nonce` for the inline theme script — so every page renders dynamically) and on the response, plus `Reporting-Endpoints`. The policy is a pure builder in `lib/server/security/csp.ts` (nonce + `'strict-dynamic'` scripts, `'unsafe-inline'` styles, Supabase https+wss and `NEXT_PUBLIC_API_BASE_URL` / `NEXT_PUBLIC_AGENT_{PY,TS}_URL` origins in `connect-src`). Reports land at `POST /api/csp-report` (`lib/server/security/csp-report.ts`) and are logged as one `{"evt":"csp_violation",…}` line each. Static headers (nosniff, Referrer-Policy, Permissions-Policy, X-Frame-Options, production HSTS) live in `next.config.ts` `headers()`. A new third-party origin the browser talks to must be added to the builder. Live-artifact and MCP-app iframes never use `srcdoc` (it would inherit the app policy and block their scripts under `enforce`): they load the static shell `GET /sandbox/frame` (`app/sandbox/frame/route.ts`, excluded from the proxy matcher) with `sandbox="allow-scripts"` and post the HTML in (`components/live-artifact/sandboxed-frame.tsx`, protocol in `lib/shared/sandbox-frame.ts`); the shell sends its own always-enforced CSP from `lib/server/security/sandbox-frame.ts` (inline + pinned CDNs, `connect-src 'none'`, `frame-ancestors 'self'`). See `docs/SECURITY.md` for reading reports and when to flip to `enforce`.
+**The frontend (Next):**
+
+- **agent-py URL** (`NEXT_PUBLIC_AGENT_PY_URL`) — where the browser
+  reaches agent-py (`/` behind the same-origin proxy; README "Same-origin
+  backend"). A deploy without it still builds, but the app (share pages
+  too) shows a full-page "This deploy has no backend configured" screen
+  pointing at the setup docs (Q137).
+- **Supabase** (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`)
+  — optional. Enables password sign-in and cloud sync of workspaces,
+  conversations, files, and conversation assets. Without it the app runs
+  anonymously on `localStorage` only; the auth UI is hidden. The session
+  stays in `@supabase/ssr`'s cookie storage in the browser (Q144).
+- **Content-Security-Policy** (`CSP_MODE`) — optional, `report-only`
+  (default) | `enforce` | `off`; unset/unknown → `report-only`.
+  `proxy.ts` (Next 16's renamed middleware) mints a per-request nonce,
+  puts the policy on the request (Next reads the nonce from it and stamps
+  its own scripts; `app/layout.tsx` reads `x-nonce` for the inline theme
+  script — so every page renders dynamically, and Next stays a server,
+  Q128) and on the response. The policy is a pure builder in
+  `lib/server/security/csp.ts` (nonce + `'strict-dynamic'` scripts,
+  `'unsafe-inline'` styles, Supabase https+wss and the
+  `NEXT_PUBLIC_AGENT_PY_URL` / `NEXT_PUBLIC_API_BASE_URL` origins in
+  `connect-src`). Reports go to agent-py's `POST /v1/csp-report`
+  (logged as one `{"evt":"csp_violation",…}` line each); with no agent-py
+  URL the policy carries no `report-uri` (Q140). Static headers (nosniff,
+  Referrer-Policy, Permissions-Policy, X-Frame-Options, production HSTS)
+  live in `next.config.ts` `headers()`. A new third-party origin the
+  browser talks to must be added to the builder. Live-artifact and
+  MCP-app iframes never use `srcdoc` (it would inherit the app policy and
+  block their scripts under `enforce`): they load the static shell `GET
+  /sandbox/frame` (`app/sandbox/frame/route.ts`, excluded from the proxy
+  matcher) with `sandbox="allow-scripts"` and post the HTML in
+  (`components/live-artifact/sandboxed-frame.tsx`, protocol in
+  `lib/shared/sandbox-frame.ts`); the shell sends its own always-enforced
+  CSP from `lib/server/security/sandbox-frame.ts` (inline + pinned CDNs,
+  `connect-src 'none'`, `frame-ancestors 'self'`). `lib/server` is just
+  these two modules now. See `docs/SECURITY.md` for reading reports and
+  when to flip to `enforce`.
+
+**agent-py** (details and defaults: `services/agent-py/README.md`
+§ Configuration):
+
+- **Model providers** — `ANTHROPIC_API_KEY` (+ `ANTHROPIC_BASE_URL`),
+  `AI_GATEWAY_API_KEY`, `OPENROUTER_API_KEY`, `MINIMAX_CN_API_KEY` +
+  `MINIMAX_CN_BASE_URL` (also `generateImage`), `OLLAMA_BASE_URL` (+
+  `OLLAMA_API_KEY`; the `ollama` provider's `allowInsecureBaseUrl` lets a
+  loopback / private host through — only for endpoints you control). Each
+  catalog model (`config/models.json`) is served by the first configured
+  provider in its `routes` (`config/providers.json`); `GET /v1/models`
+  lists what runs. With no provider configured there is no mock answer:
+  the picker and the chat say so plainly, pointing at the setup docs
+  (Q131).
+- **Supabase (server side)** — `SUPABASE_JWT_SECRET` or a JWKS URL
+  (verifies the browser's access token), `SUPABASE_DB_URL` (the direct
+  connection: worker, scheduler, reconciler, runs), `SUPABASE_URL`.
+- **Require sign-in for AI** (`REQUIRE_AUTH_FOR_AI`) — optional, default
+  off. `true`/`1` refuses anonymous runs and anonymous calls to the
+  signed-out endpoints with `401 { code: "auth_required" }`; `/v1/extract`
+  is served without its vision pass. Strict values; anything else fails
+  closed. The client maps `auth_required` (also what a tokenless
+  account-bound call gets, Q142) to a "Sign in required" bubble / toast
+  with a Sign in action (`lib/client/auth/auth-required.ts`).
+- **Trusted proxy hops** (`TRUSTED_PROXY_HOPS`, default `1`;
+  `CLIENT_IP_HEADER`) — how agent-py takes the client IP for its per-IP
+  limits: the `X-Forwarded-For` entry that many places from the right
+  (left entries are client-spoofable), or a single-value header a trusted
+  edge overwrites. **A reverse proxy in front of agent-py is required for
+  per-IP limits.** See `docs/SECURITY.md`.
+- **MCP** — `MCP_ENCRYPTION_KEY` (cloud-mode MCP credentials;
+  `openssl rand -base64 32`; never persisted; rotating it invalidates
+  stored credentials) and `MCP_ALLOW_PRIVATE_HOSTS` (default off; only
+  the exact value `true` lets MCP traffic reach loopback / RFC 1918 /
+  `.local` hosts — a dev MCP server — re-checked at connect time;
+  link-local and cloud-metadata stay blocked; any value other than
+  `true` / `false` / empty stops the service at boot). Never enable it on
+  a shared deployment.
+- **Code interpreter** (`CODE_SANDBOX_BASE_URL` and `CODE_SANDBOX_*` caps)
+  — `runCode` in a local **microsandbox** microVM (airgapped; the
+  `sandbox` extra), registered only where a startup check passes;
+  absent → no `runCode` (no mock). `services/agent-py/README.md` § Code
+  interpreter; `docs/PLAN-execution-sandbox.md`.
+- **Vision document extraction** (`VISION_MODEL`) — the catalog model
+  `/v1/extract`'s best-effort PDF vision pass uses (must be flagged
+  `supportsVision` and served); unset → the first such model; none → no
+  vision pass.
+- **Worker / scheduler / reconciler** — `WORKER_DRY_RUN`,
+  `SCHEDULER_ENABLED`, `RUNS_RECONCILE_*`, `TASK_NO_WORKER_TIMEOUT_MINUTES`
+  (below, § Agent service).
 
 SQL lives under `supabase/migrations/` as numbered files applied in order (`0001_schema.sql`,
 `0002_rls_policies.sql`, `0003_storage.sql`, `0004_conversation_files.sql`,
@@ -200,16 +282,14 @@ restrictive pair, otherwise a user can hang rows off another user's data
 via PostgREST.
 
 **Worker tables are not user-writable (0034/0035).** `anon` /
-`authenticated` cannot INSERT `tasks` or write `task_jobs`; API code
-creates runs with the `create_task_run` RPC and enqueues with
-`enqueue_task_job` (`lib/server/agent/task-writes.ts`, used by
-`jobs.ts`). `tasks` UPDATE is column-granted to `status` / `finished_at`
+`authenticated` cannot INSERT `tasks` or write `task_jobs`; runs are
+created with the `create_run` / `create_task_run` RPCs and enqueued with
+`enqueue_task_job`. `tasks` UPDATE is column-granted to `status` / `finished_at`
 / `updated_at`, and a trigger only allows a live run → `cancelled` /
 `failed`. `task_schedules` is column-granted (no `last_run_at` /
 `last_run_task_id`), with a trigger enforcing a coarse cron floor and
-20 enabled schedules per user; routes validate the exact ≥ 5 min gap
-(`validateScheduleCron`). Workers (agent-py / agent-ts, DSN role) and the
-service-role client are unaffected. A new column a route must write
+20 enabled schedules per user; agent-py's schedule routes validate the
+exact ≥ 5 min gap. The worker (agent-py, DSN role) is unaffected. A new column a route must write
 needs a matching column GRANT.
 
 **Runs live on the task tables (0041).** A `tasks` row is also a run of
@@ -249,9 +329,8 @@ skipped (Q60); the sub-agent barrier is the `tasks_ended` /
 `tasks_deleted` triggers, never a worker's decrement; every multi-row
 writer locks in one order — conversation key share →
 `private.lock_user_tasks` → task rows → job row. Migrate before deploying
-agent-py, with no older agent-py running. **Every old task surface only sees `mode = 'background'`** — a new
-reader of `tasks` for the task routes must filter on it too (see
-`lib/server/agent/store.ts`).
+agent-py, with no older agent-py running. **A task list only sees `mode = 'background'`** — a new
+reader of `tasks` for tasks must filter on it too.
 
 ## Frontend module conventions
 
@@ -262,7 +341,7 @@ the boundary at build time:
 | Folder | Runtime | Fence | Allowed imports |
 |---|---|---|---|
 | `lib/client/`  | Browser only | `import "client-only"` | `@/client/*`, `@/shared/*` |
-| `lib/server/`  | Node only (route handlers, server components) | `import "server-only"` | `@/server/*`, `@/shared/*` |
+| `lib/server/`  | Node only (`proxy.ts`, the sandbox-frame route) — since wave 13 just `security/csp.ts` + `security/sandbox-frame.ts` | `import "server-only"` | `@/server/*`, `@/shared/*` |
 | `lib/shared/`  | Isomorphic (pure, no I/O) | none | `@/shared/*` only |
 
 Path aliases (`tsconfig.json`): `@/client/*`, `@/server/*`, `@/shared/*`.
@@ -273,40 +352,39 @@ to confirm no server-only paths or secret env-var names leaked into
 
 When adding a new file, classify by runtime first:
 - Touches `window`, `document`, `localStorage`, React hooks, or Zustand store → `lib/client/`
-- Reads `process.env`, server-only secrets, or uses `next/headers` / `cookies()` → `lib/server/`
+- Runs in `proxy.ts` / a Node route and isn't browser-safe → `lib/server/` (it holds no secrets: Next reads only `NODE_ENV`, `CSP_MODE` and `NEXT_PUBLIC_*`; anything needing a secret belongs in agent-py)
 - Pure types, Zod schemas, helpers, constants → `lib/shared/`
 
 ## API contract
 
-Frontend → backend communication is centralised in `lib/client/api-client.ts`.
-Components and hooks must call `apiClient.*` (or read URLs from
-`apiUrls.*` for libraries like Plate that take a URL string) — never
-`fetch('/api/...')` directly. The wire shapes are pinned in
-`lib/shared/api-schemas.ts` (Zod request + response schemas) and
-`docs/API.md` (the SSE streaming protocol).
+Frontend → backend communication is centralised in `lib/client/api-client.ts`
+(and the runs client under `lib/client/runs/`). Components and hooks must
+call `apiClient.*` (or read URLs from `apiUrls.*` for libraries like Plate
+that take a URL string) — never `fetch` a backend path directly. Every
+call goes to agent-py (`NEXT_PUBLIC_AGENT_PY_URL`); an account-bound call
+without a session goes tokenless and gets agent-py's `401 auth_required`
+(Q142). The wire shapes are pinned by the spec-first contract
+(`packages/contract/openapi.yaml` → generated TS types + agent-py's
+Pydantic models; run events in `packages/contract/RUN_EVENTS.md`), by
+`lib/shared/api-schemas.ts`, and by `docs/API.md`.
 
 When adding a new endpoint, follow the checklist at the bottom of
-`docs/API.md`. The plan in `docs/PLAN-backend-extraction.md` describes
-the eventual swap to a Python backend; the client + schemas + doc
-together are the contract that has to survive that swap.
+`docs/API.md`: it goes into the contract and agent-py — Next has no API
+routes.
 
-## The three backends
+## One backend
 
-Hummingbird ships with **three interchangeable backends** for `/v1/chat`
-+ the four non-chat endpoints. Two live under `services/`; the third
-is the original Next.js inline implementation split across
-`app/api/**/route.ts` (route handlers — must live there because
-Next.js's App Router resolves URLs by filesystem) and `lib/server/**`
-(server-side libs called by both the route handlers and Server
-Components). The frontend picks one per account via
-`lib/client/api/backend-resolver.ts`'s `DispatchOption` (`'in-next'` /
-`'remote'`). See [`services/README.md`](services/README.md) for the
-full per-surface entry-point map and the rationale for why the third
-backend doesn't live under `services/`. **agent-ts is frozen** (bug and
-security fixes only, no new endpoints; Q11 of
-`docs/PLAN-frontend-backend-split.md`) and doesn't import `lib/`: what
-it used is vendored under `services/agent-ts/src/vendor/`, so fixes to
-the `lib/` originals don't reach it. See `services/agent-ts/README.md`.
+agent-py (`services/agent-py/`) is the only backend (Q121). It serves
+chat (interactive runs on `/v1/runs`), tasks (background runs, the
+worker, the scheduler, the no-worker reconciler), the editor AI, the
+signed-out calls, MCP, share links, schedules, memory, embeddings, file
+links and CSP reports. The chat-backend switch, the in-Next API routes
+(`app/api/**`) with the `lib/server` code behind them, agent-ts
+(`services/agent-ts/`, Q129), agent-py's old `/v1/chat` route and the
+Vercel Cron (`vercel.json`) were removed in wave 13. A future TypeScript
+backend would be another deploy URL, started fresh against the contract's
+conformance suite — not a user setting. See
+[`services/README.md`](services/README.md).
 
 ## Agent service (Python — Phases 0+1+2a)
 
@@ -318,9 +396,9 @@ mode — claims a job, structured-logs it, releases it back. **Phase 2a**
 added the executor pattern end-to-end: TaskEvent IR, RunEmitter,
 RunStore writes, the agent loop, a per-user opt-out, and the
 executor. Later phases added the real model + tools, `continue` /
-`respond`, subagents and lease-based crash recovery. **agent-py is the
-task executor for every user** (agent-ts has no executor; its poller is
-off unless `AGENT_TS_POLLER_ENABLED`).
+`respond`, subagents and lease-based crash recovery; then the runs API,
+chat and every other surface. **agent-py is required** — the app's only
+backend and the task executor for every user.
 
 Stack: Python 3.12 · FastAPI · uv (package manager) · PyJWT ·
 asyncpg · structlog · pytest · ruff · mypy.
@@ -330,7 +408,7 @@ asyncpg · structlog · pytest · ruff · mypy.
 | `services/agent-py/src/agent_py/main.py` | FastAPI app + endpoints. Lifespan owns the DB pool + the poller task. |
 | `services/agent-py/src/agent_py/auth.py` | Supabase JWT verification middleware (HS256 against `SUPABASE_JWT_SECRET`; ES256 / RS256 against the project's JWKS, `jwks.py`). |
 | `services/agent-py/src/agent_py/settings.py` | `pydantic-settings` config. Reads the repo-level `.env`. |
-| `services/agent-py/src/agent_py/model_allowlist.py` | Model allowlist — every `config/models.json` id, each with its target (provider + the id it knows the model by) and its catalog flags. Loaded + validated at `create_app`. agent-ts twin (Anthropic-only, frozen): `services/agent-ts/src/models.ts`. |
+| `services/agent-py/src/agent_py/model_allowlist.py` | Model allowlist — every `config/models.json` id, each with its target (provider + the id it knows the model by) and its catalog flags. Loaded + validated at `create_app`. |
 | `services/agent-py/src/agent_py/model_routes.py` | Which provider serves each model (wave 10): `config/providers.json` + the variables it names, all spoken to in the Anthropic Messages format; one SDK client per provider with explicit credentials. |
 | `services/agent-py/src/agent_py/db.py` | asyncpg pool lifecycle. Open on startup if `SUPABASE_DB_URL` is set; close on shutdown. |
 | `services/agent-py/src/agent_py/jobs.py` | `claim_next_job` (Phase 1) + `release_job_to_queue` (Phase 1 dry-run) + `mark_job_done` / `mark_job_failed` (Phase 2a settlement). |
@@ -366,28 +444,28 @@ value (e.g. `'off'`) → the job and task are failed up front ("Background
 tasks are disabled for this account"). To opt a user out:
 `UPDATE auth.users SET raw_app_meta_data = COALESCE(raw_app_meta_data,
 '{}'::jsonb) || '{"agent_backend":"off"}'::jsonb WHERE id = '<uuid>';`
-(undo: `raw_app_meta_data - 'agent_backend'`). Safety net: the Next.js
-stale-run reconciler (`lib/server/agent/store.ts`) fails a task still
-`queued` and never started after `TASK_NO_WORKER_TIMEOUT_MINUTES`
-(default 10) with "No task worker available" — but only when no worker
-has executed anything in that window (`task_worker_active_within`,
-migration 0040), so a busy worker's backlog waits instead. The service reads the
-same top-level `.env` as Next.js.
+(undo: `raw_app_meta_data - 'agent_backend'`). Safety net: agent-py's
+no-worker reconciler (`runs/reconcile.py`, `RUNS_RECONCILE_*`) fails a
+task still `queued` and never started after
+`TASK_NO_WORKER_TIMEOUT_MINUTES` (default 10) with "No task worker
+available" — but only when no worker has executed anything in that
+window (`task_worker_active_within`, migration 0040), so a busy worker's
+backlog waits instead. Schedules are fired by agent-py's scheduler,
+which is on wherever its worker runs (Q130). The service reads the same
+top-level `.env` as Next.js (split in wave 14).
 
-**Model allowlist (agent-py + agent-ts):** agent-py (wave 10) accepts
+**Model allowlist:** agent-py (wave 10) accepts
 every `config/models.json` id and serves each on its provider
 (`model_routes.py`): the catalog's `routes`, first configured provider
 first, all in the Anthropic Messages format (the AI Gateway, OpenRouter,
 Ollama, Minimax), with an `anthropic/*` model sent to Anthropic directly
-(its `anthropicModelId`) when `ANTHROPIC_API_KEY` is set. Keys are the
-variables Next reads (`AI_GATEWAY_API_KEY`, `OPENROUTER_API_KEY`,
-`MINIMAX_CN_*`, `OLLAMA_*`). A catalog id without a provider is 503, any
+(its `anthropicModelId`) when `ANTHROPIC_API_KEY` is set. Keys:
+`AI_GATEWAY_API_KEY`, `OPENROUTER_API_KEY`, `MINIMAX_CN_*`, `OLLAMA_*`. A catalog id without a provider is 503, any
 other id 400 `unknown_model`; `GET /v1/models` lists what runs, and the
 browser's picker follows it (`lib/shared/served-models.ts`). Forced tool
 calls run on a model only if it's `supportsStructuredOutput`, else on the
 default; `supportsTools: false` / `thinksUnprompted` are agent-py's own
-flags. agent-ts accepts only the `anthropic/*` entries (frozen).
-`AGENT_DEFAULT_MODEL` (default `anthropic/claude-haiku-4.5`) covers a
+flags. `AGENT_DEFAULT_MODEL` (default `anthropic/claude-haiku-4.5`) covers a
 model-less request, the suggestion chips and those structured calls, and
 must be in the catalog or the service won't boot. agent-py finds the
 catalog by walking up from the package, or via `MODELS_CONFIG_PATH`
@@ -407,7 +485,7 @@ SSE, background → `202`), `GET /v1/runs` (list), `GET /v1/runs/{id}`,
 place to swap an implementation; a run is a `tasks` row (0041) for a
 signed-in caller with `SUPABASE_DB_URL`, else in memory. Event mapping
 and stream rules: `packages/contract/RUN_EVENTS.md`. Settings:
-`REQUIRE_AUTH_FOR_AI` (refuses anonymous runs, as on Next) and
+`REQUIRE_AUTH_FOR_AI` (refuses anonymous runs) and
 `RUNS_*` (lease/heartbeat, reaper interval, memory TTL/cap, per-IP
 rate limits — `services/agent-py/README.md` § Configuration).
 `RUNS_STUB_HARNESS=true` swaps the native harness (today's chat loop,
@@ -415,15 +493,14 @@ needs `ANTHROPIC_API_KEY`) for a model-free stub — for the contract
 conformance suite (`CONTRACT_RUNS_STUB=1`) only.
 
 **Editor AI (`/v1/ai/command`, `/v1/ai/complete`, wave 9 / Phase 4).**
-agent-py serves the Plate editor's AI menu and ghost text where it
-serves chat (`python` signed in, `python-runs` signed in or out;
-`lib/shared/editor-ai/routing.ts` — the editor's own-key setting is gone, Q124).
-The browser renders the document to text (`components/editor/ai/`); the
-prompts live in `lib/shared/editor-ai/` and agent-py's port
-(`services/agent-py/src/agent_py/editor_ai/`) is pinned to them by
-`components/editor/ai/editor-ai.parity.test.ts` and to the route's streams
-by `app/api/ai/command/stream.fixture.test.ts` — regenerate both fixtures
-after changing a prompt (`services/agent-py/README.md` § Editor AI).
+agent-py serves the Plate editor's AI menu and ghost text, signed in or
+out (the editor's own-key setting is gone, Q124). The browser renders the
+document to text (`components/editor/ai/`); the prompts live in agent-py
+(`services/agent-py/src/agent_py/editor_ai/`), pinned by its own frozen
+golden files (`tests/fixtures/editor_ai_parity.json`,
+`editor_ai_streams.json`, each naming the commit it was generated at —
+Q141). Change a prompt there and update the golden files with it
+(`services/agent-py/README.md` § Editor AI).
 
 **Deploy target decided** — self-host on a small VM (Hetzner CX22 as
 the named example, ~€4.5/mo; home server / NAS as a parallel option
