@@ -65,6 +65,24 @@ export const validRequestBodies: Record<string, unknown> = {
     toolName: "generate",
   },
   editorAiComplete: { blockText: "Conformance probe" },
+  // --- 0.8.0 (wave 12): extraction, summaries, bookmarks, MCP ---
+  // Anonymous callers may use all but upsertMcpServer, so for those only
+  // the malformed / non-Bearer token cases apply in auth.test.ts.
+  // `extractFile` is multipart: these are its form fields (`file` a text
+  // file's content — see `formBody`).
+  extractFile: { file: "Conformance probe: a short text file." },
+  summarize: { mode: "file", name: "probe.txt", text: "Conformance probe: the sky is blue." },
+  fetchUrl: { url: "https://example.com/" },
+  // A link-local endpoint: every MCP outbound policy refuses it, so even a
+  // signed-in or anonymous caller that got past auth never reaches it.
+  mcpProxy: { server: { id: "conformance-mcp", name: "Probe", url: "http://169.254.169.254/mcp" } },
+  upsertMcpServer: {
+    id: "conformance-mcp",
+    workspaceId: "00000000-0000-4000-8000-000000000001",
+    name: "Probe",
+    url: "https://example.com/mcp",
+    credentials: { headers: { Authorization: "Bearer probe" } },
+  },
   // In-place answer to a sub-agent run's question (0.5.0, Q59).
   answerRun: {
     resume: [{ interruptId: "conformance-question", status: "resolved", payload: { approved: false } }],
@@ -80,4 +98,6 @@ export const pathParams: Record<string, string> = {
   token: "conformance-unknown-share-token",
   id: "00000000-0000-4000-8000-0000000000aa",
   runId: "00000000-0000-4000-8000-0000000000cc",
+  serverId: "conformance-mcp",
+  action: "discover",
 }

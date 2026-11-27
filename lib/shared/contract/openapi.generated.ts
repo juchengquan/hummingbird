@@ -178,8 +178,51 @@ export interface paths {
          *     row is not visible to the caller yet (`file_not_found` — the client
          *     retries with backoff while its metadata sync catches up). `force`
          *     drops the file's sections and rebuilds them. Spends embedder budget.
+         *
+         *     Signed in or anonymous (0.8.0, Q123/Q134): `file_sections` rows
+         *     belong to a user, so an anonymous call indexes nothing and answers
+         *     `skipped` / `not_signed_in` (after `not_configured`, when that
+         *     applies); it is refused under `REQUIRE_AUTH_FOR_AI` and limited per
+         *     client IP (`429 rate_limit`).
          */
         post: operations["embedFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/extract": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Extract the text of an uploaded file
+         * @description Multipart upload (`file`, plus an optional `vision` field) → the
+         *     file's text, classified by kind. Mirrors `app/api/extract/route.ts`:
+         *     PDF / DOCX / spreadsheet / HTML / code / plain-text extractors, an
+         *     inline `text` budget (~100 KB, `truncated` when cut) and, when the
+         *     file had more, `fullText` (up to ~1 MB). Images and unknown types
+         *     answer `image` / `unsupported` with no text.
+         *
+         *     A layout-rich or scanned PDF may also get a vision pass (pages
+         *     transcribed to markdown by a vision-capable model, merged into
+         *     `text` / `fullText`): automatic by default, forced with
+         *     `vision=true` or skipped with `vision=false`. Best effort — any
+         *     failure, an exhausted per-IP vision budget or no vision model leaves
+         *     the text-only result. Results are cached by file content.
+         *
+         *     Signed in (bearer) or anonymous (Q123/Q134): text extraction spends
+         *     no model budget, so an anonymous caller is served even under
+         *     `REQUIRE_AUTH_FOR_AI` — but without the vision pass. Anonymous
+         *     callers are limited per client IP (`429 rate_limit`).
+         */
+        post: operations["extractFile"];
         delete?: never;
         options?: never;
         head?: never;
@@ -201,6 +244,9 @@ export interface paths {
          *     sources, a model extracts a `CitationTable` artefact whose cells cite
          *     quotes from the numbered sources (`s1`, `s2`, ... in request order).
          *     Mirrors `app/api/extract-table/route.ts`. Spends model budget.
+         *
+         *     Signed in or anonymous (0.8.0, Q123/Q134): an anonymous caller is
+         *     refused under `REQUIRE_AUTH_FOR_AI` (`401 auth_required`).
          */
         post: operations["extractTable"];
         delete?: never;
@@ -250,6 +296,69 @@ export interface paths {
          *     the object is missing or Storage is not configured.
          */
         post: operations["refreshImageUrl"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/{serverId}/{action}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discover, call a tool on, or read a resource of an MCP server
+         * @description The browser's MCP proxy (discovery, resource reads and MCP-app tool
+         *     calls; a run's own MCP calls never come here). Mirrors
+         *     `app/api/mcp/[serverId]/[action]/route.ts`:
+         *
+         *     * `discover` → `{ capabilities: { tools, resources, prompts } }`;
+         *     * `call` (needs `tool`) → `{ result: { text, isError } }`;
+         *     * `read` (needs `uri`) → `{ result: { text, mimeType } }`.
+         *
+         *     The credential is the `X-MCP-Credentials` header (a local-mode
+         *     server: base64 of the JSON credential) or, without it, the caller's
+         *     own cloud-mode row for `serverId`, whose stored URL then replaces the
+         *     body's. Whichever URL is called passes the MCP outbound guard
+         *     (`400 invalid_server_url`, with its `reason`). An upstream failure is
+         *     `502 mcp_upstream_error`, its text never echoed.
+         *
+         *     Signed in or anonymous (Q123/Q134) — anonymous on the local path
+         *     only: no cloud-mode lookup, refused under `REQUIRE_AUTH_FOR_AI`,
+         *     limited per client IP (`429 rate_limit`).
+         */
+        post: operations["mcpProxy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/server": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Save a cloud-mode MCP server and its encrypted credential
+         * @description Creates or updates one of the caller's `mcp_servers` rows in cloud
+         *     mode, encrypting `credentials` server-side (the browser has no key).
+         *     Mirrors `app/api/mcp/server/route.ts`. The URL must pass the MCP
+         *     outbound guard (`400 mcp_url_blocked`, with its `reason`). A server
+         *     id another user holds is `409 mcp_server_id_conflict`, a workspace
+         *     the caller doesn't own `404 workspace_not_found`; the encryption key
+         *     unset is `500 encryption_key_unset`. Signed-in only (account-bound).
+         */
+        post: operations["upsertMcpServer"];
         delete?: never;
         options?: never;
         head?: never;
@@ -712,6 +821,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/summarize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Summarise a file or a conversation, compress a thread, or break down a goal
+         * @description Synchronous JSON, one of four modes (`mode`):
+         *
+         *     * `file` → `{ summary, keyTopics }` — a file's extracted text;
+         *     * `conversation` → `{ summary, keyPoints, decisions }`;
+         *     * `compress` → `{ recap }` — markdown bullets meant to replace the
+         *       messages in the next turn's history;
+         *     * `project-breakdown` → `{ titles }` — task titles for a goal,
+         *       avoiding `existingTitles`.
+         *
+         *     Mirrors `app/api/summarize/route.ts`. `model` is a catalog id the
+         *     backend serves (else `400 unknown_model`); absent means its default.
+         *     Answers are cached per caller (the user, else a hash of the client
+         *     IP), exact-key, plus a near match on `file` and title-less
+         *     `project-breakdown` requests where an embedder is configured.
+         *
+         *     Signed in or anonymous (Q123/Q134): an anonymous caller is refused
+         *     under `REQUIRE_AUTH_FOR_AI` (`401 auth_required`). Spends model
+         *     budget.
+         */
+        post: operations["summarize"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks/schedules": {
         parameters: {
             query?: never;
@@ -775,6 +921,40 @@ export interface paths {
          *     is 409 `limit_reached`. Mirrors `PATCH /api/tasks/schedules/:id`.
          */
         patch: operations["updateSchedule"];
+        trace?: never;
+    };
+    "/v1/url/fetch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fetch a web page as a bookmark snapshot
+         * @description Fetches `url` server-side and extracts its title, readable content
+         *     (capped at 200 KB, `contentTruncated`), description and favicon.
+         *     Mirrors `app/api/url/fetch/route.ts`: the URL is normalised (a bare
+         *     domain gets `https://`), then passes the outbound guard (public
+         *     hosts only, re-checked at connect time and on every redirect, at
+         *     most 5 hops), with a 10 s timeout and a 5 MB body cap.
+         *
+         *     Failures: `invalid_url` / `validation` (blocked or malformed URL) /
+         *     `unsupported_content_type` → 400, `timeout` → 408, `body_too_large`
+         *     → 413, `http_error` (with the upstream `status`) /
+         *     `too_many_redirects` / `network` → 502.
+         *
+         *     Signed in or anonymous (Q123/Q134): an anonymous caller is refused
+         *     under `REQUIRE_AUTH_FOR_AI` and limited per client IP
+         *     (`429 rate_limit`).
+         */
+        post: operations["fetchUrl"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
 }
@@ -925,6 +1105,19 @@ export interface components {
             /** @description Who the message is from. Each message definition narrows this to a single value. */
             role: string;
         } & components["schemas"]["Attributable"];
+        /** @description Mirrors `BookmarkSnapshot` (`lib/server/url/fetch.ts`). */
+        BookmarkSnapshot: {
+            /** @description The page's readable text (≤ 200 KB). */
+            content: string;
+            /** @description A hash of `content`, to tell a refresh that changed nothing. */
+            contentHash: string;
+            contentTruncated: boolean;
+            description?: string;
+            faviconUrl?: string;
+            title: string;
+            /** @description The final URL, after redirects. */
+            url: string;
+        };
         Citation: {
             quote: string;
             sourceId: string;
@@ -963,6 +1156,19 @@ export interface components {
          * @enum {string}
          */
         ColumnType: "text" | "number" | "link" | "date";
+        CompressSummarizeRequest: {
+            messages: components["schemas"]["SummarizeMessage"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "compress";
+            model?: components["schemas"]["SummarizeModel"];
+        };
+        CompressSummary: {
+            /** @description Markdown bullets that replace the compressed messages. */
+            recap: string;
+        };
         /** @description One part of a message body: what a person sends in a user message, or what a tool returns in a tool message. Discriminated by type. Named by what the part is rather than by direction, because the same part travels into the model inside a user message and back out of the stream inside a tool result. */
         ContentPart: components["schemas"]["TextPart"] | components["schemas"]["ImagePart"] | components["schemas"]["AudioPart"] | components["schemas"]["VideoPart"] | components["schemas"]["DocumentPart"];
         /** @description A named piece of ambient information given to the agent for the run, distinct from the conversation. */
@@ -971,6 +1177,20 @@ export interface components {
             description: string;
             /** @description The context itself. */
             value: string;
+        };
+        ConversationSummarizeRequest: {
+            messages: components["schemas"]["SummarizeMessage"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "conversation";
+            model?: components["schemas"]["SummarizeModel"];
+        };
+        ConversationSummary: {
+            decisions?: string[];
+            keyPoints?: string[];
+            summary: string;
         };
         /** @description Copies the value at from to path. RFC 6902 section 4.5. */
         CopyOperation: {
@@ -1138,10 +1358,10 @@ export interface components {
         };
         EmbedResponse: {
             /**
-             * @description Why the request was skipped. Absent when `indexed`.
+             * @description Why the request was skipped (`not_signed_in`, 0.8.0, an anonymous caller). Absent when `indexed`.
              * @enum {string}
              */
-            reason?: "not_configured" | "empty" | "already_indexed" | "file_not_found";
+            reason?: "not_configured" | "empty" | "already_indexed" | "file_not_found" | "not_signed_in";
             /** @description Chunks written (`indexed`) or already present (`already_indexed`); otherwise 0. */
             sections: number;
             /** @enum {string} */
@@ -1159,6 +1379,29 @@ export interface components {
          * @enum {string}
          */
         EventType: "TEXT_MESSAGE_START" | "TEXT_MESSAGE_CONTENT" | "TEXT_MESSAGE_END" | "TEXT_MESSAGE_CHUNK" | "TOOL_CALL_START" | "TOOL_CALL_ARGS" | "TOOL_CALL_END" | "TOOL_CALL_CHUNK" | "TOOL_CALL_RESULT" | "STATE_SNAPSHOT" | "STATE_DELTA" | "MESSAGES_SNAPSHOT" | "ACTIVITY_SNAPSHOT" | "ACTIVITY_DELTA" | "RAW" | "CUSTOM" | "RUN_STARTED" | "RUN_FINISHED" | "RUN_ERROR" | "STEP_STARTED" | "STEP_FINISHED" | "REASONING_START" | "REASONING_MESSAGE_START" | "REASONING_MESSAGE_CONTENT" | "REASONING_MESSAGE_END" | "REASONING_MESSAGE_CHUNK" | "REASONING_END" | "REASONING_ENCRYPTED_VALUE" | "SUBAGENT_STARTED" | "SUBAGENT_FINISHED" | "SUBAGENT_ERROR";
+        ExtractFileRequest: {
+            /** @description The file (≤ the backend's upload cap, 5 MB by default). Its name and media type pick the extractor. */
+            file: string;
+            /**
+             * @description Force the PDF vision pass on or off; absent means decide from the text yield.
+             * @enum {string}
+             */
+            vision?: "true" | "false";
+        };
+        /** @enum {string} */
+        ExtractionKind: "pdf" | "docx" | "markdown" | "csv" | "json" | "text" | "image" | "html" | "code" | "spreadsheet" | "unsupported";
+        /** @description Mirrors `ExtractionResponseSchema` (`lib/shared/api-schemas.ts`). */
+        ExtractionResponse: {
+            /** @description The full text (≤ ~1 MB), only when it is longer than `text`. */
+            fullText?: string;
+            kind: components["schemas"]["ExtractionKind"];
+            /** @description A code file's language. */
+            language?: string;
+            /** @description The inline text (≤ ~100 KB). */
+            text: string;
+            /** @description `text` was cut at the inline budget. */
+            truncated: boolean;
+        };
         ExtractTableRequest: {
             /**
              * @description Optional column hints. Each entry is a plain label (legacy, treated
@@ -1189,6 +1432,20 @@ export interface components {
             type: "file";
             /** @description The handle, exactly as the provider issued it. Opaque: a consumer MUST NOT fetch it, parse it or read a scheme out of it. */
             value: string;
+        };
+        FileSummarizeRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "file";
+            model?: components["schemas"]["SummarizeModel"];
+            name?: string;
+            text: string;
+        };
+        FileSummary: {
+            keyTopics?: string[];
+            summary: string;
         };
         /** @description The name and arguments of a tool call. */
         FunctionCall: {
@@ -1300,6 +1557,77 @@ export interface components {
         MaxCallsSkillConfig: {
             maxCalls?: number;
         };
+        McpCallResult: {
+            result: {
+                isError: boolean;
+                text: string;
+            };
+        };
+        /** @description What the server lists; a list it doesn't support is `null` or absent. */
+        McpCapabilities: {
+            prompts?: components["schemas"]["McpPromptInfo"][] | null;
+            resources?: components["schemas"]["McpResourceInfo"][] | null;
+            tools?: components["schemas"]["McpToolInfo"][] | null;
+        };
+        McpDiscoverResult: {
+            capabilities: components["schemas"]["McpCapabilities"];
+        };
+        McpPromptInfo: {
+            description?: string | null;
+            name: string;
+        };
+        McpProxyRequest: {
+            /** @description The tool's arguments (`call`). */
+            input?: Record<string, never>;
+            server: components["schemas"]["McpProxyServer"];
+            /** @description The tool to call (`call`). */
+            tool?: string;
+            /** @description The resource to read (`read`). */
+            uri?: string;
+        };
+        /** @description The action's result — `discover`, `call` or `read`. */
+        McpProxyResponse: components["schemas"]["McpDiscoverResult"] | components["schemas"]["McpCallResult"] | components["schemas"]["McpReadResult"];
+        McpProxyServer: {
+            /** @description Must equal the path's `serverId`. */
+            id: string;
+            name: string;
+            /** @enum {string} */
+            transport?: "http";
+            /** @description The MCP endpoint; ignored for the caller's own cloud-mode server, whose stored URL is used. */
+            url: string;
+        };
+        McpReadResult: {
+            result: {
+                mimeType?: string | null;
+                text?: string | null;
+            };
+        };
+        McpResourceInfo: {
+            description?: string | null;
+            mimeType?: string | null;
+            name?: string | null;
+            uri: string;
+        };
+        /** @description Mirrors the Next route's body (`app/api/mcp/server/route.ts`). */
+        McpServerUpsertRequest: {
+            /** @description The server's cached capabilities, stored as is. */
+            capabilities?: Record<string, never>;
+            credentials: components["schemas"]["LocalMcpCredential"];
+            /** @default true */
+            enabled: boolean;
+            id: string;
+            name: string;
+            url: string;
+            workspaceId: string;
+        };
+        McpToolInfo: {
+            description?: string | null;
+            /** @description The tool's JSON Schema, as the server declares it. */
+            inputSchema?: unknown;
+            name: string;
+            /** @description The `ui://` resource of an MCP App tool. */
+            uiResourceUri?: string;
+        };
         MemoryExtractRequest: {
             /** @description Provenance stamped on new facts (`source_conversation_id`). */
             conversationId?: string;
@@ -1349,8 +1677,26 @@ export interface components {
             /** @description Where the value is moved to. */
             path: components["schemas"]["JsonPointer"];
         };
+        OkResponse: {
+            /** @constant */
+            ok: true;
+        };
         /** @description Where a media part's bytes come from: carried inline, referenced by URL, or already at the provider under a handle it issued. */
         PartSource: components["schemas"]["DataSource"] | components["schemas"]["UrlSource"] | components["schemas"]["FileSource"];
+        ProjectBreakdown: {
+            titles: string[];
+        };
+        ProjectBreakdownRequest: {
+            /** @description Cards already on the board, not to be proposed again. */
+            existingTitles?: string[];
+            goal: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "project-breakdown";
+            model?: components["schemas"]["SummarizeModel"];
+        };
         /** @description Passes a provider-native event through untranslated, for consumers that need detail the protocol does not model. */
         RawEvent: {
             /** @description The provider's own event. Any JSON value, and required: an event whose only purpose is to carry this would say nothing without it. */
@@ -2444,6 +2790,16 @@ export interface components {
             /** @constant */
             type: "SUBAGENT_STARTED";
         } & WithRequired<components["schemas"]["BaseEvent"], "type">;
+        SummarizeMessage: {
+            content: string;
+            /** @enum {string} */
+            role: "user" | "assistant";
+        };
+        /** @description A catalog model id (`config/models.json`); absent means the backend's default. */
+        SummarizeModel: string;
+        SummarizeRequest: components["schemas"]["FileSummarizeRequest"] | components["schemas"]["ConversationSummarizeRequest"] | components["schemas"]["CompressSummarizeRequest"] | components["schemas"]["ProjectBreakdownRequest"];
+        /** @description The request mode's result (the modes' shapes do not overlap on their required keys). */
+        SummarizeResponse: components["schemas"]["FileSummary"] | components["schemas"]["ConversationSummary"] | components["schemas"]["CompressSummary"] | components["schemas"]["ProjectBreakdown"];
         /** @description Instructions from the system. */
         SystemMessage: {
             /** @description The instructions. Required. */
@@ -2651,6 +3007,19 @@ export interface components {
             label: string;
             type?: components["schemas"]["ColumnType"];
         };
+        UrlFetchError: components["schemas"]["ApiError"] & {
+            /** @description The target's HTTP status (`http_error`). */
+            status?: number;
+        };
+        UrlFetchRequest: {
+            /** @description An absolute URL or a bare domain (`https://` is assumed). */
+            url: string;
+        };
+        UrlFetchResponse: {
+            bookmark: components["schemas"]["BookmarkSnapshot"];
+            /** @constant */
+            ok: true;
+        };
         /** @description Bytes referenced by URL, fetched by whoever needs them. */
         UrlSource: {
             /** @description What the resource is, when the producer knows. Optional, because the response can say. */
@@ -2837,6 +3206,16 @@ export interface components {
         };
     };
     parameters: {
+        /** @description What to do — anything else is `404`. */
+        McpAction: "discover" | "call" | "read";
+        /**
+         * @description A local-mode server's credential: base64 of its JSON
+         *     (`LocalMcpCredential`). Absent → the caller's cloud-mode row, if
+         *     any. Never stored, logged or echoed.
+         */
+        McpCredentials: string;
+        /** @description The MCP server's id (a local-mode server's, or one of the caller's cloud-mode rows). */
+        McpServerId: string;
         /** @description The run's id — the client-minted AG-UI `runId` (a UUID). */
         RunId: string;
         /** @description The opaque share token returned by `createShare`. */
@@ -2857,6 +3236,7 @@ export type Attributable = components['schemas']['Attributable'];
 export type AudioPart = components['schemas']['AudioPart'];
 export type BaseEvent = components['schemas']['BaseEvent'];
 export type BaseMessage = components['schemas']['BaseMessage'];
+export type BookmarkSnapshot = components['schemas']['BookmarkSnapshot'];
 export type Citation = components['schemas']['Citation'];
 export type CitationTable = components['schemas']['CitationTable'];
 export type CitationTableCell = components['schemas']['CitationTableCell'];
@@ -2864,8 +3244,12 @@ export type CitationTableColumn = components['schemas']['CitationTableColumn'];
 export type CitationTableSource = components['schemas']['CitationTableSource'];
 export type ColumnHint = components['schemas']['ColumnHint'];
 export type ColumnType = components['schemas']['ColumnType'];
+export type CompressSummarizeRequest = components['schemas']['CompressSummarizeRequest'];
+export type CompressSummary = components['schemas']['CompressSummary'];
 export type ContentPart = components['schemas']['ContentPart'];
 export type Context = components['schemas']['Context'];
+export type ConversationSummarizeRequest = components['schemas']['ConversationSummarizeRequest'];
+export type ConversationSummary = components['schemas']['ConversationSummary'];
 export type CopyOperation = components['schemas']['CopyOperation'];
 export type CreateConversationShareRequest = components['schemas']['CreateConversationShareRequest'];
 export type CreateDocumentShareRequest = components['schemas']['CreateDocumentShareRequest'];
@@ -2890,9 +3274,14 @@ export type EmbedResponse = components['schemas']['EmbedResponse'];
 export type ErrorResponse = components['schemas']['ErrorResponse'];
 export type Event = components['schemas']['Event'];
 export type EventType = components['schemas']['EventType'];
+export type ExtractFileRequest = components['schemas']['ExtractFileRequest'];
+export type ExtractionKind = components['schemas']['ExtractionKind'];
+export type ExtractionResponse = components['schemas']['ExtractionResponse'];
 export type ExtractTableRequest = components['schemas']['ExtractTableRequest'];
 export type ExtractTableSource = components['schemas']['ExtractTableSource'];
 export type FileSource = components['schemas']['FileSource'];
+export type FileSummarizeRequest = components['schemas']['FileSummarizeRequest'];
+export type FileSummary = components['schemas']['FileSummary'];
 export type FunctionCall = components['schemas']['FunctionCall'];
 export type HealthResponse = components['schemas']['HealthResponse'];
 export type ImageGenSkillConfig = components['schemas']['ImageGenSkillConfig'];
@@ -2906,6 +3295,17 @@ export type LocalMcpCredentials = components['schemas']['LocalMcpCredentials'];
 export type LocalMcpServer = components['schemas']['LocalMcpServer'];
 export type LocalMcpTool = components['schemas']['LocalMcpTool'];
 export type MaxCallsSkillConfig = components['schemas']['MaxCallsSkillConfig'];
+export type McpCallResult = components['schemas']['McpCallResult'];
+export type McpCapabilities = components['schemas']['McpCapabilities'];
+export type McpDiscoverResult = components['schemas']['McpDiscoverResult'];
+export type McpPromptInfo = components['schemas']['McpPromptInfo'];
+export type McpProxyRequest = components['schemas']['McpProxyRequest'];
+export type McpProxyResponse = components['schemas']['McpProxyResponse'];
+export type McpProxyServer = components['schemas']['McpProxyServer'];
+export type McpReadResult = components['schemas']['McpReadResult'];
+export type McpResourceInfo = components['schemas']['McpResourceInfo'];
+export type McpServerUpsertRequest = components['schemas']['McpServerUpsertRequest'];
+export type McpToolInfo = components['schemas']['McpToolInfo'];
 export type MemoryExtractRequest = components['schemas']['MemoryExtractRequest'];
 export type MemoryExtractResponse = components['schemas']['MemoryExtractResponse'];
 export type Message = components['schemas']['Message'];
@@ -2913,7 +3313,10 @@ export type MessagesSnapshotEvent = components['schemas']['MessagesSnapshotEvent
 export type Metadata = components['schemas']['Metadata'];
 export type ModelList = components['schemas']['ModelList'];
 export type MoveOperation = components['schemas']['MoveOperation'];
+export type OkResponse = components['schemas']['OkResponse'];
 export type PartSource = components['schemas']['PartSource'];
+export type ProjectBreakdown = components['schemas']['ProjectBreakdown'];
+export type ProjectBreakdownRequest = components['schemas']['ProjectBreakdownRequest'];
 export type RawEvent = components['schemas']['RawEvent'];
 export type ReadinessChecks = components['schemas']['ReadinessChecks'];
 export type ReadinessResponse = components['schemas']['ReadinessResponse'];
@@ -2985,6 +3388,10 @@ export type SubagentFinishedSuccessOutcome = components['schemas']['SubagentFini
 export type SubagentFinishedSuspendedOutcome = components['schemas']['SubagentFinishedSuspendedOutcome'];
 export type SubagentRunId = components['schemas']['SubagentRunId'];
 export type SubagentStartedEvent = components['schemas']['SubagentStartedEvent'];
+export type SummarizeMessage = components['schemas']['SummarizeMessage'];
+export type SummarizeModel = components['schemas']['SummarizeModel'];
+export type SummarizeRequest = components['schemas']['SummarizeRequest'];
+export type SummarizeResponse = components['schemas']['SummarizeResponse'];
 export type SystemMessage = components['schemas']['SystemMessage'];
 export type TestOperation = components['schemas']['TestOperation'];
 export type TextMessageChunkEvent = components['schemas']['TextMessageChunkEvent'];
@@ -3003,6 +3410,9 @@ export type ToolCallResultEvent = components['schemas']['ToolCallResultEvent'];
 export type ToolCallStartEvent = components['schemas']['ToolCallStartEvent'];
 export type ToolMessage = components['schemas']['ToolMessage'];
 export type TypedColumnHint = components['schemas']['TypedColumnHint'];
+export type UrlFetchError = components['schemas']['UrlFetchError'];
+export type UrlFetchRequest = components['schemas']['UrlFetchRequest'];
+export type UrlFetchResponse = components['schemas']['UrlFetchResponse'];
 export type UrlSource = components['schemas']['UrlSource'];
 export type UserMessage = components['schemas']['UserMessage'];
 export type UuidString = components['schemas']['UuidString'];
@@ -3021,6 +3431,9 @@ export type ResponseServiceUnavailable = components['responses']['ServiceUnavail
 export type ResponseUnauthorized = components['responses']['Unauthorized'];
 export type ResponseUpstreamError = components['responses']['UpstreamError'];
 export type ResponseValidationError = components['responses']['ValidationError'];
+export type ParameterMcpAction = components['parameters']['McpAction'];
+export type ParameterMcpCredentials = components['parameters']['McpCredentials'];
+export type ParameterMcpServerId = components['parameters']['McpServerId'];
 export type ParameterRunId = components['parameters']['RunId'];
 export type ParameterShareToken = components['parameters']['ShareToken'];
 export type $defs = Record<string, never>;
@@ -3212,6 +3625,37 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    extractFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["ExtractFileRequest"];
+            };
+        };
+        responses: {
+            /** @description The extracted text. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtractionResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     extractTable: {
         parameters: {
             query?: never;
@@ -3302,6 +3746,98 @@ export interface operations {
             404: components["responses"]["NotFound"];
             413: components["responses"]["PayloadTooLarge"];
             422: components["responses"]["ValidationError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    mcpProxy: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description A local-mode server's credential: base64 of its JSON
+                 *     (`LocalMcpCredential`). Absent → the caller's cloud-mode row, if
+                 *     any. Never stored, logged or echoed.
+                 */
+                "X-MCP-Credentials"?: components["parameters"]["McpCredentials"];
+            };
+            path: {
+                /** @description What to do — anything else is `404`. */
+                action: components["parameters"]["McpAction"];
+                /** @description The MCP server's id (a local-mode server's, or one of the caller's cloud-mode rows). */
+                serverId: components["parameters"]["McpServerId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpProxyRequest"];
+            };
+        };
+        responses: {
+            /** @description The action's result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpProxyResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description The MCP server failed (`code` is `mcp_upstream_error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    upsertMcpServer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerUpsertRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            500: components["responses"]["InternalError"];
+            /** @description Saving failed (`code` is `upsert_failed`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             503: components["responses"]["ServiceUnavailable"];
         };
     };
@@ -3793,6 +4329,48 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    summarize: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SummarizeRequest"];
+            };
+        };
+        responses: {
+            /** @description The mode's result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SummarizeResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /**
+             * @description The model failed (`provider`) or did not answer the mode's JSON
+             *     (`invalid_json`).
+             */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     listSchedules: {
         parameters: {
             query?: never;
@@ -3906,6 +4484,57 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    fetchUrl: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UrlFetchRequest"];
+            };
+        };
+        responses: {
+            /** @description The snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UrlFetchResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description The fetch timed out (`code` is `timeout`). */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            /**
+             * @description The target failed: `http_error` (its status in `status`),
+             *     `too_many_redirects` or `network`.
+             */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UrlFetchError"];
+                };
+            };
         };
     };
 }

@@ -20,11 +20,10 @@ from __future__ import annotations
 
 from typing import Annotated, Any, NoReturn
 
-import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from ..auth import get_current_user
+from ..caller import Caller, optional_caller
 from ..chat import resolve_anthropic_client
 from ..contract import models
 from ..editor_ai.command import (
@@ -37,15 +36,9 @@ from ..editor_ai.prompts import EditorDocument, EditorMessage, EditTarget
 from ..model_allowlist import UnknownModelError, get_model_allowlist, resolve_optional_target
 from ..model_routes import ModelTarget
 from ..rate_limit import SlidingWindow, rate_limit_key
-from ..runs.access import RequireAuthConfigError, require_auth_for_ai
 from ..runs.wiring import RunServices, get_run_services
-from ..settings import Settings, get_settings
-
-logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["editor"])
-
-AUTH_REQUIRED_MESSAGE = "Sign in to use AI features on this server."
 
 #: `/api/ai/complete`'s per-IP window: a typist pausing every 2 s makes
 #: ~30 a minute; past 60 is hammering.
@@ -72,21 +65,11 @@ def _raise(
     )
 
 
-def editor_caller(
-    settings: Annotated[Settings, Depends(get_settings)],
-    authorization: Annotated[str | None, Header()] = None,
-) -> str | None:
-    """The signed-in user's id, or None for an anonymous caller."""
-    if authorization is not None:
-        return str(get_current_user(authorization, settings)["sub"])
-    try:
-        gated = require_auth_for_ai(settings)
-    except RequireAuthConfigError as exc:
-        logger.error("editor_ai.require_auth_config", error=str(exc))
-        _raise(500, "unknown", "Server misconfigured.")
-    if gated:
-        _raise(401, "auth_required", AUTH_REQUIRED_MESSAGE)
-    return None
+def editor_caller(caller: Annotated[Caller, Depends(optional_caller)]) -> str | None:
+    """The signed-in user's id, or None for an anonymous caller
+    (`optional_caller`: a bad bearer is 401, anonymous is refused under
+    `REQUIRE_AUTH_FOR_AI`)."""
+    return caller.user_id
 
 
 def _target(model_id: str | None) -> ModelTarget:

@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from agent_py.main import create_app
 from agent_py.routers import images as images_router
 from agent_py.routers import url as url_router
+from agent_py.settings import get_settings
 from agent_py.url_fetch import BookmarkSnapshot, FetchError, FetchOk
 
 SECRET = "test-secret-do-not-use-in-prod-32-bytes!"
@@ -44,9 +45,78 @@ def _auth(sub: str = "00000000-0000-4000-8000-000000000123") -> dict[str, str]:
 # --- /v1/url/fetch ----------------------------------------------------
 
 
-def test_url_fetch_rejects_missing_token(client: TestClient) -> None:
-    r = client.post("/v1/url/fetch", json={"url": "https://example.com"})
+@pytest.fixture(autouse=True)
+def _fresh_limits() -> None:
+    url_router.reset_limits()
+
+
+def _snap() -> BookmarkSnapshot:
+    return BookmarkSnapshot(
+        url="https://example.com/p",
+        title="Example",
+        content="hello",
+        content_truncated=False,
+        content_hash="deadbeef00000000",
+        description="A page",
+        favicon_url="https://example.com/favicon.ico",
+    )
+
+
+def _ok() -> AsyncMock:
+    return AsyncMock(return_value=FetchOk(snapshot=_snap()))
+
+
+def test_url_fetch_rejects_a_bad_token(client: TestClient) -> None:
+    r = client.post(
+        "/v1/url/fetch",
+        json={"url": "https://example.com"},
+        headers={"Authorization": "Bearer nope"},
+    )
     assert r.status_code == 401
+    assert r.json()["code"] == "auth"
+
+
+def test_url_fetch_serves_anonymous_callers(client: TestClient) -> None:
+    """Signed out (Q123): no bearer is an anonymous fetch, as on Next."""
+    with patch.object(url_router, "fetch_url_bookmark", new=_ok()):
+        r = client.post("/v1/url/fetch", json={"url": "example.com/p"})
+    assert r.status_code == 200
+    assert r.json()["bookmark"]["title"] == "Example"
+
+
+def test_url_fetch_limits_anonymous_callers_30_a_minute_per_ip(client: TestClient) -> None:
+    """Next's `bookmarkRateLimit`: 30 per IP per minute."""
+    ip = {"X-Forwarded-For": "203.0.113.7"}
+    with patch.object(url_router, "fetch_url_bookmark", new=_ok()):
+        for _ in range(30):
+            assert (
+                client.post("/v1/url/fetch", json={"url": "a.com"}, headers=ip).status_code == 200
+            )
+        r = client.post("/v1/url/fetch", json={"url": "a.com"}, headers=ip)
+        assert r.status_code == 429
+        assert r.json()["code"] == "rate_limit"
+        assert int(r.headers["Retry-After"]) >= 1
+        # Another IP, and a signed-in caller on the same one, aren't held.
+        other = {"X-Forwarded-For": "203.0.113.8"}
+        assert client.post("/v1/url/fetch", json={"url": "a.com"}, headers=other).status_code == 200
+        signed_in = {**ip, **_auth()}
+        for _ in range(31):
+            r = client.post("/v1/url/fetch", json={"url": "a.com"}, headers=signed_in)
+            assert r.status_code == 200
+
+
+def test_url_fetch_refuses_anonymous_callers_under_require_auth(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REQUIRE_AUTH_FOR_AI", "true")
+    get_settings.cache_clear()
+    with patch.object(url_router, "fetch_url_bookmark", new=_ok()) as fetch:
+        r = client.post("/v1/url/fetch", json={"url": "a.com"})
+        assert r.status_code == 401
+        assert r.json()["code"] == "auth_required"
+        fetch.assert_not_called()
+        r = client.post("/v1/url/fetch", json={"url": "a.com"}, headers=_auth())
+        assert r.status_code == 200
 
 
 def test_url_fetch_rejects_empty_body(client: TestClient) -> None:
@@ -65,28 +135,23 @@ def test_url_fetch_invalid_url_returns_400(client: TestClient) -> None:
 
 
 def test_url_fetch_happy_path_returns_bookmark(client: TestClient) -> None:
-    snap = BookmarkSnapshot(
-        url="https://example.com/p",
-        title="Example",
-        content="hello",
-        content_truncated=False,
-        content_hash="deadbeef00000000",
-        description="A page",
-        favicon_url="https://example.com/favicon.ico",
-    )
-    with patch.object(
-        url_router,
-        "fetch_url_bookmark",
-        new=AsyncMock(return_value=FetchOk(snapshot=snap)),
-    ):
+    with patch.object(url_router, "fetch_url_bookmark", new=_ok()):
         r = client.post("/v1/url/fetch", json={"url": "example.com/p"}, headers=_auth())
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
     assert body["bookmark"]["title"] == "Example"
     assert body["bookmark"]["url"] == "https://example.com/p"
-    assert body["bookmark"]["content_truncated"] is False
-    assert body["bookmark"]["favicon_url"] == "https://example.com/favicon.ico"
+    # camelCase, as Next / agent-ts answer and `UrlFetchSnapshot` reads.
+    assert body["bookmark"] == {
+        "url": "https://example.com/p",
+        "title": "Example",
+        "content": "hello",
+        "contentTruncated": False,
+        "contentHash": "deadbeef00000000",
+        "description": "A page",
+        "faviconUrl": "https://example.com/favicon.ico",
+    }
 
 
 @pytest.mark.parametrize(

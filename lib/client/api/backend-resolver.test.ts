@@ -77,3 +77,64 @@ describe("resolveEditorAiTarget (wave 9)", () => {
     }
   })
 })
+
+describe("remoteTargetFor — who serves a non-chat call (wave 12, Q123/Q134)", () => {
+  const base = { agentPyConfigured: true, agentTsConfigured: true }
+
+  test("signed in: the selected remote backend, with the token", async () => {
+    const { remoteTargetFor } = await import("./backend-resolver")
+    for (const backend of ["python", "python-runs", "ts-service"] as const) {
+      for (const anonymous of [false, true]) {
+        expect(remoteTargetFor({ ...base, backend, token: "jwt", anonymous })).toEqual({
+          backend,
+          authToken: "jwt",
+        })
+      }
+    }
+  })
+
+  test("signed out on python-runs: agent-py, anonymously, for the calls it serves signed out", async () => {
+    const { remoteTargetFor } = await import("./backend-resolver")
+    expect(
+      remoteTargetFor({ ...base, backend: "python-runs", token: null, anonymous: true }),
+    ).toEqual({ backend: "python-runs", authToken: null })
+  })
+
+  test("signed out, an account-bound call stays where it was (the Next route)", async () => {
+    const { remoteTargetFor } = await import("./backend-resolver")
+    for (const backend of ["python", "python-runs", "ts-service"] as const) {
+      expect(remoteTargetFor({ ...base, backend, token: null, anonymous: false })).toBeNull()
+    }
+  })
+
+  test("signed out on python / ts-service: the Next route, as their chat (wave 13 removes them)", async () => {
+    const { remoteTargetFor } = await import("./backend-resolver")
+    expect(remoteTargetFor({ ...base, backend: "python", token: null, anonymous: true })).toBeNull()
+    expect(
+      remoteTargetFor({ ...base, backend: "ts-service", token: null, anonymous: true }),
+    ).toBeNull()
+  })
+
+  test("ts, or the backend not configured: the Next route", async () => {
+    const { remoteTargetFor } = await import("./backend-resolver")
+    expect(remoteTargetFor({ ...base, backend: "ts", token: "jwt", anonymous: true })).toBeNull()
+    expect(
+      remoteTargetFor({
+        agentPyConfigured: false,
+        agentTsConfigured: true,
+        backend: "python-runs",
+        token: null,
+        anonymous: true,
+      }),
+    ).toBeNull()
+    expect(
+      remoteTargetFor({
+        agentPyConfigured: true,
+        agentTsConfigured: false,
+        backend: "ts-service",
+        token: "jwt",
+        anonymous: false,
+      }),
+    ).toBeNull()
+  })
+})

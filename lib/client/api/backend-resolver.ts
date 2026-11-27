@@ -14,7 +14,10 @@ import "client-only"
  * Returns `null` when the user picked `'ts'` (in-Next route), or
  * when any prerequisite (configured base URL / signed-in Supabase
  * session) is missing — callers fall through to the in-Next route
- * on null so misconfigured deploys degrade safely.
+ * on null so misconfigured deploys degrade safely. Signed out, the
+ * calls agent-py serves anonymously (wave 12, Q123/Q134) still resolve
+ * to agent-py on `'python-runs'` (`remoteTargetFor`), so a signed-out
+ * browser on the default backend never calls a Next `/api/*` route.
  *
  * `'python-runs'` ("agent-py (runs)", Q33) resolves exactly like
  * `'python'` here — the non-chat endpoints don't know about runs.
@@ -40,7 +43,8 @@ export interface RemoteBackendContext {
   backend: Exclude<ChatBackendOption, "ts">
   /** `""` when the backend is served on the page's own origin. */
   baseUrl: string
-  authToken: string
+  /** `null`: an anonymous call (signed out on `python-runs`, wave 12). */
+  authToken: string | null
 }
 
 /** The signed-in Supabase session's access token, or `null` (signed
@@ -81,28 +85,71 @@ async function currentAccessToken(refresh?: boolean): Promise<string | null> {
   }
 }
 
+/**
+ * Who serves a non-chat call, as a pure decision (wave 12, Q123/Q134):
+ *
+ * * `ts`, or the selected service not configured → `null` (the Next route);
+ * * a session token → the selected remote backend, with the token;
+ * * no token (signed out, or the lookup failed) → agent-py, anonymously
+ *   (`authToken: null`), when the call is one agent-py serves signed out
+ *   (`anonymous`: URL fetch, summarize, extract, extract-table, the MCP
+ *   proxy, embed) on `python-runs`; else `null`. `python` keeps its
+ *   signed-out calls on Next, as its chat (`/v1/chat` needs a token) and
+ *   its editor AI do; agent-ts (frozen) has no anonymous mode. The
+ *   account-bound calls (`anonymous: false`) never resolve signed out.
+ */
+export function remoteTargetFor(input: {
+  backend: ChatBackendOption
+  agentPyConfigured: boolean
+  agentTsConfigured: boolean
+  token: string | null
+  anonymous: boolean
+}): { backend: Exclude<ChatBackendOption, "ts">; authToken: string | null } | null {
+  const { backend } = input
+  if (backend === "ts") return null
+  const configured = isAgentPyBackend(backend) ? input.agentPyConfigured : input.agentTsConfigured
+  if (!configured) return null
+  if (input.token) return { backend, authToken: input.token }
+  if (input.anonymous && backend === "python-runs") return { backend, authToken: null }
+  return null
+}
+
 /** Read the current backend choice from the store and, if it points
  *  at a remote service, resolve the Supabase JWT lazily. The async
  *  hop is unavoidable because `supabase.auth.getSession()` is async
  *  — but the in-Next fast path returns `null` synchronously after
- *  awaiting nothing, so the cost is one microtask. */
-export async function resolveRemoteBackend(): Promise<RemoteBackendContext | null> {
+ *  awaiting nothing, so the cost is one microtask.
+ *
+ *  `anonymous`: the call is one agent-py serves signed out — then a
+ *  signed-out `python-runs` browser still gets agent-py, with
+ *  `authToken: null` (`remoteTargetFor`). Without it a missing session
+ *  falls through to the in-Next route, as before. */
+export async function resolveRemoteBackend(
+  options?: { anonymous?: boolean },
+): Promise<RemoteBackendContext | null> {
   const backend = useStore.getState().chatBackend
   if (backend === "ts") return null
 
   // `""` is a valid base URL (same origin, `NEXT_PUBLIC_AGENT_*_URL=/`),
   // so gate on "configured", not on the prefix being non-empty.
-  const agentPy = isAgentPyBackend(backend)
-  const configured = agentPy ? isAgentPyConfigured() : isAgentTsConfigured()
-  if (!configured) return null
-  const baseUrl = agentPy ? AGENT_PY_BASE_URL : AGENT_TS_BASE_URL
+  const agentPyConfigured = isAgentPyConfigured()
+  const agentTsConfigured = isAgentTsConfigured()
+  if (!(isAgentPyBackend(backend) ? agentPyConfigured : agentTsConfigured)) return null
 
-  // Supabase unconfigured or session lookup failed — fall through
-  // to the in-Next route as a defensive default. Mirrors the chat
-  // pipeline's behaviour.
+  // Supabase unconfigured or session lookup failed: no token. The
+  // account-bound calls then fall through to the in-Next route as a
+  // defensive default; the signed-out ones go anonymously.
   const session = await sessionAccessToken()
-  if (!session.ok || !session.token) return null
-  return { backend, baseUrl, authToken: session.token }
+  const target = remoteTargetFor({
+    backend,
+    agentPyConfigured,
+    agentTsConfigured,
+    token: session.ok ? session.token : null,
+    anonymous: options?.anonymous === true,
+  })
+  if (!target) return null
+  const baseUrl = isAgentPyBackend(target.backend) ? AGENT_PY_BASE_URL : AGENT_TS_BASE_URL
+  return { ...target, baseUrl }
 }
 
 /**

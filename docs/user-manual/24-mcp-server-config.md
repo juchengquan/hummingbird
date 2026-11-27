@@ -33,11 +33,15 @@ encrypted with `MCP_ENCRYPTION_KEY` and stored in Postgres.
 | Visible to all workspaces | No - per-user, per-device | Yes - synced across devices |
 
 ## Tips & gotchas
-- When the server has Supabase configured, discovering servers and
-  reading resources / calling tools from the MCP panel requires being
-  signed in (the server proxies those calls). A local-only install
-  (no Supabase) keeps working anonymously. Either way the proxy allows
-  120 calls per minute per user or per IP.
+- On the default chat backend (**agent-py (runs)**) the MCP panel works
+  signed out too for local-mode servers: discovery, resource reads and
+  tool calls go to the Python agent service, which allows 120 calls per
+  minute per IP for signed-out visitors (with `REQUIRE_AUTH_FOR_AI` on
+  it refuses them with "Sign in required"). Cloud-mode servers always
+  need sign-in. On the other backends, when the server has Supabase
+  configured these calls require being signed in (the server proxies
+  them); a local-only install (no Supabase) keeps working anonymously,
+  limited to 120 calls per minute per user or per IP.
 - Rotating `MCP_ENCRYPTION_KEY` invalidates every existing
   cloud-mode credential. Users have to re-add their servers.
 - If a tool call returns a "permission denied" error from a

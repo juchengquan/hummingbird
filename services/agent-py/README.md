@@ -432,6 +432,43 @@ After changing a TS prompt, regenerate the fixtures and port the change:
 `EDITOR_AI_PARITY_WRITE=1 bun test components/editor/ai/editor-ai.parity.test.ts`
 and `EDITOR_AI_STREAMS_WRITE=1 bun test app/api/ai/command/stream.fixture.test.ts`.
 
+## Signed-out calls (wave 12, Q123/Q134)
+
+The non-chat endpoints a signed-out browser uses take an optional caller
+(`caller.py`, `optional_caller`): a bearer is verified as everywhere (a bad
+or non-Bearer one is `401 auth`, never anonymous); without one the caller
+is anonymous, keyed by client IP (`rate_limit_key`, as anonymous runs), and
+refused `401 auth_required` under `REQUIRE_AUTH_FOR_AI`. Anonymous callers
+get the Next routes' per-IP limits (`429 rate_limit` + `Retry-After`);
+signed-in limits are each route's own, unchanged.
+
+| Endpoint | Anonymous | Under `REQUIRE_AUTH_FOR_AI` |
+|---|---|---|
+| `POST /v1/url/fetch` | 30 / min per IP | refused |
+| `POST /v1/summarize` | no rate limit (the Next route has none); the response cache, scoped per caller (user, else a hash of the IP) | refused |
+| `POST /v1/extract` | 60 / min per IP; the vision pass 10 / min per IP (every caller) | **served**, without the vision pass |
+| `POST /v1/extract-table` | no rate limit (as the Next route) | refused |
+| `POST /v1/mcp/{id}/{action}` | 120 / min per IP; local credentials (`X-MCP-Credentials`) only — never a cloud-mode lookup | refused |
+| `POST /v1/embed` | 30 / min per IP; answers `200 skipped / not_signed_in` (nothing to index without a user) | refused |
+
+Still signed-in only (account-bound): `/v1/share` (create / revoke),
+`/v1/tasks/schedules*`, `/v1/memory/extract`, `/v1/images/refresh-url`,
+`/v1/files/refresh-url`, `/v1/mcp/server`, background runs.
+
+**Caches** (`response_cache.py`, a port of `lib/server/cache/`): summaries
+by exact key plus an embedding near match (`file`, title-less
+`project-breakdown`; needs an embedder), scoped per caller; extractions by
+file content and effective vision mode. In memory: 1 h, 500 entries,
+~64 MB.
+
+**The PDF vision pass** (`extraction_vision.py`, a port of
+`lib/server/extraction/`): a low-yield or table-dense PDF is rendered
+(pypdfium2, ≤ 30 pages) and each page transcribed to markdown by
+`VISION_MODEL` (or the first `supportsVision` catalog model served here),
+merged into `text` / `fullText`. The `vision` form field forces it on /
+off. Best effort: no model, the budget spent or any failure → text only,
+and that degraded result is not cached.
+
 ## Models and providers (wave 10)
 
 Every `config/models.json` model runs here when a provider for it is
@@ -486,7 +523,8 @@ for the thinking in ghost text).
 | `SHUTDOWN_GRACE_SECONDS` | No | Default `8`. On shutdown the in-flight job may finish within this window; after it, the job is cancelled and handed back (lease expired on the spot) for the next worker. Keep it under the container stop timeout (Docker's default is 10 s). The stop starts on SIGTERM itself (the server's signal handler is chained), not after uvicorn has drained open SSE streams; the image also runs uvicorn with `--timeout-graceful-shutdown 8` so the lifespan (which closes the DB pool) isn't held past the stop timeout by a chat stream. `/readyz` reports `poller_alive` / `poller_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
 | `SCHEDULER_ENABLED` | No | Unset: follows the worker (Q130) — on where the worker runs tasks (`WORKER_DRY_RUN=false`) with `SUPABASE_DB_URL` set, off otherwise. An explicit `true` / `false` wins (`false` keeps it off beside a live worker); empty counts as unset. Runs the schedule dispatcher loop (`scheduler.py`) in this process: it fires due `task_schedules` rows exactly like the Vercel Cron's `/api/tasks/jobs/tick`, which is redundant from wave 12 and deleted in wave 13. Needs `SUPABASE_DB_URL`. Safe alongside that cron and on several replicas — see [Scheduled tasks](#scheduled-tasks-replacing-the-vercel-cron). `/readyz` reports `scheduler_alive` / `scheduler_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
 | `SCHEDULER_INTERVAL_SECONDS` | No | Default `60` (the Vercel Cron's cadence). Seconds between dispatcher ticks. |
-| `REQUIRE_AUTH_FOR_AI` | No | Default off. `true` / `1` (with `SUPABASE_JWT_SECRET` or a JWKS URL set) refuses anonymous runs with `401 auth_required`. Strict values (`true` / `false` / `1` / `0`); anything else fails anonymous starts with 500 — never silently open. Same variable as the Next.js routes. |
+| `VISION_MODEL` | No | The catalog model `/v1/extract`'s PDF vision pass uses when it is flagged `supportsVision` and served here; else the first such model; none → no vision pass. Same variable as the Next.js route. |
+| `REQUIRE_AUTH_FOR_AI` | No | Default off. `true` / `1` (with `SUPABASE_JWT_SECRET` or a JWKS URL set) refuses anonymous runs with `401 auth_required`, and anonymous calls to the signed-out endpoints ([Signed-out calls](#signed-out-calls-wave-12-q123q134); `/v1/extract` is served without its vision pass). Strict values (`true` / `false` / `1` / `0`); anything else fails anonymous starts with 500 — never silently open. Same variable as the Next.js routes. |
 | `RUNS_STUB_HARNESS` | No | Default `false` (runs use the native harness and `ANTHROPIC_API_KEY`; without a key every run fails `unavailable`). `true` runs every run on the model-free stub (`runs/stub_harness.py`, steered by `forwardedProps.conformance`) — for the contract conformance suite only. |
 | `RUNS_LEASE_SECONDS` / `RUNS_HEARTBEAT_SECONDS` | No | Defaults `60` / `5`. An executing interactive run's lease and how often it is extended (also the latency of a cancel served by another replica). |
 | `RUNS_REAPER_INTERVAL_SECONDS` | No | Default `15`. Runs maintenance loop: reap lapsed interactive runs, drop expired in-memory runs and their logs (the Postgres retention sweep runs every 10 min regardless). |

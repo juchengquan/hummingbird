@@ -44,6 +44,16 @@ tags:
     description: Recurring background-task runs (`task_schedules`) — a saved task spec plus a cron expression and IANA timezone.
   - name: embeddings
     description: Chunking and embedding file text into the vector index.
+  - name: extraction
+    description: Text from uploaded files (PDF, Office, spreadsheets, HTML, code, plain text).
+  - name: summarize
+    description: Summaries of files and conversations, thread compression, goal breakdowns.
+  - name: bookmarks
+    description: Web pages fetched server-side as bookmark snapshots.
+  - name: mcp
+    description: |
+      The browser's MCP proxy (discovery, tool calls, resource reads) and
+      saving cloud-mode MCP servers with their encrypted credentials.
   - name: memory
     description: Cross-conversation memory upkeep.
   - name: security
@@ -214,6 +224,12 @@ paths:
         sources, a model extracts a `CitationTable` artefact whose cells cite
         quotes from the numbered sources (`s1`, `s2`, ... in request order).
         Mirrors `app/api/extract-table/route.ts`. Spends model budget.
+
+        Signed in or anonymous (0.8.0, Q123/Q134): an anonymous caller is
+        refused under `REQUIRE_AUTH_FOR_AI` (`401 auth_required`).
+      security:
+        - bearerAuth: []
+        - {}
       requestBody:
         required: true
         content:
@@ -241,6 +257,300 @@ paths:
           $ref: "#/components/responses/UpstreamError"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+
+  # --- extraction, summaries, bookmarks (0.8.0, wave 12) ----------------------
+  /v1/extract:
+    post:
+      operationId: extractFile
+      tags: [extraction]
+      summary: Extract the text of an uploaded file
+      description: |
+        Multipart upload (`file`, plus an optional `vision` field) → the
+        file's text, classified by kind. Mirrors `app/api/extract/route.ts`:
+        PDF / DOCX / spreadsheet / HTML / code / plain-text extractors, an
+        inline `text` budget (~100 KB, `truncated` when cut) and, when the
+        file had more, `fullText` (up to ~1 MB). Images and unknown types
+        answer `image` / `unsupported` with no text.
+
+        A layout-rich or scanned PDF may also get a vision pass (pages
+        transcribed to markdown by a vision-capable model, merged into
+        `text` / `fullText`): automatic by default, forced with
+        `vision=true` or skipped with `vision=false`. Best effort — any
+        failure, an exhausted per-IP vision budget or no vision model leaves
+        the text-only result. Results are cached by file content.
+
+        Signed in (bearer) or anonymous (Q123/Q134): text extraction spends
+        no model budget, so an anonymous caller is served even under
+        `REQUIRE_AUTH_FOR_AI` — but without the vision pass. Anonymous
+        callers are limited per client IP (`429 rate_limit`).
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ExtractFileRequest"
+      responses:
+        "200":
+          description: The extracted text.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtractionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/summarize:
+    post:
+      operationId: summarize
+      tags: [summarize]
+      summary: Summarise a file or a conversation, compress a thread, or break down a goal
+      description: |
+        Synchronous JSON, one of four modes (`mode`):
+
+        * `file` → `{ summary, keyTopics }` — a file's extracted text;
+        * `conversation` → `{ summary, keyPoints, decisions }`;
+        * `compress` → `{ recap }` — markdown bullets meant to replace the
+          messages in the next turn's history;
+        * `project-breakdown` → `{ titles }` — task titles for a goal,
+          avoiding `existingTitles`.
+
+        Mirrors `app/api/summarize/route.ts`. `model` is a catalog id the
+        backend serves (else `400 unknown_model`); absent means its default.
+        Answers are cached per caller (the user, else a hash of the client
+        IP), exact-key, plus a near match on `file` and title-less
+        `project-breakdown` requests where an embedder is configured.
+
+        Signed in or anonymous (Q123/Q134): an anonymous caller is refused
+        under `REQUIRE_AUTH_FOR_AI` (`401 auth_required`). Spends model
+        budget.
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SummarizeRequest"
+      responses:
+        "200":
+          description: The mode's result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SummarizeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          description: |
+            The model failed (`provider`) or did not answer the mode's JSON
+            (`invalid_json`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/url/fetch:
+    post:
+      operationId: fetchUrl
+      tags: [bookmarks]
+      summary: Fetch a web page as a bookmark snapshot
+      description: |
+        Fetches `url` server-side and extracts its title, readable content
+        (capped at 200 KB, `contentTruncated`), description and favicon.
+        Mirrors `app/api/url/fetch/route.ts`: the URL is normalised (a bare
+        domain gets `https://`), then passes the outbound guard (public
+        hosts only, re-checked at connect time and on every redirect, at
+        most 5 hops), with a 10 s timeout and a 5 MB body cap.
+
+        Failures: `invalid_url` / `validation` (blocked or malformed URL) /
+        `unsupported_content_type` → 400, `timeout` → 408, `body_too_large`
+        → 413, `http_error` (with the upstream `status`) /
+        `too_many_redirects` / `network` → 502.
+
+        Signed in or anonymous (Q123/Q134): an anonymous caller is refused
+        under `REQUIRE_AUTH_FOR_AI` and limited per client IP
+        (`429 rate_limit`).
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UrlFetchRequest"
+      responses:
+        "200":
+          description: The snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UrlFetchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "408":
+          description: The fetch timed out (`code` is `timeout`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          description: |
+            The target failed: `http_error` (its status in `status`),
+            `too_many_redirects` or `network`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UrlFetchError"
+
+  # --- MCP ---------------------------------------------------------------------
+  /v1/mcp/server:
+    post:
+      operationId: upsertMcpServer
+      tags: [mcp]
+      summary: Save a cloud-mode MCP server and its encrypted credential
+      description: |
+        Creates or updates one of the caller's `mcp_servers` rows in cloud
+        mode, encrypting `credentials` server-side (the browser has no key).
+        Mirrors `app/api/mcp/server/route.ts`. The URL must pass the MCP
+        outbound guard (`400 mcp_url_blocked`, with its `reason`). A server
+        id another user holds is `409 mcp_server_id_conflict`, a workspace
+        the caller doesn't own `404 workspace_not_found`; the encryption key
+        unset is `500 encryption_key_unset`. Signed-in only (account-bound).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/McpServerUpsertRequest"
+      responses:
+        "200":
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          description: Saving failed (`code` is `upsert_failed`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/mcp/{serverId}/{action}:
+    post:
+      operationId: mcpProxy
+      tags: [mcp]
+      summary: Discover, call a tool on, or read a resource of an MCP server
+      description: |
+        The browser's MCP proxy (discovery, resource reads and MCP-app tool
+        calls; a run's own MCP calls never come here). Mirrors
+        `app/api/mcp/[serverId]/[action]/route.ts`:
+
+        * `discover` → `{ capabilities: { tools, resources, prompts } }`;
+        * `call` (needs `tool`) → `{ result: { text, isError } }`;
+        * `read` (needs `uri`) → `{ result: { text, mimeType } }`.
+
+        The credential is the `X-MCP-Credentials` header (a local-mode
+        server: base64 of the JSON credential) or, without it, the caller's
+        own cloud-mode row for `serverId`, whose stored URL then replaces the
+        body's. Whichever URL is called passes the MCP outbound guard
+        (`400 invalid_server_url`, with its `reason`). An upstream failure is
+        `502 mcp_upstream_error`, its text never echoed.
+
+        Signed in or anonymous (Q123/Q134) — anonymous on the local path
+        only: no cloud-mode lookup, refused under `REQUIRE_AUTH_FOR_AI`,
+        limited per client IP (`429 rate_limit`).
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - $ref: "#/components/parameters/McpServerId"
+        - $ref: "#/components/parameters/McpAction"
+        - $ref: "#/components/parameters/McpCredentials"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/McpProxyRequest"
+      responses:
+        "200":
+          description: The action's result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/McpProxyResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          description: The MCP server failed (`code` is `mcp_upstream_error`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   # --- sharing ---------------------------------------------------------------
   /v1/share:
@@ -487,6 +797,15 @@ paths:
         row is not visible to the caller yet (`file_not_found` — the client
         retries with backoff while its metadata sync catches up). `force`
         drops the file's sections and rebuilds them. Spends embedder budget.
+
+        Signed in or anonymous (0.8.0, Q123/Q134): `file_sections` rows
+        belong to a user, so an anonymous call indexes nothing and answers
+        `skipped` / `not_signed_in` (after `not_configured`, when that
+        applies); it is refused under `REQUIRE_AUTH_FOR_AI` and limited per
+        client IP (`429 rate_limit`).
+      security:
+        - bearerAuth: []
+        - {}
       requestBody:
         required: true
         content:
@@ -1349,6 +1668,32 @@ components:
         minLength: 1
         maxLength: 256
         examples: ["q3Jx0dQe2yQb7m3YqH1v8w"]
+    McpServerId:
+      name: serverId
+      in: path
+      required: true
+      description: The MCP server's id (a local-mode server's, or one of the caller's cloud-mode rows).
+      schema:
+        type: string
+        minLength: 1
+    McpAction:
+      name: action
+      in: path
+      required: true
+      description: What to do — anything else is `404`.
+      schema:
+        type: string
+        enum: [discover, call, read]
+    McpCredentials:
+      name: X-MCP-Credentials
+      in: header
+      required: false
+      description: |
+        A local-mode server's credential: base64 of its JSON
+        (`LocalMcpCredential`). Absent → the caller's cloud-mode row, if
+        any. Never stored, logged or echoed.
+      schema:
+        type: string
 
   responses:
     Conflict:
@@ -2138,6 +2483,420 @@ components:
           type: string
           enum: ["1:1", "16:9", "9:16", "4:3", "3:4", "2:3", "3:2"]
 
+    # --- extraction (0.8.0) -----------------------------------------------------
+    ExtractFileRequest:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+          description: The file (≤ the backend's upload cap, 5 MB by default). Its name and media type pick the extractor.
+        vision:
+          type: string
+          enum: ["true", "false"]
+          description: Force the PDF vision pass on or off; absent means decide from the text yield.
+
+    ExtractionKind:
+      type: string
+      enum: [pdf, docx, markdown, csv, json, text, image, html, code, spreadsheet, unsupported]
+
+    ExtractionResponse:
+      type: object
+      description: Mirrors `ExtractionResponseSchema` (`lib/shared/api-schemas.ts`).
+      required: [kind, text, truncated]
+      properties:
+        kind:
+          $ref: "#/components/schemas/ExtractionKind"
+        text:
+          type: string
+          description: The inline text (≤ ~100 KB).
+        truncated:
+          type: boolean
+          description: "`text` was cut at the inline budget."
+        language:
+          type: string
+          description: A code file's language.
+        fullText:
+          type: string
+          maxLength: 1200000
+          description: The full text (≤ ~1 MB), only when it is longer than `text`.
+
+    # --- summaries (0.8.0) -------------------------------------------------------
+    SummarizeMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+          minLength: 1
+          maxLength: 200000
+
+    SummarizeModel:
+      type: string
+      maxLength: 100
+      description: A catalog model id (`config/models.json`); absent means the backend's default.
+
+    FileSummarizeRequest:
+      type: object
+      required: [mode, text]
+      properties:
+        mode:
+          type: string
+          const: file
+        name:
+          type: string
+          maxLength: 500
+        text:
+          type: string
+          minLength: 1
+          maxLength: 50000
+        model:
+          $ref: "#/components/schemas/SummarizeModel"
+
+    ConversationSummarizeRequest:
+      type: object
+      required: [mode, messages]
+      properties:
+        mode:
+          type: string
+          const: conversation
+        messages:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/SummarizeMessage"
+        model:
+          $ref: "#/components/schemas/SummarizeModel"
+
+    CompressSummarizeRequest:
+      type: object
+      required: [mode, messages]
+      properties:
+        mode:
+          type: string
+          const: compress
+        messages:
+          type: array
+          minItems: 2
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/SummarizeMessage"
+        model:
+          $ref: "#/components/schemas/SummarizeModel"
+
+    ProjectBreakdownRequest:
+      type: object
+      required: [mode, goal]
+      properties:
+        mode:
+          type: string
+          const: project-breakdown
+        goal:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        existingTitles:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            maxLength: 300
+          description: Cards already on the board, not to be proposed again.
+        model:
+          $ref: "#/components/schemas/SummarizeModel"
+
+    SummarizeRequest:
+      oneOf:
+        - $ref: "#/components/schemas/FileSummarizeRequest"
+        - $ref: "#/components/schemas/ConversationSummarizeRequest"
+        - $ref: "#/components/schemas/CompressSummarizeRequest"
+        - $ref: "#/components/schemas/ProjectBreakdownRequest"
+      discriminator:
+        propertyName: mode
+        mapping:
+          file: "#/components/schemas/FileSummarizeRequest"
+          conversation: "#/components/schemas/ConversationSummarizeRequest"
+          compress: "#/components/schemas/CompressSummarizeRequest"
+          project-breakdown: "#/components/schemas/ProjectBreakdownRequest"
+
+    FileSummary:
+      type: object
+      required: [summary]
+      properties:
+        summary:
+          type: string
+        keyTopics:
+          type: array
+          items:
+            type: string
+
+    ConversationSummary:
+      type: object
+      required: [summary]
+      properties:
+        summary:
+          type: string
+        keyPoints:
+          type: array
+          items:
+            type: string
+        decisions:
+          type: array
+          items:
+            type: string
+
+    CompressSummary:
+      type: object
+      required: [recap]
+      properties:
+        recap:
+          type: string
+          minLength: 1
+          description: Markdown bullets that replace the compressed messages.
+
+    ProjectBreakdown:
+      type: object
+      required: [titles]
+      properties:
+        titles:
+          type: array
+          items:
+            type: string
+
+    SummarizeResponse:
+      description: The request mode's result (the modes' shapes do not overlap on their required keys).
+      anyOf:
+        - $ref: "#/components/schemas/FileSummary"
+        - $ref: "#/components/schemas/ConversationSummary"
+        - $ref: "#/components/schemas/CompressSummary"
+        - $ref: "#/components/schemas/ProjectBreakdown"
+
+    # --- bookmarks (0.8.0) -------------------------------------------------------
+    UrlFetchRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: An absolute URL or a bare domain (`https://` is assumed).
+
+    BookmarkSnapshot:
+      type: object
+      description: Mirrors `BookmarkSnapshot` (`lib/server/url/fetch.ts`).
+      required: [url, title, content, contentTruncated, contentHash]
+      properties:
+        url:
+          type: string
+          description: The final URL, after redirects.
+        title:
+          type: string
+        content:
+          type: string
+          description: The page's readable text (≤ 200 KB).
+        contentTruncated:
+          type: boolean
+        contentHash:
+          type: string
+          description: A hash of `content`, to tell a refresh that changed nothing.
+        description:
+          type: string
+        faviconUrl:
+          type: string
+
+    UrlFetchResponse:
+      type: object
+      required: [ok, bookmark]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        bookmark:
+          $ref: "#/components/schemas/BookmarkSnapshot"
+
+    UrlFetchError:
+      allOf:
+        - $ref: "#/components/schemas/ApiError"
+        - type: object
+          properties:
+            status:
+              type: integer
+              description: The target's HTTP status (`http_error`).
+
+    # --- MCP (0.8.0) -------------------------------------------------------------
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+
+    McpServerUpsertRequest:
+      type: object
+      description: Mirrors the Next route's body (`app/api/mcp/server/route.ts`).
+      required: [id, workspaceId, name, url, credentials]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        workspaceId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        url:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        credentials:
+          $ref: "#/components/schemas/LocalMcpCredential"
+        capabilities:
+          type: object
+          description: The server's cached capabilities, stored as is.
+        enabled:
+          type: boolean
+          default: true
+
+    McpProxyServer:
+      type: object
+      required: [id, name, url]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: Must equal the path's `serverId`.
+        name:
+          type: string
+          minLength: 1
+        url:
+          type: string
+          minLength: 1
+          description: The MCP endpoint; ignored for the caller's own cloud-mode server, whose stored URL is used.
+        transport:
+          type: string
+          enum: [http]
+
+    McpProxyRequest:
+      type: object
+      required: [server]
+      properties:
+        server:
+          $ref: "#/components/schemas/McpProxyServer"
+        tool:
+          type: string
+          minLength: 1
+          description: The tool to call (`call`).
+        input:
+          type: object
+          description: The tool's arguments (`call`).
+        uri:
+          type: string
+          minLength: 1
+          description: The resource to read (`read`).
+
+    McpToolInfo:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: [string, "null"]
+        inputSchema:
+          description: The tool's JSON Schema, as the server declares it.
+        uiResourceUri:
+          type: string
+          description: The `ui://` resource of an MCP App tool.
+
+    McpResourceInfo:
+      type: object
+      required: [uri]
+      properties:
+        uri:
+          type: string
+        name:
+          type: [string, "null"]
+        description:
+          type: [string, "null"]
+        mimeType:
+          type: [string, "null"]
+
+    McpPromptInfo:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: [string, "null"]
+
+    McpCapabilities:
+      type: object
+      description: What the server lists; a list it doesn't support is `null` or absent.
+      properties:
+        tools:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/McpToolInfo"
+        resources:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/McpResourceInfo"
+        prompts:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/McpPromptInfo"
+
+    McpDiscoverResult:
+      type: object
+      required: [capabilities]
+      properties:
+        capabilities:
+          $ref: "#/components/schemas/McpCapabilities"
+
+    McpCallResult:
+      type: object
+      required: [result]
+      properties:
+        result:
+          type: object
+          required: [text, isError]
+          properties:
+            text:
+              type: string
+            isError:
+              type: boolean
+
+    McpReadResult:
+      type: object
+      required: [result]
+      properties:
+        result:
+          type: object
+          properties:
+            text:
+              type: [string, "null"]
+            mimeType:
+              type: [string, "null"]
+
+    McpProxyResponse:
+      description: The action's result — `discover`, `call` or `read`.
+      anyOf:
+        - $ref: "#/components/schemas/McpDiscoverResult"
+        - $ref: "#/components/schemas/McpCallResult"
+        - $ref: "#/components/schemas/McpReadResult"
+
     EmbedRequest:
       type: object
       required: [fileId, text]
@@ -2168,8 +2927,8 @@ components:
           description: Chunks written (`indexed`) or already present (`already_indexed`); otherwise 0.
         reason:
           type: string
-          enum: [not_configured, empty, already_indexed, file_not_found]
-          description: Why the request was skipped. Absent when `indexed`.
+          enum: [not_configured, empty, already_indexed, file_not_found, not_signed_in]
+          description: Why the request was skipped (`not_signed_in`, 0.8.0, an anonymous caller). Absent when `indexed`.
 
     EditorAiToolName:
       type: string

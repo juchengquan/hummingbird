@@ -13,7 +13,7 @@ import pytest
 
 from agent_py import db as db_module
 from agent_py import model_allowlist as model_allowlist_module
-from agent_py import model_routes
+from agent_py import model_routes, response_cache
 from agent_py import settings as settings_module
 from agent_py.runs import wiring as runs_wiring
 
@@ -31,6 +31,7 @@ def reset_module_state() -> Iterator[None]:
     model_routes.reset_clients()
     db_module._pool = None  # type: ignore[attr-defined]  # test-only reset
     runs_wiring.reset_run_services()
+    response_cache.reset_response_cache()
     yield
     settings_module.get_settings.cache_clear()
     model_allowlist_module.get_model_allowlist.cache_clear()

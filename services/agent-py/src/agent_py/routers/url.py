@@ -1,5 +1,10 @@
 """`/v1/url/fetch` — fetch + extract a URL as a bookmark snapshot.
 Mirrors `app/api/url/fetch/route.ts`.
+
+Signed in or anonymous (wave 12, Q123/Q134 — `caller.optional_caller`):
+an anonymous caller is refused under `REQUIRE_AUTH_FOR_AI` and limited to
+Next's 30 fetches per IP per minute; a signed-in one isn't limited here
+(unchanged).
 """
 
 from __future__ import annotations
@@ -7,39 +12,22 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
 
-from ..auth import get_current_user
+from ..caller import AnonymousWindow, Caller, optional_caller
+from ..contract import models
 from ..url_fetch import FetchError, fetch_url_bookmark
 from ..url_validate import normalize_url
 
 router = APIRouter(tags=["url"])
 
-
-class UrlFetchRequest(BaseModel):
-    """Mirrors the TS `{ url }` body schema. Length capped to defeat
-    pathological inputs — the SSRF gate runs after this."""
-
-    url: str = Field(min_length=1, max_length=2000)
+#: Next's `bookmarkRateLimit`: 30 fetches per IP per minute.
+ANONYMOUS_PER_MINUTE = 30
+_anonymous_limit = AnonymousWindow(per_minute=ANONYMOUS_PER_MINUTE, message="Too many fetches.")
 
 
-class BookmarkSnapshotModel(BaseModel):
-    """Mirrors `BookmarkSnapshot` in `lib/server/url/fetch.ts`. Kept
-    snake_case on the wire to match the rest of the Python service's
-    convention (see `ExtractionResponse.full_text`)."""
-
-    url: str
-    title: str
-    content: str
-    content_truncated: bool
-    content_hash: str
-    description: str | None = None
-    favicon_url: str | None = None
-
-
-class UrlFetchResponse(BaseModel):
-    ok: bool
-    bookmark: BookmarkSnapshotModel
+def reset_limits() -> None:
+    """Forget the anonymous window (tests)."""
+    _anonymous_limit.reset()
 
 
 def _url_fetch_error_status(code: str) -> int:
@@ -56,11 +44,13 @@ def _url_fetch_error_status(code: str) -> int:
     return status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
-@router.post("/v1/url/fetch")
+@router.post(
+    "/v1/url/fetch", response_model=models.UrlFetchResponse, response_model_exclude_none=True
+)
 async def url_fetch(
-    body: UrlFetchRequest,
-    _claims: Annotated[dict[str, object], Depends(get_current_user)],
-) -> UrlFetchResponse:
+    body: models.UrlFetchRequest,
+    caller: Annotated[Caller, Depends(optional_caller)],
+) -> models.UrlFetchResponse:
     """Fetch + extract a URL as a bookmark snapshot. Phase 4-4-a
     of PLAN-agent-api — Python mirror of `app/api/url/fetch/route.ts`.
 
@@ -77,6 +67,7 @@ async def url_fetch(
     unsupported_content_type → 400, timeout → 408, body_too_large
     → 413, http_error / too_many_redirects / network → 502.
     """
+    _anonymous_limit.check(caller)
     normalized = normalize_url(body.url)
     if normalized is None:
         raise HTTPException(
@@ -104,15 +95,17 @@ async def url_fetch(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "missing_snapshot", "message": "Empty fetch result."},
         )
-    return UrlFetchResponse(
+    # The contract's `BookmarkSnapshot`: camelCase, as Next and agent-ts
+    # answer and the browser's `UrlFetchSnapshot` reads.
+    return models.UrlFetchResponse(
         ok=True,
-        bookmark=BookmarkSnapshotModel(
+        bookmark=models.BookmarkSnapshot(
             url=snap.url,
             title=snap.title,
             content=snap.content,
-            content_truncated=snap.content_truncated,
-            content_hash=snap.content_hash,
+            contentTruncated=snap.content_truncated,
+            contentHash=snap.content_hash,
             description=snap.description,
-            favicon_url=snap.favicon_url,
+            faviconUrl=snap.favicon_url,
         ),
     )
