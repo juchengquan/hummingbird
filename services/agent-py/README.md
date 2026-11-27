@@ -1,6 +1,12 @@
 # agent-py — Phase 2a (executor pattern + feature flag)
 
-Python implementation of the Hummingbird agent service.
+Python implementation of the Hummingbird agent service — **the app's
+only backend** since wave 13 of `docs/PLAN-frontend-backend-split.md`
+(Q121): the Next app has no API routes and no server secrets, so every
+API surface (chat and tasks on `/v1/runs`, the worker, the scheduler,
+the editor AI, the signed-out and account-bound calls, CSP reports) is
+served here, and every server setting below is this service's.
+`/v1/chat` (the AI SDK stream) is gone; chat is an interactive run.
 
 - **Phase 0**: FastAPI scaffolding + JWT auth + OpenAPI codegen.
 - **Phase 1**: read-only `task_jobs` poll loop in dry-run mode.
@@ -55,7 +61,7 @@ full phased plan.
   when `SUPABASE_DB_URL` is set; closes on shutdown.
 - **`jobs.py`** — single-statement `claim_next_job` using `FOR UPDATE
   SKIP LOCKED`. `release_job_to_queue` returns claimed-in-dry-run jobs
-  to the ready set so the TS worker picks them up.
+  to the ready set (the TS worker that picked them up then is gone).
 - **`poller.py`** — async tick loop owned by the FastAPI lifespan.
   Claim → log → release. Survives transient errors. Cancellation
   propagates cleanly on shutdown.
@@ -129,7 +135,9 @@ docker run -p 8000:8000 \
 ```
 
 Or use the repo-level `docker-compose.yml` to spin up alongside the
-Next.js dev server (see top-level `CLAUDE.md`).
+Next.js dev server (see top-level `CLAUDE.md`). The app needs this
+service: without `NEXT_PUBLIC_AGENT_PY_URL` it shows a "This deploy has
+no backend configured" screen (Q137).
 
 ### Behind the same-origin proxy
 
@@ -156,7 +164,7 @@ curl localhost:8080/healthz   # → this service, via the proxy
   origin. The bearer JWT still goes on every request, so moving the
   service to its own origin later is a configuration change.
 - **SSE.** The proxy flushes every chunk (`flush_interval -1`) and does
-  not compress, so `/v1/chat` and task event streams arrive unbuffered.
+  not compress, so run event streams (`/v1/runs`) arrive unbuffered.
 
 ## Error responses
 
@@ -176,7 +184,7 @@ The exception handlers live in `src/agent_py/error_envelope.py`
 
 - **Raise** `HTTPException(status_code=..., detail={"code": ..., "message": ...})`
   — the dict is returned flat; extra keys (`reason`, `status`, ...) are
-  kept. Prefer this: pick the `code` the matching Next.js route uses.
+  kept. Prefer this: pick a `code` the contract already names.
 - A **string** `detail` still works: its `code` comes from the status
   table `STATUS_CODES` in `error_envelope.py` (400/422 `invalid_request`,
   401 `auth`, 403 `forbidden`, 404 `not_found`, 405
@@ -192,8 +200,8 @@ The exception handlers live in `src/agent_py/error_envelope.py`
 - Hand-built responses (the body-size middleware's 413 / 400) use
   `error_body(code, message)` from the same module.
 
-SSE in-stream `error` events on `/v1/chat` are a separate protocol
-(`docs/API.md`) and are unaffected.
+In-stream errors on a run's SSE stream (`RUN_ERROR`) are a separate
+protocol (`packages/contract/RUN_EVENTS.md`) and are unaffected.
 
 ## Run tests
 
@@ -405,18 +413,20 @@ endpoints in the formats Plate reads: the AI SDK UI message stream (v1,
   and context, the blocks with their ids — built by
   `components/editor/ai/editor-ai-document.ts`; agent-py never sees a
   Plate value.
-- **The prompts** are `editor_ai/prompts.py`, a byte-for-byte port of
-  `lib/shared/editor-ai/` (including the npm `dedent` 1.0.0 algorithm,
-  `editor_ai/js_text.py`), pinned by `tests/fixtures/editor_ai_parity.json`;
-  text streams through `editor_ai/markdown_joiner.py` as on Next.
+- **The prompts** are `editor_ai/prompts.py`, first a byte-for-byte
+  port of the TypeScript prompts (including the npm `dedent` 1.0.0
+  algorithm, `editor_ai/js_text.py`), pinned by
+  `tests/fixtures/editor_ai_parity.json`; text streams through
+  `editor_ai/markdown_joiner.py`.
 - **The model calls.** Without a `toolName`, one forced `json` tool call
   classifies the instruction (`data-toolName` opens the stream); comments
   and table-cell edits are a forced `json` tool call whose
   `{"elements": [...]}` input streams out one `data-comment` /
   `data-table` part per finished element (`editor_ai/elements.py`).
-  `tests/test_editor_ai_route.py` replays the Next route's recorded
-  streams (`tests/fixtures/editor_ai_streams.json`): same prompts, same
-  parts, minus the route's `tool-*` parts (the client ignores them).
+  `tests/test_editor_ai_route.py` replays the streams recorded from the
+  former Next route (`tests/fixtures/editor_ai_streams.json`): same
+  prompts, same parts, minus the route's `tool-*` parts (the client
+  ignores them).
 - **Gates.** A bad bearer is 401; an anonymous caller is refused under
   `REQUIRE_AUTH_FOR_AI` and its commands share the runs' anonymous per-IP
   windows (`RUNS_ANONYMOUS_RATE_PER_MINUTE`, `RUNS_ANONYMOUS_DAILY_BUDGET`);
@@ -424,13 +434,14 @@ endpoints in the formats Plate reads: the AI SDK UI message stream (v1,
   catalog (`400 unknown_model`), absent → `AGENT_DEFAULT_MODEL`; the tool
   choice and the comment / table elements are forced tool calls, so a
   model without `supportsStructuredOutput` hands them to the default. No
-  provider for the model → `503 auth` (the editor then shows its demo
-  stream). A model that thinks unprompted (`thinksUnprompted`) gets room
-  for it in ghost text. Body caps 32 MiB / 256 KiB, as on Next.
+  provider for the model → `503 auth`. A model that thinks unprompted
+  (`thinksUnprompted`) gets room for it in ghost text. Body caps 32 MiB /
+  256 KiB.
 
-After changing a TS prompt, regenerate the fixtures and port the change:
-`EDITOR_AI_PARITY_WRITE=1 bun test components/editor/ai/editor-ai.parity.test.ts`
-and `EDITOR_AI_STREAMS_WRITE=1 bun test app/api/ai/command/stream.fixture.test.ts`.
+The TypeScript prompts, routes and fixture generators were deleted in
+wave 13 (Q141): the two fixtures are frozen golden files, each naming the
+commit it was generated at, and these prompts are the source of truth.
+Change a prompt here and update its golden file in the same commit.
 
 ## Signed-out calls (wave 12, Q123/Q134)
 
@@ -521,57 +532,59 @@ for the thinking in ghost text).
 | `JOB_LEASE_SECONDS` | No | Default `120`. Lease a claim holds on a `task_jobs` row (`lease_expires_at`, migration 0032). A job whose worker died is reclaimed once it lapses (or reaped as failed, with its task, once `max_attempts` is spent). |
 | `JOB_HEARTBEAT_SECONDS` | No | Default `30` (clamped to a third of the lease). How often an executing job extends its lease. |
 | `SHUTDOWN_GRACE_SECONDS` | No | Default `8`. On shutdown the in-flight job may finish within this window; after it, the job is cancelled and handed back (lease expired on the spot) for the next worker. Keep it under the container stop timeout (Docker's default is 10 s). The stop starts on SIGTERM itself (the server's signal handler is chained), not after uvicorn has drained open SSE streams; the image also runs uvicorn with `--timeout-graceful-shutdown 8` so the lifespan (which closes the DB pool) isn't held past the stop timeout by a chat stream. `/readyz` reports `poller_alive` / `poller_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
-| `SCHEDULER_ENABLED` | No | Unset: follows the worker (Q130) — on where the worker runs tasks (`WORKER_DRY_RUN=false`) with `SUPABASE_DB_URL` set, off otherwise. An explicit `true` / `false` wins (`false` keeps it off beside a live worker); empty counts as unset. Runs the schedule dispatcher loop (`scheduler.py`) in this process: it fires due `task_schedules` rows exactly like the Vercel Cron's `/api/tasks/jobs/tick`, which is redundant from wave 12 and deleted in wave 13. Needs `SUPABASE_DB_URL`. Safe alongside that cron and on several replicas — see [Scheduled tasks](#scheduled-tasks-replacing-the-vercel-cron). `/readyz` reports `scheduler_alive` / `scheduler_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
-| `SCHEDULER_INTERVAL_SECONDS` | No | Default `60` (the Vercel Cron's cadence). Seconds between dispatcher ticks. |
-| `VISION_MODEL` | No | The catalog model `/v1/extract`'s PDF vision pass uses when it is flagged `supportsVision` and served here; else the first such model; none → no vision pass. Same variable as the Next.js route. |
-| `REQUIRE_AUTH_FOR_AI` | No | Default off. `true` / `1` (with `SUPABASE_JWT_SECRET` or a JWKS URL set) refuses anonymous runs with `401 auth_required`, and anonymous calls to the signed-out endpoints ([Signed-out calls](#signed-out-calls-wave-12-q123q134); `/v1/extract` is served without its vision pass). Strict values (`true` / `false` / `1` / `0`); anything else fails anonymous starts with 500 — never silently open. Same variable as the Next.js routes. |
+| `SCHEDULER_ENABLED` | No | Unset: follows the worker (Q130) — on where the worker runs tasks (`WORKER_DRY_RUN=false`) with `SUPABASE_DB_URL` set, off otherwise. An explicit `true` / `false` wins (`false` keeps it off beside a live worker); empty counts as unset. Runs the schedule dispatcher loop (`scheduler.py`) in this process: the only thing that fires due `task_schedules` rows since wave 13 deleted the Vercel Cron. Needs `SUPABASE_DB_URL`. Safe on several replicas — see [Scheduled tasks](#scheduled-tasks). `/readyz` reports `scheduler_alive` / `scheduler_last_tick_age_seconds` and turns `status: degraded` if the loop died. |
+| `SCHEDULER_INTERVAL_SECONDS` | No | Default `60` (the former Vercel Cron's cadence). Seconds between dispatcher ticks. |
+| `VISION_MODEL` | No | The catalog model `/v1/extract`'s PDF vision pass uses when it is flagged `supportsVision` and served here; else the first such model; none → no vision pass. |
+| `REQUIRE_AUTH_FOR_AI` | No | Default off. `true` / `1` (with `SUPABASE_JWT_SECRET` or a JWKS URL set) refuses anonymous runs with `401 auth_required`, and anonymous calls to the signed-out endpoints ([Signed-out calls](#signed-out-calls-wave-12-q123q134); `/v1/extract` is served without its vision pass). Strict values (`true` / `false` / `1` / `0`); anything else fails anonymous starts with 500 — never silently open. |
 | `RUNS_STUB_HARNESS` | No | Default `false` (runs use the native harness and `ANTHROPIC_API_KEY`; without a key every run fails `unavailable`). `true` runs every run on the model-free stub (`runs/stub_harness.py`, steered by `forwardedProps.conformance`) — for the contract conformance suite only. |
 | `RUNS_LEASE_SECONDS` / `RUNS_HEARTBEAT_SECONDS` | No | Defaults `60` / `5`. An executing interactive run's lease and how often it is extended (also the latency of a cancel served by another replica). |
 | `RUNS_REAPER_INTERVAL_SECONDS` | No | Default `15`. Runs maintenance loop: reap lapsed interactive runs, drop expired in-memory runs and their logs (the Postgres retention sweep runs every 10 min regardless). |
 | `RUNS_MEMORY_TTL_SECONDS` / `RUNS_MEMORY_MAX_RUNS` | No | Defaults `900` / `2000`. How long an in-memory run is kept after it ends; how many runs memory holds at once (past it, starts answer 503). |
 | `RUNS_RATE_PER_MINUTE` | No | Default `30`. Run starts per client IP per minute, every caller. |
 | `RUNS_ANONYMOUS_RATE_PER_MINUTE` / `RUNS_ANONYMOUS_DAILY_BUDGET` / `RUNS_ANONYMOUS_MAX_CONCURRENT` | No | Defaults `10` / `200` / `3`. Anonymous starts per IP per minute, per rolling 24 h, and live anonymous runs per IP. |
-| `RUNS_RECONCILE_ENABLED` / `RUNS_RECONCILE_INTERVAL_SECONDS` | No | Defaults `true` / `60`. With `SUPABASE_DB_URL`: the no-worker reconciler (`runs/reconcile.py`) fails a background task still `queued`, never picked up, after `TASK_NO_WORKER_TIMEOUT_MINUTES` — while no worker ran anything in that window — with `no_worker`, as Next's `reconcileStaleRuns` does. Safe on several replicas. |
-| `TASK_NO_WORKER_TIMEOUT_MINUTES` | No | Default `10`. Same variable and parsing as Next (a positive number of minutes, else 10). |
+| `RUNS_RECONCILE_ENABLED` / `RUNS_RECONCILE_INTERVAL_SECONDS` | No | Defaults `true` / `60`. With `SUPABASE_DB_URL`: the no-worker reconciler (`runs/reconcile.py`) fails a background task still `queued`, never picked up, after `TASK_NO_WORKER_TIMEOUT_MINUTES` — while no worker ran anything in that window — with `no_worker` (the only reconciler since wave 13 deleted Next's `/api/tasks/sweep`, Q132). Safe on several replicas. |
+| `TASK_NO_WORKER_TIMEOUT_MINUTES` | No | Default `10`. A positive number of minutes, else 10. |
 | `DB_POOL_MAX_SIZE` | No | Default `10` (was a fixed 4). Postgres connections shared by the worker, the scheduler, the reconciler and every runs request; an idle runs stream polls about twice a second (a log read and a row read), backing off from every 250 ms once its log goes quiet. |
-| `MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE` | No | Default `5`. Per-IP `generateImage` calls per minute on interactive runs (signed in or not, keyed on the client IP), refused with the Next route's text past it. Same variable and parsing as the Next chat route: not a positive number → `5`, floored, capped at `60`. |
-| `WEB_TOOL_RATE_LIMIT_PER_MINUTE` | No | Default `20` (the Next chat route's fixed window). Per-IP webSearch + webFetch + searchFiles calls per minute on interactive runs, one shared window. |
+| `MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE` | No | Default `5`. Per-IP `generateImage` calls per minute on interactive runs (signed in or not, keyed on the client IP), refused with the Next route's text past it. Not a positive number → `5`, floored, capped at `60`. |
+| `WEB_TOOL_RATE_LIMIT_PER_MINUTE` | No | Default `20`. Per-IP webSearch + webFetch + searchFiles calls per minute on interactive runs, one shared window. |
 | `SUPABASE_URL` | No (reported by `/readyz`) | Phase 2 will use it for things beyond what `SUPABASE_DB_URL` already gives us. |
 | `SERVICE_PORT` | No | Default 8000. |
 | `CORS_ALLOWED_ORIGINS` | No | Default empty (no CORS). Comma-separated exact origins allowed to call the API from a browser on another origin, e.g. `http://localhost:3000` when Next calls agent-py on `:8000`. Not needed behind the same-origin proxy. `*` and non-origin values are ignored; credentialed CORS is never enabled (auth is a bearer JWT). |
 | `TRUSTED_PROXY_HOPS` | No | Default `1`. How many reverse proxies in front of the service append to `X-Forwarded-For`; the rate-limit key is the entry this many places from the right. `0` ignores the header and keys on the socket peer. Pinned to `1` in `docker-compose.yml` (one Caddy hop). |
 | `CLIENT_IP_HEADER` | No | Empty by default. A single-value header a trusted edge overwrites with the client IP (e.g. `cf-connecting-ip`); wins over `X-Forwarded-For` when present. Only set it if the edge overwrites it. Cleared in `docker-compose.yml`. |
-| `EMBEDDINGS_BASE_URL` | No | OpenAI-compatible embedder for `/v1/embed` (`<base>/embeddings`, e.g. `http://localhost:11434/v1`). Same var, precedence and defaults as the Next.js provider. Neither this nor `OLLAMA_BASE_URL` set → embedding is off (`/v1/embed` answers `skipped / not_configured`). Operator config, so it is called without the SSRF guard (a localhost Ollama works). |
+| `EMBEDDINGS_BASE_URL` | No | OpenAI-compatible embedder for `/v1/embed` (`<base>/embeddings`, e.g. `http://localhost:11434/v1`). Neither this nor `OLLAMA_BASE_URL` set → embedding is off (`/v1/embed` answers `skipped / not_configured`). Operator config, so it is called without the SSRF guard (a localhost Ollama works). |
 | `EMBEDDINGS_API_KEY` | No | Bearer key for `EMBEDDINGS_BASE_URL`; empty → `OLLAMA_API_KEY` → a placeholder (Ollama ignores auth). |
 | `EMBEDDINGS_MODEL` | No | Default `nomic-embed-text` (768-dim, matching `file_sections.embedding vector(768)`). |
-| `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` | No | The `ollama/*` models (Ollama ≥ 0.14, its Anthropic-format endpoint), and the fallback embedder when `EMBEDDINGS_BASE_URL` is unset — the same Ollama host the Next.js app uses. |
+| `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` | No | The `ollama/*` models (Ollama ≥ 0.14, its Anthropic-format endpoint), and the fallback embedder when `EMBEDDINGS_BASE_URL` is unset. |
 | `MEMORY_EXTRACT_MODEL` | No | Catalog id for `/v1/memory/extract`. Used when it is a `supportsStructuredOutput` model a provider serves here; otherwise (or empty) `AGENT_DEFAULT_MODEL`. Without a provider for the model extraction is skipped (still `{ok: true}`). |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` | For Anthropic directly | `anthropic/*` models go to Anthropic with this key (Q115). An empty `ANTHROPIC_BASE_URL` means Anthropic's own API. |
 | `AI_GATEWAY_API_KEY` | No | The Vercel AI Gateway: the catalog's `gateway` routes (OpenAI, Google, DeepSeek; `anthropic/*` without `ANTHROPIC_API_KEY`). |
 | `OPENROUTER_API_KEY` | No | OpenRouter: the `openrouter/*` models. |
 | `MINIMAX_CN_API_KEY` + `MINIMAX_CN_BASE_URL` | No | Minimax's Anthropic-format endpoint: the `minimax/*` models (and `generateImage`). Both are needed for chat. |
 | `MCP_ALLOW_PRIVATE_HOSTS` | No | Default off. `true` lets MCP traffic — the `/v1/mcp/*` proxy and save check, cloud and local MCP tools on runs — reach loopback / RFC 1918 / `.local`-style hosts (a dev MCP server on `localhost`), checked again at connect time. Link-local and cloud-metadata addresses (169.254.0.0/16, fe80::/10, `metadata.google.internal`, …) stay blocked; bookmarks and `webFetch` stay public-only. Next.js semantics: only the exact value `true` enables it; any value other than `true` / `false` / empty stops the service at boot. Never enable on a shared deployment. |
+| `MCP_ENCRYPTION_KEY` | For cloud-mode MCP | Encrypts / decrypts cloud-mode MCP credentials (`openssl rand -base64 32`); never persisted. Rotating it invalidates stored credentials. |
 
 A repo-level `.env` works — `pydantic-settings` looks for `.env` in the
-current working directory. The service shares the same `.env` as the
-Next.js app (same Supabase project, same vars).
+current working directory. The service still shares one `.env` with
+the Next.js app, which reads only `NODE_ENV`, `CSP_MODE` and
+`NEXT_PUBLIC_*` from it (Q143); splitting the file waits for wave 14.
 
-## Scheduled tasks (replacing the Vercel Cron)
+## Scheduled tasks
 
 Recurring runs live in `task_schedules` (a task spec + a cron expression
 + an IANA timezone). agent-py serves their CRUD at
 `/v1/tasks/schedules[/{id}]` (`routers/schedules.py`, the contract's
 `schedules` tag) and can run the dispatcher that fires them
-(`scheduler.py` → `schedules.dispatch_due_schedules`), replacing the
-Vercel Cron that calls `/api/tasks/jobs/tick` every minute
-(`docs/PLAN-frontend-backend-split.md`, Q9).
+(`scheduler.py` → `schedules.dispatch_due_schedules`), which replaced
+the Vercel Cron that called Next's `/api/tasks/jobs/tick` every minute
+(`docs/PLAN-frontend-backend-split.md`, Q9; the cron, the route and
+`vercel.json` were deleted in wave 13, Q130).
 
 - **CRUD runs as the caller.** Each query runs in a transaction after
   `SET LOCAL ROLE authenticated` + `request.jwt.claims`
   (`store._set_user_context`), so RLS, 0031's workspace-ownership check
   (→ 403), and 0035's column grants and guard trigger (coarse cron floor,
-  20 enabled schedules per user → 409 `limit_reached`) apply exactly as
-  they do to the Next routes' PostgREST calls.
+  20 enabled schedules per user → 409 `limit_reached`) apply.
 - **Same cron semantics as the TS side.** `cron.py` is a port of
   cron-parser 5.5.0 + the luxon date math it uses — DST quirks
   included — because both backends write and fire the same rows.
@@ -600,13 +613,12 @@ too, with nothing to set. Look for `lifespan.scheduler.started`, then
 `scheduler_alive: true`. `SCHEDULER_ENABLED=false` turns it off (say, to
 keep one dispatching replica of several — not needed for safety).
 
-**The Vercel Cron is redundant.** Both dispatchers can run at the same
-time: the guarded claim lets exactly one of them fire each occurrence
-(`tests/test_schedules_pg.py`: concurrent agent-py dispatchers, and the
-cron's own claim racing this one either way round). Until wave 13
-deletes the cron entry in `vercel.json` (and the route and
-`CRON_SECRET` with it), the two simply share the work; removing the
-entry sooner is safe.
+**Several dispatchers are safe.** The guarded claim lets exactly one
+of them fire each occurrence (`tests/test_schedules_pg.py`: concurrent
+agent-py dispatchers), so every replica whose worker is live may run
+one. The Vercel Cron that did this before wave 12 — its `vercel.json`
+entry, the `/api/tasks/jobs/tick` route and `CRON_SECRET` — was deleted
+in wave 13 (Q130).
 
 ## Crash recovery and side-effecting tools
 
@@ -637,18 +649,14 @@ After Phase 1 deploys:
 3. Check `task_jobs` in Postgres — no rows stuck in `running` after
    the release (the release sets `status='queued'`, clears
    `started_at`).
-4. Check that `attempts` ticks up for jobs Python claims twice in a
-   row before the TS worker picks them up. Expected at the rate
-   `~POLL_INTERVAL_SECONDS / TS-worker-tick` (today's TS cron is 1 min,
-   so Phase 1 should win the race roughly 1-in-N times where N is the
-   cron-to-Python ratio).
+4. (Historical: Phase 1 raced a TS worker, since removed — `attempts`
+   ticked up for jobs Python claimed twice before it picked them up.)
 
 ## Who executes tasks — the opt-out flag
 
 agent-py executes **every** user's tasks (`start`, `continue`,
-`respond`) once `WORKER_DRY_RUN=false`. Nothing else does: agent-ts has
-no executor (its poller is off unless `AGENT_TS_POLLER_ENABLED`) and
-the Next.js app runs no worker. So the per-user flag
+`respond`) once `WORKER_DRY_RUN=false`. Nothing else does (agent-ts and
+the Next.js task routes were deleted in wave 13). So the per-user flag
 `auth.users.raw_app_meta_data->>'agent_backend'` is an **opt-out**
 (`feature_flag.python_executes_for_user`):
 
@@ -684,11 +692,11 @@ of releasing it — a release would be re-claimed forever.
 
 **Safety net.** A task no worker ever starts (agent-py down or still in
 dry-run) would otherwise sit `queued` forever: a dry-run release refunds
-the claim's attempt, so its job always looks claimable. The Next.js
-stale-run reconciler (`reconcileStaleRuns` in
-`lib/server/agent/store.ts`, run by `/api/tasks/sweep` and the task
-stream) fails a task that is still `queued`, has no event past the
-route's `status: queued` marker, is older than
+the claim's attempt, so its job always looks claimable. agent-py's
+no-worker reconciler (`runs/reconcile.py`, `RUNS_RECONCILE_*`; it
+replaced Next's `reconcileStaleRuns` and `/api/tasks/sweep`, deleted in
+wave 13) fails a task that is still `queued`, has no event past its
+`status: queued` marker, is older than
 `TASK_NO_WORKER_TIMEOUT_MINUTES` (default 10), has no job under a live
 lease, AND no worker has executed anything in that window
 (`task_worker_active_within`, migration 0040) — with "No task worker
