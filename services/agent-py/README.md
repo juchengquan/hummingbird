@@ -448,7 +448,7 @@ signed-in limits are each route's own, unchanged.
 | `POST /v1/summarize` | no rate limit (the Next route has none); the response cache, scoped per caller (user, else a hash of the IP) | refused |
 | `POST /v1/extract` | 60 / min per IP; the vision pass 10 / min per IP (every caller) | **served**, without the vision pass |
 | `POST /v1/extract-table` | no rate limit (as the Next route) | refused |
-| `POST /v1/mcp/{id}/{action}` | 120 / min per IP; local credentials (`X-MCP-Credentials`) only — never a cloud-mode lookup | refused |
+| `POST /v1/mcp/{id}/{action}` | **only on a deploy without accounts** (no token can be verified) — elsewhere `401 auth_required`, as Next's route: never an anonymous open relay. 120 / min per IP; local credentials (`X-MCP-Credentials`) only — never a cloud-mode lookup | refused |
 | `POST /v1/embed` | 30 / min per IP; answers `200 skipped / not_signed_in` (nothing to index without a user) | refused |
 
 Still signed-in only (account-bound): `/v1/share` (create / revoke),

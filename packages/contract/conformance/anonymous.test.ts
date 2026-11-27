@@ -3,7 +3,7 @@
  * without a session uses take no token at all — they are served, not 401
  * — while a bad token is still a 401 (`auth.test.ts`). Each case is chosen
  * to spend nothing: no model call (an unknown model is refused first), no
- * outbound fetch (an unparseable URL, a link-local MCP endpoint), no
+ * outbound fetch (an unparseable URL), no
  * index write (embedding indexes nothing for an anonymous caller).
  *
  * With `CONTRACT_REQUIRE_AUTH_FOR_AI=1` (the backend runs with
@@ -78,11 +78,13 @@ describe.skipIf(!env.baseUrl)(`conformance: signed-out calls @ ${env.baseUrl}`, 
     expect([ex.status, code(ex)]).toEqual([400, "invalid_url"])
   })
 
-  test.skipIf(skip("mcpProxy"))("mcpProxy: no token, link-local endpoint → 400 invalid_server_url", async () => {
-    const ex = await anonymous("mcpProxy", { body: validRequestBodies.mcpProxy })
-    if (!ex) return
-    expect([ex.status, code(ex)]).toEqual([400, "invalid_server_url"])
-    expect(typeof (ex.body as { reason?: unknown }).reason).toBe("string")
+  // The proxy is never an anonymous open relay: where accounts exist (every
+  // backend this suite runs against verifies tokens) it wants a session, as
+  // Next's route does; only a deploy without accounts serves it anonymously.
+  test.skipIf(skip("mcpProxy"))("mcpProxy: no token where accounts exist → 401 auth_required", async () => {
+    const ex = await call(contract.operation("mcpProxy"), { body: validRequestBodies.mcpProxy })
+    contract.assertConforms("mcpProxy", ex)
+    expect([ex.status, code(ex)]).toEqual([401, "auth_required"])
   })
 
   test.skipIf(skip("mcpProxy"))("mcpProxy: an unknown action → 404", async () => {

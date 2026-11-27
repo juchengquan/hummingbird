@@ -108,10 +108,38 @@ def test_mcp_proxy_rejects_a_bad_token(client: TestClient) -> None:
 
 
 # --- signed out: the local-credentials path only (wave 12, Q123/Q134) --------
+#
+# As on Next (`requireSessionWhenSupabaseConfigured`): the proxy is never an
+# anonymous open relay — where accounts exist (a token can be verified) the
+# caller must be signed in; only a deploy without accounts serves anonymous
+# local-mode calls.
 
 
-def test_mcp_proxy_serves_anonymous_local_mode_calls(client: TestClient) -> None:
-    """Signed out, the header credential (local mode) goes to the body URL."""
+@pytest.fixture
+def no_accounts_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    for name in ("SUPABASE_JWT_SECRET", "SUPABASE_URL", "SUPABASE_JWKS_URL"):
+        monkeypatch.setenv(name, "")
+    return TestClient(create_app(enable_poller=False))
+
+
+def test_mcp_proxy_refuses_anonymous_callers_where_accounts_exist(client: TestClient) -> None:
+    discover = AsyncMock(return_value=McpCapabilities())
+    with patch.object(mcp_router, "mcp_discover", new=discover):
+        r = client.post(
+            f"/v1/mcp/{SERVER_ID}/discover",
+            json=_server_body(),
+            headers=_cred_header({"headers": {"X-Key": "local"}}),
+        )
+        assert r.status_code == 401
+        assert r.json()["code"] == "auth_required"
+        discover.assert_not_awaited()
+        r = client.post(f"/v1/mcp/{SERVER_ID}/discover", json=_server_body(), headers=_auth())
+        assert r.status_code == 200
+
+
+def test_mcp_proxy_serves_anonymous_local_mode_calls(no_accounts_client: TestClient) -> None:
+    """Without accounts, the header credential (local mode) goes to the body URL."""
+    client = no_accounts_client
     captured: dict[str, Any] = {}
 
     async def fake_discover(endpoint: Any, credentials: Any) -> McpCapabilities:
@@ -131,10 +159,11 @@ def test_mcp_proxy_serves_anonymous_local_mode_calls(client: TestClient) -> None
 
 
 def test_mcp_proxy_never_looks_up_cloud_servers_for_anonymous_callers(
-    client: TestClient,
+    no_accounts_client: TestClient,
 ) -> None:
     """Cloud-mode servers need a user: an anonymous call without a header
     credential is sent as is, never with a stored credential."""
+    client = no_accounts_client
     lookup = AsyncMock(
         return_value=CloudMcpServer(
             id=SERVER_ID,
@@ -162,8 +191,11 @@ def test_mcp_proxy_never_looks_up_cloud_servers_for_anonymous_callers(
     assert captured == {"url": "https://mcp.test/sse", "credentials": None}
 
 
-def test_mcp_proxy_limits_anonymous_callers_120_a_minute_per_ip(client: TestClient) -> None:
+def test_mcp_proxy_limits_anonymous_callers_120_a_minute_per_ip(
+    no_accounts_client: TestClient,
+) -> None:
     """Next's `mcpProxyLimit` for a caller with no account: 120 per IP."""
+    client = no_accounts_client
     ip = {"X-Forwarded-For": "203.0.113.20"}
     discover = AsyncMock(return_value=McpCapabilities())
     with patch.object(mcp_router, "mcp_discover", new=discover):
@@ -176,12 +208,6 @@ def test_mcp_proxy_limits_anonymous_callers_120_a_minute_per_ip(client: TestClie
         assert int(r.headers["Retry-After"]) >= 1
         other = {"X-Forwarded-For": "203.0.113.21"}
         r = client.post(f"/v1/mcp/{SERVER_ID}/discover", json=_server_body(), headers=other)
-        assert r.status_code == 200
-        # Signed in on the same IP: not held (agent-py's signed-in limits
-        # are unchanged).
-        r = client.post(
-            f"/v1/mcp/{SERVER_ID}/discover", json=_server_body(), headers={**ip, **_auth()}
-        )
         assert r.status_code == 200
 
 

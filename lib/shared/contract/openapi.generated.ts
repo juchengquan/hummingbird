@@ -328,9 +328,12 @@ export interface paths {
          *     (`400 invalid_server_url`, with its `reason`). An upstream failure is
          *     `502 mcp_upstream_error`, its text never echoed.
          *
-         *     Signed in or anonymous (Q123/Q134) — anonymous on the local path
-         *     only: no cloud-mode lookup, refused under `REQUIRE_AUTH_FOR_AI`,
-         *     limited per client IP (`429 rate_limit`).
+         *     Anonymous only on a deploy without accounts (no token can be
+         *     verified), as Next's route: where accounts exist an anonymous call is
+         *     `401 auth_required` — the proxy is never an anonymous open relay.
+         *     Anonymous calls take the local path only (no cloud-mode lookup), are
+         *     refused under `REQUIRE_AUTH_FOR_AI` and are limited per client IP
+         *     (`429 rate_limit`).
          */
         post: operations["mcpProxy"];
         delete?: never;
