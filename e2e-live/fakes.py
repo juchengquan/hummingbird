@@ -307,6 +307,17 @@ async def image(_request):
     return Response(PNG, media_type="image/png")
 
 
+async def page(request):
+    """A web page to bookmark (next-free.spec.ts): its title and body show once fetched."""
+    name = request.path_params["name"]
+    html = (
+        f"<!doctype html><html><head><title>Live page {name}</title>"
+        f'<meta name="description" content="A page the fake serves."></head>'
+        f"<body><main><h1>Live page {name}</h1><p>Body text of {name}.</p></main></body></html>"
+    )
+    return Response(html, media_type="text/html; charset=utf-8")
+
+
 async def state(_request):
     return JSONResponse(
         {
@@ -326,6 +337,7 @@ app = Starlette(
         Route("/v1/messages", messages, methods=["POST"]),
         Route("/v1/image_generation", image_generation, methods=["POST"]),
         Route("/img/{name}", image),
+        Route("/page/{name}", page),
         Route("/state", state),
     ]
 )
