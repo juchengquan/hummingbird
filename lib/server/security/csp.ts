@@ -211,12 +211,18 @@ export function reportingEndpointsHeader(reportUri: string): string {
   return `${CSP_REPORT_GROUP}="${reportUri}"`
 }
 
-/** Everything the proxy needs, from an env bag (defaults to
- *  `process.env`; tests pass a literal). */
-export function cspOptionsFromEnv(
-  nonce: string,
-  env: Record<string, string | undefined> = process.env,
-): CspPolicyOptions {
+/** The variables the policy reads. The proxy names each one
+ *  (`scripts/check-next-env.ts` refuses `process.env` taken whole);
+ *  tests pass a literal. */
+export type CspEnv = Partial<
+  Record<
+    "NODE_ENV" | "NEXT_PUBLIC_SUPABASE_URL" | "NEXT_PUBLIC_API_BASE_URL" | "NEXT_PUBLIC_AGENT_PY_URL",
+    string | undefined
+  >
+>
+
+/** Everything the proxy needs, from an env bag. */
+export function cspOptionsFromEnv(nonce: string, env: CspEnv): CspPolicyOptions {
   return {
     nonce,
     isDev: env.NODE_ENV === "development",

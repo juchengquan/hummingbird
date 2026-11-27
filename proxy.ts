@@ -37,7 +37,12 @@ export function proxy(request: NextRequest) {
   if (!headerName) return NextResponse.next()
 
   const nonce = generateNonce()
-  const options = cspOptionsFromEnv(nonce)
+  const options = cspOptionsFromEnv(nonce, {
+    NODE_ENV: process.env.NODE_ENV,
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
+    NEXT_PUBLIC_AGENT_PY_URL: process.env.NEXT_PUBLIC_AGENT_PY_URL,
+  })
   const policy = buildCsp(options)
 
   const requestHeaders = new Headers(request.headers)

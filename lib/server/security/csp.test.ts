@@ -220,8 +220,6 @@ describe("cspOptionsFromEnv", () => {
       NEXT_PUBLIC_SUPABASE_URL: "https://abc.supabase.co",
       NEXT_PUBLIC_API_BASE_URL: "https://api.example.com",
       NEXT_PUBLIC_AGENT_PY_URL: "http://localhost:8000",
-      // agent-ts is gone (wave 13): its URL no longer reaches the policy.
-      NEXT_PUBLIC_AGENT_TS_URL: "http://localhost:8787",
     })
     expect(opts).toEqual({
       nonce: NONCE,
