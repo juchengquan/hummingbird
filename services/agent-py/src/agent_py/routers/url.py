@@ -12,9 +12,9 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
 
 from ..caller import AnonymousWindow, Caller, optional_caller
+from ..contract import models
 from ..url_fetch import FetchError, fetch_url_bookmark
 from ..url_validate import normalize_url
 
@@ -28,32 +28,6 @@ _anonymous_limit = AnonymousWindow(per_minute=ANONYMOUS_PER_MINUTE, message="Too
 def reset_limits() -> None:
     """Forget the anonymous window (tests)."""
     _anonymous_limit.reset()
-
-
-class UrlFetchRequest(BaseModel):
-    """Mirrors the TS `{ url }` body schema. Length capped to defeat
-    pathological inputs — the SSRF gate runs after this."""
-
-    url: str = Field(min_length=1, max_length=2000)
-
-
-class BookmarkSnapshotModel(BaseModel):
-    """Mirrors `BookmarkSnapshot` in `lib/server/url/fetch.ts` — camelCase
-    on the wire, as Next and agent-ts answer and the browser's
-    `UrlFetchSnapshot` reads (the contract's `BookmarkSnapshot`)."""
-
-    url: str
-    title: str
-    content: str
-    contentTruncated: bool
-    contentHash: str
-    description: str | None = None
-    faviconUrl: str | None = None
-
-
-class UrlFetchResponse(BaseModel):
-    ok: bool
-    bookmark: BookmarkSnapshotModel
 
 
 def _url_fetch_error_status(code: str) -> int:
@@ -70,11 +44,13 @@ def _url_fetch_error_status(code: str) -> int:
     return status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
-@router.post("/v1/url/fetch", response_model_exclude_none=True)
+@router.post(
+    "/v1/url/fetch", response_model=models.UrlFetchResponse, response_model_exclude_none=True
+)
 async def url_fetch(
-    body: UrlFetchRequest,
+    body: models.UrlFetchRequest,
     caller: Annotated[Caller, Depends(optional_caller)],
-) -> UrlFetchResponse:
+) -> models.UrlFetchResponse:
     """Fetch + extract a URL as a bookmark snapshot. Phase 4-4-a
     of PLAN-agent-api — Python mirror of `app/api/url/fetch/route.ts`.
 
@@ -119,9 +95,11 @@ async def url_fetch(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "missing_snapshot", "message": "Empty fetch result."},
         )
-    return UrlFetchResponse(
+    # The contract's `BookmarkSnapshot`: camelCase, as Next and agent-ts
+    # answer and the browser's `UrlFetchSnapshot` reads.
+    return models.UrlFetchResponse(
         ok=True,
-        bookmark=BookmarkSnapshotModel(
+        bookmark=models.BookmarkSnapshot(
             url=snap.url,
             title=snap.title,
             content=snap.content,

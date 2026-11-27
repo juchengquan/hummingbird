@@ -798,7 +798,7 @@ export const EmbedResponseSchema = z.object({
   /** Number of chunks written (indexed) or already present (skipped). */
   sections: z.number().int().nonnegative(),
   reason: z
-    .enum(['not_configured', 'empty', 'already_indexed', 'file_not_found'])
+    .enum(['not_configured', 'empty', 'already_indexed', 'file_not_found', 'not_signed_in'])
     .optional(),
 })
 

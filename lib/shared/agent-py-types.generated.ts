@@ -287,8 +287,9 @@ export interface paths {
          *     flags the model `supportsStructuredOutput`, then the lenient JSON
          *     text path; unparseable / off-schema output → 502 `provider`; a
          *     provider error → `categorize_error` (port of `categorizeError`).
-         *     Sign-in is always required — like every agent-py AI route, there is
-         *     no anonymous mode here.
+         *     Signed in or anonymous (wave 12, Q123/Q134): an anonymous caller is
+         *     refused under `REQUIRE_AUTH_FOR_AI` (`401 auth_required`) and otherwise
+         *     gets the Next route's budget — no rate limit.
          */
         post: operations["extract_table_v1_extract_table_post"];
         delete?: never;
@@ -516,8 +517,11 @@ export interface paths {
          *     500 `embed_failed` on an embedder / database failure.
          *
          *     Differences from the Next.js route:
-         *       - Sign-in is checked first (every agent-py route requires a bearer
-         *         token), and an invalid body is FastAPI's 422, not 400.
+         *       - A bad bearer is 401 before the body is read, and an invalid body
+         *         is FastAPI's 422, not 400.
+         *       - Signed out it is a `200 skipped / not_signed_in` (limited 30/min
+         *         per IP, refused under `REQUIRE_AUTH_FOR_AI`) where Next answers
+         *         401 `not_signed_in` (Q123: signed-out calls never reach Next).
          *       - No DB pool (`SUPABASE_DB_URL` unset) with an embedder configured →
          *         503 `db_unconfigured` (the Next.js route answers 401 when Supabase
          *         is not configured — it cannot tell the cases apart).
@@ -856,26 +860,24 @@ export interface components {
             file: string;
         };
         /**
-         * BookmarkSnapshotModel
-         * @description Mirrors `BookmarkSnapshot` in `lib/server/url/fetch.ts`. Kept
-         *     snake_case on the wire to match the rest of the Python service's
-         *     convention (see `ExtractionResponse.full_text`).
+         * BookmarkSnapshot
+         * @description Mirrors `BookmarkSnapshot` (`lib/server/url/fetch.ts`).
          */
-        BookmarkSnapshotModel: {
+        BookmarkSnapshot: {
             /** Url */
             url: string;
             /** Title */
             title: string;
             /** Content */
             content: string;
-            /** Content Truncated */
-            content_truncated: boolean;
-            /** Content Hash */
-            content_hash: string;
+            /** Contenttruncated */
+            contentTruncated: boolean;
+            /** Contenthash */
+            contentHash: string;
             /** Description */
             description?: string | null;
-            /** Favicon Url */
-            favicon_url?: string | null;
+            /** Faviconurl */
+            faviconUrl?: string | null;
         };
         /** Brave */
         Brave: {
@@ -1235,7 +1237,7 @@ export interface components {
             /** Sections */
             sections: number;
             /** Reason */
-            reason?: ("not_configured" | "empty" | "already_indexed" | "file_not_found") | null;
+            reason?: ("not_configured" | "empty" | "already_indexed" | "file_not_found" | "not_signed_in") | null;
         };
         /** Exa */
         Exa: {
@@ -2304,20 +2306,19 @@ export interface components {
             encryptedValue?: string | null;
             metadata?: components["schemas"]["Metadata"] | null;
         };
-        /**
-         * UrlFetchRequest
-         * @description Mirrors the TS `{ url }` body schema. Length capped to defeat
-         *     pathological inputs — the SSRF gate runs after this.
-         */
+        /** UrlFetchRequest */
         UrlFetchRequest: {
             /** Url */
             url: string;
         };
         /** UrlFetchResponse */
         UrlFetchResponse: {
-            /** Ok */
-            ok: boolean;
-            bookmark: components["schemas"]["BookmarkSnapshotModel"];
+            /**
+             * Ok
+             * @constant
+             */
+            ok: true;
+            bookmark: components["schemas"]["BookmarkSnapshot"];
         };
         /**
          * UrlSource

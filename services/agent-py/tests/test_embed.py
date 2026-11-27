@@ -417,9 +417,53 @@ def _with_pool(responder: Responder) -> Any:
     )
 
 
-def test_requires_auth(client: TestClient) -> None:
-    assert client.post(PATH, json=BODY).status_code == 401
+def test_a_bad_token_is_401(client: TestClient) -> None:
     assert client.post(PATH, json=BODY, headers={"Authorization": "Bearer nope"}).status_code == 401
+
+
+# --- signed out (wave 12, Q123/Q134) -------------------------------------------
+
+
+def test_anonymous_is_a_200_skip_that_touches_nothing(client: TestClient) -> None:
+    """`file_sections` belongs to a user: signed out there is nothing to
+    index, so the answer is the no-op skip the best-effort client expects
+    (Next answers 401) — no embedder call, no database."""
+    fake_index = AsyncMock()
+    fake_embed = AsyncMock()
+    with (
+        patch.object(embed_router, "index_file_sections", fake_index),
+        patch.object(embed_router, "embed_texts", fake_embed),
+    ):
+        r = client.post(PATH, json=BODY)
+    assert r.status_code == 200
+    assert r.json() == {"status": "skipped", "sections": 0, "reason": "not_signed_in"}
+    fake_index.assert_not_awaited()
+    fake_embed.assert_not_awaited()
+
+
+def test_anonymous_callers_are_limited_30_a_minute_per_ip(client: TestClient) -> None:
+    ip = {"X-Forwarded-For": "203.0.113.30"}
+    for _ in range(30):
+        assert client.post(PATH, json=BODY, headers=ip).status_code == 200
+    r = client.post(PATH, json=BODY, headers=ip)
+    assert r.status_code == 429
+    assert r.json()["code"] == "rate_limit"
+    assert int(r.headers["retry-after"]) >= 1
+    assert (
+        client.post(PATH, json=BODY, headers={"X-Forwarded-For": "203.0.113.31"}).status_code == 200
+    )
+
+
+def test_anonymous_is_refused_under_require_auth(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REQUIRE_AUTH_FOR_AI", "true")
+    from agent_py import settings as settings_module
+
+    settings_module.get_settings.cache_clear()
+    r = client.post(PATH, json=BODY)
+    assert r.status_code == 401
+    assert r.json()["code"] == "auth_required"
 
 
 @pytest.mark.parametrize(
