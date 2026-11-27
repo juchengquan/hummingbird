@@ -10,7 +10,7 @@ import nextTs from "eslint-config-next/typescript";
 // build time; this rule catches mistakes earlier (in the editor / `bun lint`).
 const restrictServerInClient = {
   patterns: [
-    { group: ["@/server/*"], message: "Client code cannot import server-only modules. Move shared code to @/shared/* or call it via an API route." },
+    { group: ["@/server/*"], message: "Client code cannot import server-only modules. Move shared code to @/shared/* or call agent-py through the API client." },
   ],
 };
 
@@ -102,7 +102,9 @@ const eslintConfig = defineConfig([
     rules: { "no-restricted-imports": ["error", restrictServerInClient] },
   },
   {
-    files: ["lib/server/**/*.{ts,tsx}", "app/api/**/*.{ts,tsx}", "app/auth/**/route.ts"],
+    // What is left of Next's server (wave 13): the CSP builders, the
+    // proxy that applies them and the sandbox frame shell route.
+    files: ["lib/server/**/*.{ts,tsx}", "app/**/route.ts", "proxy.ts"],
     rules: { "no-restricted-imports": ["error", restrictClientInServer] },
   },
   {
