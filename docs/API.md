@@ -150,7 +150,8 @@ the only cloud precondition is the `files` row existing (the
 {
   status: "indexed" | "skipped",
   sections: number,  // chunks written, or already-present count on skip
-  reason?: "not_configured" | "empty" | "already_indexed" | "file_not_found",
+  reason?: "not_configured" | "empty" | "already_indexed" | "file_not_found"
+         | "not_signed_in",  // agent-py only, signed out (wave 12)
 }
 ```
 
@@ -568,6 +569,41 @@ per page (`lib/client/api/served-models.ts` → `lib/shared/served-models.ts`)
 and the model picker, the switch note, the task models and the editor's
 list follow it; until it arrives, when it can't be read, or when it lists
 nothing (no provider key), they keep the built-in `anthropic/*` list.
+
+---
+
+## Signed-out calls on agent-py (wave 12, contract 0.8.0)
+
+On the agent-py backends the browser sends `extract`, `summarize`,
+`url/fetch`, `extract-table`, the MCP proxy and `embed` to agent-py's
+`/v1/*` twins (`POST /v1/extract`, `/v1/summarize`, `/v1/url/fetch`,
+`/v1/extract-table`, `/v1/mcp/{serverId}/{action}`, `/v1/embed`; all in
+`packages/contract/openapi.yaml`). On `python-runs` (the default) they go
+there **signed out too**, with no `Authorization` header
+(`resolveRemoteBackend({ anonymous: true })` → `remoteTargetFor`), so a
+signed-out browser never calls these `/api/*` routes (Q123/Q134).
+`python` keeps its signed-out calls on Next, as its chat; `ts-service`
+and `ts` are unchanged. The account-bound calls (share, schedules,
+memory extract, the stored-file links, `/v1/mcp/server`) stay
+signed-in only and are not sent signed out.
+
+agent-py's rules for an anonymous caller: a bad bearer is still `401
+auth`; under `REQUIRE_AUTH_FOR_AI` it is refused `401 auth_required` —
+except `/v1/extract`, which serves it without the vision pass, as Next
+does; and it gets Next's per-IP limits (`429 rate_limit` +
+`Retry-After`): URL fetch 30 / min, MCP proxy 120 / min (local
+credentials only, never a cloud-mode lookup), text extraction 60 / min,
+the vision pass 10 / min (every caller), embed 30 / min. Summarize and
+extract-table have no rate limit, as their Next routes. Signed-in limits
+are unchanged.
+
+Wire differences from the Next routes, all the contract's shapes:
+errors are the flat `{ code, message }` envelope (URL fetch adds
+`status`); an invalid body is `422 invalid_request`; `embed` signed out
+answers `200 { status: "skipped", sections: 0, reason: "not_signed_in" }`
+(Next: `401`). `extract`'s `fullText` and the bookmark's
+`contentTruncated` / `contentHash` / `faviconUrl` are camelCase, as here
+(before wave 12 agent-py answered them in snake_case).
 
 ---
 
