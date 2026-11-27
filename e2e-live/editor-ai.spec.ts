@@ -7,7 +7,7 @@
  * ` jumped.` come only from there — the Next route has no gateway key here
  * and would answer with its demo stream.
  */
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Page } from "./guard"
 
 import catalog from "../config/models.json"
 import { STORE_VERSION } from "../lib/client/hooks/store/migrate"

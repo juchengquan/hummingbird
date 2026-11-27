@@ -8,7 +8,7 @@
  * reaches that provider with the id it knows (`llama3.1:8b`); the follow-up
  * chips stay on the default model.
  */
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Page } from "./guard"
 
 import { STORE_VERSION } from "../lib/client/hooks/store/migrate"
 
