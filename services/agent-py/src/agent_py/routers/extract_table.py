@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from ..api_errors import categorize_error
-from ..auth import get_current_user
+from ..caller import Caller, optional_caller
 from ..chat import resolve_anthropic_client
 from ..extract_table import (
     ColumnHint,
@@ -100,7 +100,7 @@ class CitationTableResponse(BaseModel):
 )
 async def extract_table(
     body: ExtractTableRequest,
-    _claims: Annotated[dict[str, object], Depends(get_current_user)],
+    _caller: Annotated[Caller, Depends(optional_caller)],
 ) -> CitationTableResponse:
     """Python mirror of `app/api/extract-table/route.ts`.
 
@@ -117,8 +117,9 @@ async def extract_table(
     flags the model `supportsStructuredOutput`, then the lenient JSON
     text path; unparseable / off-schema output → 502 `provider`; a
     provider error → `categorize_error` (port of `categorizeError`).
-    Sign-in is always required — like every agent-py AI route, there is
-    no anonymous mode here.
+    Signed in or anonymous (wave 12, Q123/Q134): an anonymous caller is
+    refused under `REQUIRE_AUTH_FOR_AI` (`401 auth_required`) and otherwise
+    gets the Next route's budget — no rate limit.
     """
     allowlist = get_model_allowlist()
     try:

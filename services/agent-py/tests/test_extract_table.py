@@ -31,6 +31,7 @@ from agent_py.extract_table import (
 from agent_py.main import create_app
 from agent_py.model_allowlist import UnknownModelError
 from agent_py.routers import extract_table as extract_table_router
+from agent_py.settings import get_settings
 
 SECRET = "test-secret-do-not-use-in-prod-32-bytes!"
 PATH = "/v1/extract-table"
@@ -166,9 +167,34 @@ def _post(client: TestClient, fake: _FakeClient | None, body: dict[str, Any]) ->
 # --- route: auth + validation ------------------------------------------
 
 
-def test_rejects_missing_token(client: TestClient) -> None:
-    r = client.post(PATH, json=BODY)
+def test_rejects_a_bad_token(client: TestClient) -> None:
+    r = client.post(PATH, json=BODY, headers={"Authorization": "Bearer nope"})
     assert r.status_code == 401
+    assert r.json()["code"] == "auth"
+
+
+def test_serves_anonymous_callers_without_a_rate_limit(client: TestClient) -> None:
+    """Signed out (Q123/Q134): the Next route's budget — no rate limit."""
+    fake = _FakeClient(*[_tool(EXTRACTION) for _ in range(70)])
+    with patch.object(extract_table_router, "resolve_anthropic_client", return_value=fake):
+        for _ in range(70):
+            r = client.post(PATH, json=BODY)
+            assert r.status_code == 200, r.text
+    assert r.json() == EXPECTED_TABLE
+
+
+def test_refuses_anonymous_callers_under_require_auth(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REQUIRE_AUTH_FOR_AI", "true")
+    get_settings.cache_clear()
+    fake = _FakeClient(_tool(EXTRACTION))
+    with patch.object(extract_table_router, "resolve_anthropic_client", return_value=fake):
+        r = client.post(PATH, json=BODY)
+    assert r.status_code == 401
+    assert r.json()["code"] == "auth_required"
+    assert fake.messages.calls == []
+    assert _post(client, fake, BODY).status_code == 200
 
 
 @pytest.mark.parametrize(
