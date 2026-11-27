@@ -42,9 +42,9 @@ from .fence import fenced_connection
 
 @dataclass(frozen=True)
 class ClaimedJob:
-    """Mirror of TS `ClaimedJob` in services/agent-ts/src/jobs.ts.
+    """One claimed `task_jobs` row.
 
-    Field shapes match the TS interface so logs from both workers are
+    Field shapes match the former TS worker's interface so logs are
     directly comparable.
     """
 
@@ -125,7 +125,7 @@ RETURNING t.id,
 
 # Release a claimed job back to the ready set (dry-run / unflagged
 # user / unsupported action). Resets `started_at`, clears the lease and
-# undoes the claim's `attempts` bump (mirrors agent-ts's RELEASE_SQL).
+# undoes the claim's `attempts` bump.
 #
 # Backoff: the claim orders by `scheduled_at`, so leaving it unchanged
 # made a released job the head of the queue again on the very next tick

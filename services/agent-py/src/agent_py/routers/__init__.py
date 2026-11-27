@@ -10,10 +10,9 @@ flow through `Depends()` rather than closures so each router is
 independently importable and unit-testable.
 """
 
-from . import chat, extract, health, images, mcp, summarize, url, whoami
+from . import extract, health, images, mcp, summarize, url, whoami
 
 __all__ = [
-    "chat",
     "extract",
     "health",
     "images",

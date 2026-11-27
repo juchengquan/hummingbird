@@ -22,8 +22,8 @@ replaces them:
 Hand-built responses outside the handler (the body-size middleware)
 build their body with `error_body` so the shape cannot drift.
 
-SSE in-stream error events (`/v1/chat`) are a separate protocol and are
-not touched here.
+SSE in-stream error events (a run's `RUN_ERROR`) are a separate protocol
+and are not touched here.
 """
 
 from __future__ import annotations

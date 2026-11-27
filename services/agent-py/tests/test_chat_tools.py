@@ -1,32 +1,22 @@
-"""Phase 4-3 tests — tool-enabled streaming in `/v1/chat`.
+"""The agent loop's tool path: memory taint and tool-made images.
 
-Covers `chat_stream_with_tools_ai_sdk` — the AI SDK v5 UI message
-stream tool path. The legacy custom-format companion was retired
-in B.3 of PLAN-useChat-adoption.md. The Anthropic SDK is faked at
-the boundary so tests stay hermetic and the multi-step loop can be
-exercised deterministically.
+Drives `chat_loop.run_turn_loop` with tools against a faked Anthropic
+SDK, so the multi-step loop runs deterministically. (The AI SDK frame
+tests of `/v1/chat` went with that route in wave 13, Q121; the loop's
+tool lifecycle, tool errors and step budget are pinned at the event level
+in `test_chat_events.py`.)
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
 
-import pytest
-
-from agent_py.chat import (
-    ChatConfig,
-    ChatMessage,
-    chat_stream_with_tools_ai_sdk,
-)
-from agent_py.tools.registry import (
-    ToolDescriptor,
-    ToolError,
-    ToolInvocationResult,
-)
+from agent_py.chat_loop import LoopResult, LoopSucceeded, run_turn_loop
+from agent_py.emitter import RunEmitter
+from agent_py.events import TaskEvent, ToolImageEvent, ToolOutputEvent
+from agent_py.tools.registry import ToolDescriptor, ToolInvocationResult
 
 # --- fakes -----------------------------------------------------------
 
@@ -122,15 +112,6 @@ class _FakeClient:
         self.messages = _FakeMessages(steps)
 
 
-def _config(*, tools: list[ToolDescriptor], max_steps: int = 6) -> ChatConfig:
-    return ChatConfig(
-        model="claude-3-5-sonnet-20241022",
-        messages=[ChatMessage(role="user", content="hi")],
-        tools=tuple(tools),
-        max_steps=max_steps,
-    )
-
-
 def _make_echo_tool(name: str = "echo") -> ToolDescriptor:
     """Build a no-arg ToolDescriptor whose execute returns a fixed
     `ToolInvocationResult`. Tests patch the descriptor's execute via
@@ -147,205 +128,72 @@ def _make_echo_tool(name: str = "echo") -> ToolDescriptor:
     )
 
 
-def _parse_custom_frames(frames: list[str]) -> list[Any]:
-    return [json.loads(f.removeprefix("data: ").rstrip()) for f in frames]
+async def _run(
+    tools: list[ToolDescriptor], steps: list[_Step]
+) -> tuple[list[TaskEvent], LoopResult]:
+    events: list[TaskEvent] = []
 
+    async def sink(e: TaskEvent) -> None:
+        events.append(e)
 
-def _parse_ai_sdk_frames(frames: list[str]) -> list[Any]:
-    out: list[Any] = []
-    for f in frames:
-        s = f.removeprefix("data: ").rstrip()
-        if s == "[DONE]":
-            out.append("[DONE]")
-        else:
-            out.append(json.loads(s))
-    return out
-
-
-@pytest.mark.asyncio
-async def test_with_tools_ai_sdk_runs_one_tool_lifecycle() -> None:
-    """Two-step run: text-start/-delta/-end + tool-input + tool-output
-    + finish-step in step 1; text-start/-delta/-end + finish-step +
-    finish + [DONE] in step 2."""
-    steps = [
-        _Step(
-            deltas=["thinking "],
-            tool_uses=[{"id": "tu_1", "name": "echo", "input": {"q": "world"}}],
-        ),
-        _Step(deltas=["Hello."]),
-    ]
-    client = _FakeClient(steps)
-    frames = [
-        f
-        async for f in chat_stream_with_tools_ai_sdk(
-            client=client, config=_config(tools=[_make_echo_tool()])
-        )
-    ]
-    payloads = _parse_ai_sdk_frames(frames)
-    types = [p["type"] if isinstance(p, dict) else p for p in payloads]
-    assert types == [
-        "start",
-        "start-step",
-        "text-start",
-        "text-delta",
-        "text-end",
-        "tool-input-available",
-        "tool-output-available",
-        "finish-step",
-        "start-step",
-        "text-start",
-        "text-delta",
-        "text-end",
-        "finish-step",
-        "finish",
-        "[DONE]",
-    ]
-    # `output` carries the tool result text.
-    tool_output = next(
-        p for p in payloads if isinstance(p, dict) and p["type"] == "tool-output-available"
+    result = await run_turn_loop(
+        client=_FakeClient(steps),  # type: ignore[arg-type]
+        emitter=RunEmitter(run_id="r", sink=sink),
+        model="claude-test",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=tools,
     )
-    assert tool_output["output"] == "echo:world"
-    assert "errorText" not in tool_output
+    return events, result
 
 
-@pytest.mark.asyncio
-async def test_with_tools_ai_sdk_tool_error_rides_in_error_text() -> None:
-    """Failed tool → tool-output-available with both `output` and
-    `errorText` set so the SDK consumer can surface a per-call
-    error."""
-    failing = ToolDescriptor(
-        name="bad",
-        description="d",
-        input_schema={"type": "object"},
-        execute=AsyncMock(side_effect=ToolError("boom")),
-    )
-    steps = [
-        _Step(tool_uses=[{"id": "tu_1", "name": "bad", "input": {}}]),
-        _Step(deltas=["ok"]),
-    ]
-    client = _FakeClient(steps)
-    frames = [
-        f
-        async for f in chat_stream_with_tools_ai_sdk(client=client, config=_config(tools=[failing]))
-    ]
-    payloads = _parse_ai_sdk_frames(frames)
-    tool_output = next(
-        p for p in payloads if isinstance(p, dict) and p["type"] == "tool-output-available"
-    )
-    assert tool_output["errorText"] == "boom"
+# --- memory taint ------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_with_tools_ai_sdk_max_steps_emits_error_no_finish() -> None:
-    """Step budget exhausted → error + [DONE], no finish frame.
-    Mirrors the AI SDK convention: `finish` is reserved for clean
-    completion."""
-    steps = [_Step(tool_uses=[{"id": f"tu_{i}", "name": "echo", "input": {}}]) for i in range(5)]
-    client = _FakeClient(steps)
-    frames = [
-        f
-        async for f in chat_stream_with_tools_ai_sdk(
-            client=client, config=_config(tools=[_make_echo_tool()], max_steps=2)
-        )
-    ]
-    payloads = _parse_ai_sdk_frames(frames)
-    types = [p["type"] if isinstance(p, dict) else p for p in payloads]
-    assert "finish" not in types
-    assert types[-1] == "[DONE]"
-    assert types[-2] == "error"
-    err = payloads[-2]
-    assert "iterations" in err["errorText"]
-    # The step-budget bust is an agent-loop ceiling, not a provider
-    # failure — keep it in the generic `upstream` bucket so the
-    # consumer's typed bubble doesn't promise a rate-limit cooldown.
-    assert err["code"] == "upstream"
-
-
-@pytest.mark.asyncio
-async def test_with_tools_ai_sdk_upstream_exception_closes_text_then_error() -> None:
-    """Anthropic SDK raises mid-stream → emit text-end (closing the
-    open block) + error + [DONE]. No finish-step / finish."""
-    steps = [_Step(raises=RuntimeError("rate limited"))]
-    client = _FakeClient(steps)
-    frames = [
-        f
-        async for f in chat_stream_with_tools_ai_sdk(
-            client=client, config=_config(tools=[_make_echo_tool()])
-        )
-    ]
-    payloads = _parse_ai_sdk_frames(frames)
-    types = [p["type"] if isinstance(p, dict) else p for p in payloads]
-    # Pre-delta error: no text-start/text-end emitted (channels open
-    # lazily on the first delta). Matches agent-ts's
-    # `chatStreamAiSdk` and the text-only `chat_stream_ai_sdk` path.
-    assert types == [
-        "start",
-        "start-step",
-        "error",
-        "[DONE]",
-    ]
-    # Categorised — "rate limited" matches the rate_limit string
-    # branch (the RuntimeError has no SDK type to lean on).
-    assert payloads[2]["code"] == "rate_limit"
-
-
-# --- memory taint on the finish frame ----------------------------------------
-
-
-def _named_tool(name: str) -> ToolDescriptor:
-    return _make_echo_tool(name)
-
-
-async def _finish_payload(tools: list[ToolDescriptor], tool_uses: list[dict[str, Any]]) -> Any:
+async def _tainted_by(tools: list[ToolDescriptor], tool_uses: list[dict[str, Any]]) -> str | None:
     steps = (
         [_Step(tool_uses=tool_uses), _Step(deltas=["done"])]
         if tool_uses
         else [_Step(deltas=["hi"])]
     )
-    frames = [
-        f
-        async for f in chat_stream_with_tools_ai_sdk(
-            client=_FakeClient(steps), config=_config(tools=tools)
-        )
-    ]
-    return next(
-        p for p in _parse_ai_sdk_frames(frames) if isinstance(p, dict) and p["type"] == "finish"
-    )
+    _, result = await _run(tools, steps)
+    assert isinstance(result.outcome, LoopSucceeded)
+    return result.tainted_by
 
 
-@pytest.mark.asyncio
 async def test_untrusted_tool_marks_the_turn_memory_tainted() -> None:
-    """A web/file/MCP tool ran → the client must skip memory extraction,
-    same `messageMetadata.memoryTainted` slot as the Next.js route."""
-    finish = await _finish_payload(
-        [_named_tool("webFetch")], [{"id": "tu_1", "name": "webFetch", "input": {}}]
+    """A web/file/MCP tool ran → the run's result is memory-tainted (the
+    client skips memory extraction for it)."""
+    tainted = await _tainted_by(
+        [_make_echo_tool("webFetch")], [{"id": "tu_1", "name": "webFetch", "input": {}}]
     )
-    assert finish == {"type": "finish", "messageMetadata": {"memoryTainted": True}}
+    assert tainted == "webFetch"
 
 
-@pytest.mark.asyncio
 async def test_unknown_or_new_tools_taint_by_default() -> None:
-    finish = await _finish_payload(
-        [_named_tool("mcp__notion__search")],
+    tainted = await _tainted_by(
+        [_make_echo_tool("mcp__notion__search")],
         [{"id": "tu_1", "name": "mcp__notion__search", "input": {}}],
     )
-    assert finish["messageMetadata"] == {"memoryTainted": True}
+    assert tainted == "mcp__notion__search"
 
 
-@pytest.mark.asyncio
 async def test_trusted_tool_and_tool_free_turns_are_not_tainted() -> None:
-    finish = await _finish_payload(
-        [_named_tool("generateImage")], [{"id": "tu_1", "name": "generateImage", "input": {}}]
+    assert (
+        await _tainted_by(
+            [_make_echo_tool("generateImage")],
+            [{"id": "tu_1", "name": "generateImage", "input": {}}],
+        )
+        is None
     )
-    assert finish == {"type": "finish"}
-    assert await _finish_payload([_named_tool("webFetch")], []) == {"type": "finish"}
+    assert await _tainted_by([_make_echo_tool("webFetch")], []) is None
 
 
-@pytest.mark.asyncio
-async def test_generated_images_add_a_data_tool_image_frame() -> None:
-    """Wave 4b-D (additive): a tool that returns images (`generateImage`)
-    is followed by a `data-tool-image` frame — the Next route's frame,
-    `id` = the tool call id — and nothing else changes."""
+# --- tool-made images ---------------------------------------------------------
+
+
+async def test_generated_images_follow_the_tool_output_as_a_tool_image_event() -> None:
+    """A tool that returns images (`generateImage`) is followed by a
+    `tool_image` event for the same tool call, ids derived from it."""
 
     async def execute(_args: dict[str, Any]) -> ToolInvocationResult:
         return ToolInvocationResult(
@@ -359,36 +207,25 @@ async def test_generated_images_add_a_data_tool_image_frame() -> None:
     gen = ToolDescriptor(
         name="generateImage", description="", input_schema={"type": "object"}, execute=execute
     )
-    steps = [
-        _Step(tool_uses=[{"id": "tu_1", "name": "generateImage", "input": {"prompt": "p"}}]),
-        _Step(deltas=["Here."]),
-    ]
-    frames = [
-        f
-        async for f in chat_stream_with_tools_ai_sdk(
-            client=_FakeClient(steps), config=_config(tools=[gen])
-        )
-    ]
-    payloads = [p for p in _parse_ai_sdk_frames(frames) if isinstance(p, dict)]
-    types = [p["type"] for p in payloads]
-    i = types.index("tool-output-available")
-    assert types[i + 1] == "data-tool-image"
-    assert payloads[i + 1] == {
-        "type": "data-tool-image",
-        "id": "tu_1",
-        "data": {
-            "id": "tu_1",
+    events, _ = await _run(
+        [gen],
+        [
+            _Step(tool_uses=[{"id": "tu_1", "name": "generateImage", "input": {"prompt": "p"}}]),
+            _Step(deltas=["Here."]),
+        ],
+    )
+    i = next(n for n, e in enumerate(events) if isinstance(e, ToolOutputEvent))
+    image = events[i + 1]
+    assert isinstance(image, ToolImageEvent)
+    assert (image.tool_call_id, image.mode) == ("tu_1", "t2i")
+    assert list(image.images) == [
+        {
+            "id": "tu_1-0",
+            "url": "https://m/a.png",
+            "width": 0,
+            "height": 0,
+            "format": "png",
+            "prompt": "p",
             "mode": "t2i",
-            "images": [
-                {
-                    "id": "tu_1-0",
-                    "url": "https://m/a.png",
-                    "width": 0,
-                    "height": 0,
-                    "format": "png",
-                    "prompt": "p",
-                    "mode": "t2i",
-                }
-            ],
-        },
-    }
+        }
+    ]

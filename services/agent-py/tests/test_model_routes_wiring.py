@@ -1,7 +1,7 @@
 """Every model call goes to its model's provider (wave 10).
 
-With Anthropic and Minimax both configured: a run, a task, an editor
-command and a chat turn on a Minimax model reach the Minimax client with
+With Anthropic and Minimax both configured: a run, a task and an editor
+command on a Minimax model reach the Minimax client with
 the id Minimax knows; the follow-up chips and the forced tool calls
 (structured output, which Minimax answers in plain text) reach the default
 model's client; a model without tools gets none (Q116) and isn't run as a
@@ -189,49 +189,3 @@ def test_a_valid_model_without_a_provider_is_503_not_400(monkeypatch: pytest.Mon
     body = r.json()
     assert body["code"] == "auth" and "deepseek/deepseek-v4-flash" in body["message"]
     json.dumps(body)
-
-
-def test_chat_on_minimax_asks_the_default_for_its_chips(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """`/v1/chat`: the turn on the model's provider, the chips on the default's."""
-    from agent_py.main import create_app
-    from agent_py.routers import chat as chat_router
-
-    from .test_chat_route import SECRET, _auth, _FakeClient
-
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", SECRET)
-    get_settings.cache_clear()
-    asked: list[tuple[str, str]] = []
-
-    def recording(name: str, deltas: list[str]) -> _FakeClient:
-        fake = _FakeClient(deltas)
-        real = fake.messages.stream
-
-        def stream(**kw: Any) -> Any:
-            asked.append((name, kw["model"]))
-            return real(**kw)
-
-        fake.messages.stream = stream  # type: ignore[method-assign]
-        return fake
-
-    clients = {
-        "minimax-cn": recording("minimax", ["an answer"]),
-        "anthropic": recording("default", ['["a?", "b?", "c?"]']),
-    }
-    monkeypatch.setattr(
-        chat_router,
-        "resolve_anthropic_client",
-        lambda target=None: clients[
-            (target or get_model_allowlist().default_target).provider or ""
-        ],
-    )
-    with TestClient(create_app(enable_poller=False)) as client:
-        r = client.post(
-            "/v1/chat",
-            json={"model": M31, "messages": [{"role": "user", "content": "hi"}]},
-            headers=_auth(),
-        )
-    assert r.status_code == 200
-    assert "data-suggestions" in r.text
-    assert asked == [("minimax", "MiniMax-M3.1-Flash"), ("default", "claude-haiku-4-5")]

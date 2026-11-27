@@ -37,7 +37,7 @@ still being the signed-in user's: their bearer reads and cancels it
 listed. `stores_for(owner, ephemeral=…)` picks a new run's store.
 
 Without a database, signed-in callers keep interactive runs — chat keeps
-working on a DB-less deployment, as `/v1/chat` does — but they are not
+working on a DB-less deployment — but they are not
 persisted (lost on restart, dropped `RUNS_MEMORY_TTL_SECONDS` after they
 end, never visible to another replica) and background runs answer
 `503 unavailable` ("Supabase is not configured."), as the schedules

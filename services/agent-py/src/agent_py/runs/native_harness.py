@@ -1,7 +1,7 @@
 """The native harness adapter — today's agent loop behind `HarnessAdapter`.
 
-Wave 3b-C of `docs/PLAN-frontend-backend-split.md` (Q8): the loop
-`/v1/chat` runs (`chat_loop.run_turn_loop`) as the first adapter, for
+Wave 3b-C of `docs/PLAN-frontend-backend-split.md` (Q8): the agent loop
+(`chat_loop.run_turn_loop`) as the first adapter, for
 **interactive** runs. Background runs keep going through the poller and
 `executor.py` this wave.
 
@@ -12,7 +12,7 @@ prompt). `forwardedProps` (`RunInput.options`, `RunForwardedProps`):
 
 | key | use |
 |---|---|
-| `model` | allow-listed catalog id (`config/models.json`); absent → the service default. Unknown → `Failed("unknown_model")`, like `/v1/chat`'s 400 |
+| `model` | allow-listed catalog id (`config/models.json`); absent → the service default. Unknown → `Failed("unknown_model")` (the route answers 400 first) |
 | `systemPrompt` | prepended to the system prompt |
 | `skills[]` | the backend tools offered: `webSearch`, `webFetch`, `imageGen` (→ `generateImage`), `searchFiles` (signed-in runs), with their per-skill config |
 | `maxSteps` | model calls per run, 1 to 50; absent → `DEFAULT_MAX_STEPS` (chat's 6) |
@@ -844,8 +844,8 @@ class NativeHarness:
         cancel: CancelSignal,
         meter: UsageMeter,
     ) -> None:
-        """Follow-up chips after the answer (`suggestions` part), as on
-        `/v1/chat`. Decoration: failures yield nothing."""
+        """Follow-up chips after the answer (`suggestions` part).
+        Decoration: failures yield nothing."""
         if cancel.is_set() or not text.strip():
             return
         waiter = _cancel_waiter(cancel)

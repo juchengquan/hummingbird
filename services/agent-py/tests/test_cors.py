@@ -27,13 +27,13 @@ def _client(monkeypatch: pytest.MonkeyPatch, origins: str) -> TestClient:
 
 def test_off_by_default_sends_no_cors_headers(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client(monkeypatch, "")
-    res = client.options("/v1/chat", headers={"Origin": "http://localhost:3000", **PREFLIGHT})
+    res = client.options("/v1/runs", headers={"Origin": "http://localhost:3000", **PREFLIGHT})
     assert "access-control-allow-origin" not in res.headers
 
 
 def test_listed_origin_preflight_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client(monkeypatch, "http://localhost:3000")
-    res = client.options("/v1/chat", headers={"Origin": "http://localhost:3000", **PREFLIGHT})
+    res = client.options("/v1/runs", headers={"Origin": "http://localhost:3000", **PREFLIGHT})
     assert res.status_code == 200
     assert res.headers["access-control-allow-origin"] == "http://localhost:3000"
     allowed = res.headers["access-control-allow-headers"].lower()
@@ -43,7 +43,7 @@ def test_listed_origin_preflight_is_allowed(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_unlisted_origin_gets_no_allow_origin(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client(monkeypatch, "http://localhost:3000")
-    res = client.options("/v1/chat", headers={"Origin": "https://evil.example", **PREFLIGHT})
+    res = client.options("/v1/runs", headers={"Origin": "https://evil.example", **PREFLIGHT})
     assert res.headers.get("access-control-allow-origin") != "https://evil.example"
 
 

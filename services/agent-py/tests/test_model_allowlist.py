@@ -2,7 +2,7 @@
 an `anthropic/*` one maps to its Anthropic API id on the direct route.
 
 Covers: the mapping (explicit `anthropicModelId` + prefix-strip
-fallback), unknown ids → 400 `unknown_model` on `/v1/chat`, a tampered
+fallback), unknown ids → 400 `unknown_model` on `/v1/runs`, a tampered
 run checkpoint failing the run before Anthropic is called, and the
 boot-time check of `AGENT_DEFAULT_MODEL` / the catalog path.
 """
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,9 @@ from agent_py.model_allowlist import (
     resolve_api_model_id,
     resolve_optional_model,
 )
-from agent_py.routers import chat as chat_router
+from agent_py.runs import native_harness, wiring
+from agent_py.runs.wiring import build_run_services
+from agent_py.settings import Settings
 
 SECRET = "test-secret-do-not-use-in-prod-32-bytes!"
 RUN_ID = "11111111-1111-1111-1111-111111111111"
@@ -186,14 +189,27 @@ def test_an_empty_catalog_fails(tmp_path: Path) -> None:
         load_allowlist(path, default_model="openai/gpt-x")
 
 
-# --- /v1/chat ---------------------------------------------------------------
+# --- /v1/runs ---------------------------------------------------------------
 
 
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """The runs router over the in-memory store and the native harness
+    (the real model path, its client patched per test)."""
     monkeypatch.setenv("SUPABASE_JWT_SECRET", SECRET)
-    chat_router._reset_chat_per_ip_limit_for_test()
-    return TestClient(create_app(enable_poller=False))
+    services = build_run_services(Settings(SUPABASE_JWT_SECRET=SECRET), None)
+    app = create_app(enable_poller=False)
+    app.dependency_overrides[wiring.get_run_services] = lambda: services
+    return TestClient(app)
+
+
+def _run_body(model: str) -> dict[str, Any]:
+    return {
+        "threadId": str(uuid.uuid4()),
+        "runId": str(uuid.uuid4()),
+        "messages": [{"id": "m1", "role": "user", "content": "hi"}],
+        "forwardedProps": {"model": model},
+    }
 
 
 def _auth() -> dict[str, str]:
@@ -242,31 +258,20 @@ class _RecordingClient:
         return _RecordingStream()
 
 
-def test_chat_maps_allowed_model_to_api_id(client: TestClient) -> None:
+def test_run_maps_allowed_model_to_api_id(client: TestClient) -> None:
     fake = _RecordingClient()
-    with patch.object(chat_router, "resolve_anthropic_client", return_value=fake):
-        r = client.post(
-            "/v1/chat",
-            json={
-                "model": "anthropic/claude-sonnet-4.6",
-                "messages": [{"role": "user", "content": "hi"}],
-            },
-            headers=_auth(),
-        )
+    with patch.object(native_harness, "client_for_target", return_value=fake):
+        r = client.post("/v1/runs", json=_run_body("anthropic/claude-sonnet-4.6"), headers=_auth())
     assert r.status_code == 200
-    assert fake.calls, "chat turn never reached the client"
+    assert fake.calls, "the run never reached the client"
     assert fake.calls[0]["model"] == "claude-sonnet-4-6"
 
 
 @pytest.mark.parametrize("model", ["deepseek/deepseek-v9", "claude-3-5-sonnet-20241022"])
-def test_chat_rejects_unlisted_model(client: TestClient, model: str) -> None:
+def test_run_rejects_unlisted_model(client: TestClient, model: str) -> None:
     fake = _RecordingClient()
-    with patch.object(chat_router, "resolve_anthropic_client", return_value=fake):
-        r = client.post(
-            "/v1/chat",
-            json={"model": model, "messages": [{"role": "user", "content": "hi"}]},
-            headers=_auth(),
-        )
+    with patch.object(native_harness, "client_for_target", return_value=fake):
+        r = client.post("/v1/runs", json=_run_body(model), headers=_auth())
     assert r.status_code == 400
     detail = r.json()
     assert detail["code"] == "unknown_model"
@@ -274,15 +279,12 @@ def test_chat_rejects_unlisted_model(client: TestClient, model: str) -> None:
     assert fake.calls == []
 
 
-def test_chat_unknown_model_is_400_even_without_api_key(client: TestClient) -> None:
-    """Allowlist runs before the provider check, like the Next.js route."""
-    with patch.object(chat_router, "resolve_anthropic_client", return_value=None):
-        r = client.post(
-            "/v1/chat",
-            json={"model": "nope", "messages": [{"role": "user", "content": "hi"}]},
-            headers=_auth(),
-        )
+def test_run_unknown_model_is_400_even_without_api_key(client: TestClient) -> None:
+    """Allowlist runs before the provider check."""
+    with patch.object(native_harness, "client_for_target", return_value=None):
+        r = client.post("/v1/runs", json=_run_body("nope"), headers=_auth())
     assert r.status_code == 400
+    assert r.json()["code"] == "unknown_model"
 
 
 # --- executor: checkpoint re-validation -------------------------------------

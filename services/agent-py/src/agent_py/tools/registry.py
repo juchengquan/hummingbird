@@ -133,7 +133,7 @@ class RunToolContext:
     and a user). The native harness builds one per run
     (`hook_types.HookContext.run_tools`) and the loop hands it to each
     call, with `tainted_by` as it stands at that call. Defaults describe a
-    run with no limits and no caller (tests, `/v1/chat`)."""
+    run with no limits and no caller (tests)."""
 
     run_id: str | None = None
     user_id: str | None = None
@@ -150,7 +150,7 @@ class RunToolContext:
     chat route buckets them); a falsy verdict means over the limit — the
     tool refuses with a `ToolError` naming `retry_after_sec`. The native
     harness wires the limiter (`rate_limit.ToolBudgets`); the default
-    allows everything (tests, `/v1/chat`)."""
+    allows everything (tests)."""
     tainted_by: str | None = None
     """The first untrusted tool (or other third-party content) in the
     turn before this call, else None — memory tools refuse to write
