@@ -17,6 +17,7 @@ import {
   TASK_FALLBACK_MODEL,
   TASK_MODEL_BACKEND,
 } from "@/shared/backend-models"
+import { useAuth, type AuthStatus } from "@/client/hooks/use-auth"
 import { useServedModels } from "@/client/hooks/use-served-models"
 import type {
   ScheduleCreateInput,
@@ -34,12 +35,25 @@ import type {
  * Schedules that had no model were paused by migration 0047; the list
  * says so, and resuming one gives it Haiku (Q80). No skill picker yet.
  */
+/** Schedules are the account's (Q123): read only signed in, so a signed-out
+ *  browser sends nothing — on agent-py (runs) it would otherwise fall back
+ *  to the Next route. */
+export function schedulesReadable(status: AuthStatus): boolean {
+  return status === "signed-in"
+}
+
 export function ScheduleSection({ workspaceId }: { workspaceId: string }) {
   const [schedules, setSchedules] = useState<ScheduleResponse[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<ScheduleResponse | "new" | null>(null)
+  const { status } = useAuth()
+  const readable = schedulesReadable(status)
 
   const refresh = useCallback(async () => {
+    if (!readable) {
+      setSchedules([])
+      return
+    }
     setLoading(true)
     try {
       const all = await apiClient.tasks.schedules.list()
@@ -47,11 +61,25 @@ export function ScheduleSection({ workspaceId }: { workspaceId: string }) {
     } finally {
       setLoading(false)
     }
-  }, [workspaceId])
+  }, [workspaceId, readable])
 
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  if (!readable) {
+    return (
+      <div>
+        <h3 className="text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+          <CalendarClock className="inline-block mr-1 -mt-0.5" size={12} />
+          Schedules
+        </h3>
+        <p className="mt-2 text-[11px] text-[var(--muted-foreground)]">
+          {status === "loading" ? "Loading…" : "Sign in to schedule tasks."}
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div>
