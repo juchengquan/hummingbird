@@ -6,7 +6,7 @@
 #     (CONTRACT_BASE_URL); without it they report as skipped here. Run them
 #     with `bun run contract:conformance` — see packages/contract/README.md.
 # Paths are ./-anchored because bun's positional filters are substring matches:
-# a bare `tests` would also match services/agent-ts/tests/.
+# a bare `tests` would also match services/*/tests/.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
