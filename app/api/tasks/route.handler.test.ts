@@ -146,7 +146,7 @@ describe("POST /api/tasks — a model the worker can't run (Q55)", () => {
     const { backendAcceptsModel } = await import("@/shared/backend-models")
     const { POST } = await import("./route")
     const res = await POST(jsonPost(validBody({ model: undefined })))
-    expect(res.status).toBe(backendAcceptsModel("agent-service", DEFAULT_CHAT_MODEL) ? 202 : 400)
+    expect(res.status).toBe(backendAcceptsModel("agent-runs", DEFAULT_CHAT_MODEL) ? 202 : 400)
     if (res.status === 400) {
       expect((await res.json()).code).toBe("unknown_model")
       expect(mocks.createTaskRun).not.toHaveBeenCalled()
@@ -156,7 +156,7 @@ describe("POST /api/tasks — a model the worker can't run (Q55)", () => {
   test("every accepted model starts", async () => {
     const { modelsForBackend } = await import("@/shared/backend-models")
     const { POST } = await import("./route")
-    for (const { id } of modelsForBackend("agent-service")) {
+    for (const { id } of modelsForBackend("agent-runs")) {
       expect((await POST(jsonPost(validBody({ model: id })))).status).toBe(202)
     }
   })

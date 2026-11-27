@@ -28,12 +28,9 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { isAgentPyConfigured } from '@/client/api-client';
 import { noticeEditorKeyRemoved } from '@/client/editor/editor-key-notice';
-import { useAuth } from '@/client/hooks/use-auth';
-import { useStore } from '@/client/hooks/use-store';
 import { useServedModels } from '@/client/hooks/use-served-models';
-import { editorAiBackend, editorAiModels } from '@/shared/editor-ai/routing';
+import { editorAiModels } from '@/shared/editor-ai/routing';
 import { cn } from '@/shared/utils';
 
 import { aiChatPlugin } from './plugins/ai-kit';
@@ -48,9 +45,8 @@ type Model = {
  *
  * Wave 12 (Q124): there is no AI Gateway key field any more — agent-py
  * never takes a user's key (Q103) — so the editor always uses the deploy's
- * models: what agent-py runs where it serves the editor (Q102), else the
- * catalog on the Next route's own key. The first open after the change
- * says so once (`noticeEditorKeyRemoved`).
+ * models: what agent-py runs (Q102). The first open after the change says
+ * so once (`noticeEditorKeyRemoved`).
  */
 export function SettingsDialog() {
   const editor = useEditorRef();
@@ -59,16 +55,8 @@ export function SettingsDialog() {
   const [open, setOpen] = React.useState(false);
   const [openModel, setOpenModel] = React.useState(false);
 
-  const chatBackend = useStore((s) => s.chatBackend);
-  const { status } = useAuth();
-  const backend = editorAiBackend({
-    agentPyConfigured: isAgentPyConfigured(),
-    chatBackend,
-    signedIn: status === 'signed-in',
-  });
-  const onAgentPy = backend === 'agent-py';
   useServedModels(); // agent-py's models, when they arrive (Q119)
-  const offered: Model[] = editorAiModels(backend).map((m) => ({ label: m.label, value: m.id }));
+  const offered: Model[] = editorAiModels().map((m) => ({ label: m.label, value: m.id }));
   // A pick the backend doesn't run shows as switched to the first it does.
   const shownModel =
     offered.find((m) => m.value === tempModel?.value) ?? offered[0] ?? tempModel;
@@ -191,11 +179,9 @@ export function SettingsDialog() {
                     </Command>
                   </PopoverContent>
                 </Popover>
-                {onAgentPy && (
-                  <p className="mt-2 text-muted-foreground text-xs" data-testid="editor-ai-agent-py-note">
-                    Editor AI runs on agent-py, which offers these models.
-                  </p>
-                )}
+                <p className="mt-2 text-muted-foreground text-xs" data-testid="editor-ai-agent-py-note">
+                  Editor AI runs on agent-py, which offers these models.
+                </p>
               </div>
             </div>
           </div>

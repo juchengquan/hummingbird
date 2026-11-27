@@ -12,7 +12,6 @@ import {
   defaultModelForBackend,
   modelSwitchFor,
   modelsForBackend,
-  resolveModelBackend,
   sendRefusedNoProvider,
   TASK_MODEL_BACKEND,
   taskModelFor,
@@ -74,14 +73,14 @@ describe("parseServedModels", () => {
 describe("the rules on agent-py follow its list", () => {
   test("before the list arrives: the built-in Anthropic list", () => {
     expect(servedModels()).toBeNull()
-    for (const kind of ["agent-service", "agent-runs"] as const) {
+    for (const kind of ["agent-runs"] as const) {
       expect(modelsForBackend(kind).map((m) => m.id)).toEqual([...ANTHROPIC_SERVICE_MODELS.keys()])
     }
   })
 
   test("chat on agent-py offers what it serves", () => {
     setServedModels(parseServedModels(MINIMAX_DEPLOY))
-    for (const kind of ["agent-service", "agent-runs"] as const) {
+    for (const kind of ["agent-runs"] as const) {
       expect(modelsForBackend(kind).map((m) => m.id)).toEqual([
         "minimax/minimax-m2.7",
         "minimax/minimax-m3.1-flash",
@@ -101,7 +100,7 @@ describe("the rules on agent-py follow its list", () => {
   test("auto follows the list", () => {
     setServedModels(parseServedModels({ ...MINIMAX_DEPLOY, auto: true }))
     expect(autoAvailableForBackend("agent-runs")).toBe(true)
-    expect(autoAvailableForBackend("agent-service")).toBe(false) // /v1/chat never routed auto
+    expect(autoAvailableForBackend("agent-tasks")).toBe(false) // the worker never routes auto
   })
 
   test("tasks take only the models tasks run on", () => {
@@ -116,33 +115,20 @@ describe("the rules on agent-py follow its list", () => {
     })
     expect(taskModelFor("minimax/minimax-m2.7")).toEqual({ model: "minimax/minimax-m2.7", switchedFrom: null })
   })
-
-  test("agent-ts stays on the Anthropic list", () => {
-    setServedModels(parseServedModels(MINIMAX_DEPLOY))
-    const agentTs = resolveModelBackend("ts-service", true, { agentPy: true, agentTs: true })
-    expect(agentTs).toEqual({ kind: "agent-ts", name: "agent-ts" })
-    expect(modelsForBackend(agentTs.kind).map((m) => m.id)).toEqual([...ANTHROPIC_SERVICE_MODELS.keys()])
-  })
 })
 
 describe("no model provider on the deploy (Q131)", () => {
   test("agent-py's backends refuse to send once the list has settled empty", () => {
     markNoModelProvider()
-    for (const kind of ["agent-service", "agent-runs", "agent-tasks"] as const) {
-      expect(sendRefusedNoProvider(kind, true)).toBe(true)
-    }
+    expect(sendRefusedNoProvider()).toBe(true)
     // The model rules keep the built-in list (nothing is switched around).
     expect(modelsForBackend("agent-runs").map((m) => m.id)).toEqual([...ANTHROPIC_SERVICE_MODELS.keys()])
   })
 
-  test("not on the Next routes or agent-ts, not without agent-py, not before / without an empty answer", () => {
-    expect(sendRefusedNoProvider("agent-runs", true)).toBe(false) // list not read yet
-    markNoModelProvider()
-    expect(sendRefusedNoProvider("any", true)).toBe(false)
-    expect(sendRefusedNoProvider("agent-ts", true)).toBe(false)
-    expect(sendRefusedNoProvider("agent-runs", false)).toBe(false)
+  test("not before / without an empty answer", () => {
+    expect(sendRefusedNoProvider()).toBe(false) // list not read yet
     setServedModels(parseServedModels(MINIMAX_DEPLOY))
-    expect(sendRefusedNoProvider("agent-runs", true)).toBe(false)
+    expect(sendRefusedNoProvider()).toBe(false)
   })
 
   test("a well-formed empty list is told apart from an unreadable one", () => {

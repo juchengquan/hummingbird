@@ -1,23 +1,19 @@
 /**
- * Tests for the non-chat endpoint dispatch behaviour added in the
- * "frontend selector for non-chat endpoints" PR. Each test drives
- * one of the four api-client methods with an explicit `dispatch:
- * 'remote'` context + a stubbed fetch and asserts that the URL,
- * Authorization header, and body wire shape match the remote service.
+ * Tests for the api-client's agent-py calls (wave 13, Q142: agent-py is
+ * the only backend). Each test drives a method with an explicit `target`
+ * (agent-py's base URL + a token, or tokenless) and a stubbed fetch, and
+ * asserts that the URL, Authorization header, and body wire shape match.
  *
- * The store-driven default (`dispatch: 'auto'`) is covered by the
- * resolver tests in `api/backend-resolver.test.ts` — its happy path
- * requires env vars captured at module load, which would make this
- * file fragile if asserted here. Test the deterministic explicit-
- * dispatch paths instead; the resolver tests cover the rest.
+ * The session-driven default (`resolveAgentPyTarget`) is covered by the
+ * resolver tests in `api/backend-resolver.test.ts`.
  */
 
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import { apiClient, isAuthRequiredResult, type RemoteDispatch } from "./api-client"
+import { notifyAuthRequired, resetAuthRequiredNotice } from "./auth/auth-required"
+import { apiClient, isAuthRequiredResult, type AgentPyTarget } from "./api-client"
 
-const REMOTE: RemoteDispatch = {
-  backend: "python",
+const REMOTE: AgentPyTarget = {
   baseUrl: "https://agent-py.example",
   authToken: "jwt-test-token",
 }
@@ -74,28 +70,6 @@ afterEach(() => {
 })
 
 describe("apiClient.url.fetch — dispatch", () => {
-  test("in-Next route by default (dispatch: 'in-next')", async () => {
-    const log = installFetchStub({
-      jsonBody: {
-        ok: true,
-        bookmark: {
-          url: "https://example.com",
-          title: "x",
-          content: "",
-          contentTruncated: false,
-          contentHash: "0",
-        },
-      },
-    })
-    const result = await apiClient.url.fetch("https://example.com", {
-      dispatch: "in-next",
-    })
-    expect(result.ok).toBe(true)
-    expect(log).toHaveLength(1)
-    expect(log[0].url).toBe("/api/url/fetch")
-    expect(log[0].authorization).toBeUndefined()
-    expect(log[0].body).toEqual({ url: "https://example.com" })
-  })
 
   test("remote dispatch posts to {baseUrl}/v1/url/fetch with bearer JWT", async () => {
     const log = installFetchStub({
@@ -111,8 +85,7 @@ describe("apiClient.url.fetch — dispatch", () => {
       },
     })
     const result = await apiClient.url.fetch("https://example.com", {
-      dispatch: "remote",
-      remote: REMOTE,
+      target: REMOTE,
     })
     expect(result.ok).toBe(true)
     expect(log[0].url).toBe("https://agent-py.example/v1/url/fetch")
@@ -126,14 +99,14 @@ describe("apiClient.summarize — dispatch", () => {
     const log = installFetchStub({ jsonBody: { summary: "ok" } })
     await apiClient.summarize.file(
       { mode: "file", name: "n", text: "t" },
-      { dispatch: "remote", remote: REMOTE },
+      { target: REMOTE },
     )
     await apiClient.summarize.conversation(
       {
         mode: "conversation",
         messages: [{ role: "user", content: "hi" }],
       },
-      { dispatch: "remote", remote: REMOTE },
+      { target: REMOTE },
     )
     await apiClient.summarize.compress(
       {
@@ -143,11 +116,11 @@ describe("apiClient.summarize — dispatch", () => {
           { role: "assistant", content: "b" },
         ],
       },
-      { dispatch: "remote", remote: REMOTE },
+      { target: REMOTE },
     )
     await apiClient.summarize.projectBreakdown(
       { mode: "project-breakdown", goal: "ship it" },
-      { dispatch: "remote", remote: REMOTE },
+      { target: REMOTE },
     )
     expect(log).toHaveLength(4)
     for (const call of log) {
@@ -161,16 +134,6 @@ describe("apiClient.summarize — dispatch", () => {
     expect((log[0].body as { mode: string }).mode).toBe("file")
     expect((log[3].body as { mode: string }).mode).toBe("project-breakdown")
   })
-
-  test("in-Next route posts to /api/summarize without auth", async () => {
-    const log = installFetchStub({ jsonBody: { summary: "ok" } })
-    await apiClient.summarize.file(
-      { mode: "file", name: "n", text: "t" },
-      { dispatch: "in-next" },
-    )
-    expect(log[0].url).toBe("/api/summarize")
-    expect(log[0].authorization).toBeUndefined()
-  })
 })
 
 describe("apiClient.mcp.proxy — dispatch", () => {
@@ -181,7 +144,7 @@ describe("apiClient.mcp.proxy — dispatch", () => {
       {
         server: { id: "srv-1", name: "x", url: "https://mcp.test", transport: "http" },
       },
-      { dispatch: "remote", remote: REMOTE },
+      { target: REMOTE },
     )
     expect(result.ok).toBe(true)
     expect(log[0].url).toBe("https://agent-py.example/v1/mcp/srv-1/discover")
@@ -201,7 +164,7 @@ describe("apiClient.mcp.proxy — dispatch", () => {
           transport: "http",
         },
       },
-      { dispatch: "remote", remote: REMOTE },
+      { target: REMOTE },
     )
     expect(log[0].url).toBe(
       "https://agent-py.example/v1/mcp/srv%20with%20spaces/discover",
@@ -215,36 +178,18 @@ describe("apiClient.images.refreshUrl — dispatch + wire shape", () => {
       jsonBody: { url: "https://cdn.example/signed" },
     })
     const url = await apiClient.images.refreshUrl("u-1/generated/img.png", {
-      dispatch: "remote",
-      remote: REMOTE,
+      target: REMOTE,
     })
     expect(url).toBe("https://cdn.example/signed")
     expect(log[0].url).toBe("https://agent-py.example/v1/images/refresh-url")
     expect(log[0].authorization).toBe("Bearer jwt-test-token")
     expect(log[0].body).toEqual({ storage_path: "u-1/generated/img.png" })
   })
-
-  test("in-Next dispatch keeps the camelCase storagePath", async () => {
-    const log = installFetchStub({
-      jsonBody: { url: "https://cdn.example/signed" },
-    })
-    await apiClient.images.refreshUrl("u-1/generated/img.png", {
-      dispatch: "in-next",
-    })
-    expect(log[0].url).toBe("/api/images/refresh-url")
-    expect(log[0].body).toEqual({ storagePath: "u-1/generated/img.png" })
-  })
 })
 
 // agent-py-only endpoints: agent-ts is frozen (PLAN-frontend-backend-split
 // Q11) and has no `/v1/extract-table` or `/v1/files/refresh-url`, so a
 // `ts-service` account must stay on the in-Next route.
-const TS_SERVICE: RemoteDispatch = {
-  backend: "ts-service",
-  baseUrl: "https://agent-ts.example",
-  authToken: "jwt-test-token",
-}
-
 describe("apiClient.files.refreshUrl — agent-py-only dispatch", () => {
   const storagePath = "u-1/generated/f1-report.csv"
   const signed = { url: "https://cdn.example/signed" }
@@ -252,34 +197,12 @@ describe("apiClient.files.refreshUrl — agent-py-only dispatch", () => {
   test("python → agent-py /v1/files/refresh-url, camelCase body", async () => {
     const log = installFetchStub({ jsonBody: signed })
     const url = await apiClient.files.refreshUrl(storagePath, {
-      dispatch: "remote",
-      remote: REMOTE,
+      target: REMOTE,
     })
     expect(url).toBe(signed.url)
     expect(log).toHaveLength(1)
     expect(log[0].url).toBe("https://agent-py.example/v1/files/refresh-url")
     expect(log[0].authorization).toBe("Bearer jwt-test-token")
-    expect(log[0].body).toEqual({ storagePath })
-  })
-
-  test("ts-service → in-Next route, no bearer", async () => {
-    const log = installFetchStub({ jsonBody: signed })
-    const url = await apiClient.files.refreshUrl(storagePath, {
-      dispatch: "remote",
-      remote: TS_SERVICE,
-    })
-    expect(url).toBe(signed.url)
-    expect(log).toHaveLength(1)
-    expect(log[0].url).toBe("/api/files/refresh-url")
-    expect(log[0].authorization).toBeUndefined()
-    expect(log[0].body).toEqual({ storagePath })
-  })
-
-  test("in-next → in-Next route", async () => {
-    const log = installFetchStub({ jsonBody: signed })
-    await apiClient.files.refreshUrl(storagePath, { dispatch: "in-next" })
-    expect(log[0].url).toBe("/api/files/refresh-url")
-    expect(log[0].authorization).toBeUndefined()
     expect(log[0].body).toEqual({ storagePath })
   })
 })
@@ -299,34 +222,13 @@ describe("apiClient.artifacts.extractTable — agent-py-only dispatch", () => {
   test("python → agent-py /v1/extract-table, body unchanged", async () => {
     const log = installFetchStub({ jsonBody: table })
     const res = await apiClient.artifacts.extractTable(body, {
-      dispatch: "remote",
-      remote: REMOTE,
+      target: REMOTE,
     })
     expect(res).toEqual(table)
     expect(log).toHaveLength(1)
     expect(log[0].url).toBe("https://agent-py.example/v1/extract-table")
     expect(log[0].authorization).toBe("Bearer jwt-test-token")
     expect(log[0].body).toEqual(body)
-  })
-
-  test("ts-service → in-Next route, no bearer", async () => {
-    const log = installFetchStub({ jsonBody: table })
-    const res = await apiClient.artifacts.extractTable(body, {
-      dispatch: "remote",
-      remote: TS_SERVICE,
-    })
-    expect(res).toEqual(table)
-    expect(log).toHaveLength(1)
-    expect(log[0].url).toBe("/api/extract-table")
-    expect(log[0].authorization).toBeUndefined()
-    expect(log[0].body).toEqual(body)
-  })
-
-  test("in-next → in-Next route", async () => {
-    const log = installFetchStub({ jsonBody: table })
-    await apiClient.artifacts.extractTable(body, { dispatch: "in-next" })
-    expect(log[0].url).toBe("/api/extract-table")
-    expect(log[0].authorization).toBeUndefined()
   })
 })
 
@@ -336,7 +238,7 @@ describe("apiClient.embed.file — agent-py-only dispatch", () => {
 
   test("python → agent-py /v1/embed, body unchanged", async () => {
     const log = installFetchStub({ jsonBody: indexed })
-    const res = await apiClient.embed.file(body, { dispatch: "remote", remote: REMOTE })
+    const res = await apiClient.embed.file(body, { target: REMOTE })
     expect(res).toEqual(indexed)
     expect(log).toHaveLength(1)
     expect(log[0].url).toBe("https://agent-py.example/v1/embed")
@@ -344,27 +246,9 @@ describe("apiClient.embed.file — agent-py-only dispatch", () => {
     expect(log[0].body).toEqual(body)
   })
 
-  test("ts-service → in-Next route, no bearer", async () => {
-    const log = installFetchStub({ jsonBody: indexed })
-    const res = await apiClient.embed.file(body, { dispatch: "remote", remote: TS_SERVICE })
-    expect(res).toEqual(indexed)
-    expect(log).toHaveLength(1)
-    expect(log[0].url).toBe("/api/embed")
-    expect(log[0].authorization).toBeUndefined()
-    expect(log[0].body).toEqual(body)
-  })
-
-  test("in-next → in-Next route", async () => {
-    const log = installFetchStub({ jsonBody: indexed })
-    await apiClient.embed.file(body, { dispatch: "in-next" })
-    expect(log[0].url).toBe("/api/embed")
-    expect(log[0].authorization).toBeUndefined()
-    expect(log[0].contentType).toBe("application/json")
-  })
-
   test("a failed call resolves null", async () => {
     installFetchStub({ status: 500, jsonBody: { code: "embed_failed", message: "x" } })
-    expect(await apiClient.embed.file(body, { dispatch: "remote", remote: REMOTE })).toBeNull()
+    expect(await apiClient.embed.file(body, { target: REMOTE })).toBeNull()
   })
 })
 
@@ -373,7 +257,7 @@ describe("apiClient.memory.extract — agent-py-only dispatch", () => {
 
   test("python → agent-py /v1/memory/extract, body unchanged", async () => {
     const log = installFetchStub({ jsonBody: { ok: true } })
-    const ok = await apiClient.memory.extract(body, { dispatch: "remote", remote: REMOTE })
+    const ok = await apiClient.memory.extract(body, { target: REMOTE })
     expect(ok).toBe(true)
     expect(log).toHaveLength(1)
     expect(log[0].url).toBe("https://agent-py.example/v1/memory/extract")
@@ -381,27 +265,11 @@ describe("apiClient.memory.extract — agent-py-only dispatch", () => {
     expect(log[0].body).toEqual(body)
   })
 
-  test("ts-service → in-Next route, no bearer", async () => {
-    const log = installFetchStub({ jsonBody: { ok: true } })
-    const ok = await apiClient.memory.extract(body, { dispatch: "remote", remote: TS_SERVICE })
-    expect(ok).toBe(true)
-    expect(log[0].url).toBe("/api/memory/extract")
-    expect(log[0].authorization).toBeUndefined()
-    expect(log[0].body).toEqual(body)
-  })
-
-  test("in-next → in-Next route", async () => {
-    const log = installFetchStub({ jsonBody: { ok: true } })
-    expect(await apiClient.memory.extract(body, { dispatch: "in-next" })).toBe(true)
-    expect(log[0].url).toBe("/api/memory/extract")
-    expect(log[0].authorization).toBeUndefined()
-  })
-
   test("a non-OK or off-schema answer resolves false", async () => {
     installFetchStub({ status: 401, jsonBody: { detail: "Invalid token." } })
-    expect(await apiClient.memory.extract(body, { dispatch: "remote", remote: REMOTE })).toBe(false)
+    expect(await apiClient.memory.extract(body, { target: REMOTE })).toBe(false)
     installFetchStub({ jsonBody: { ok: "yes" } })
-    expect(await apiClient.memory.extract(body, { dispatch: "remote", remote: REMOTE })).toBe(false)
+    expect(await apiClient.memory.extract(body, { target: REMOTE })).toBe(false)
   })
 })
 
@@ -414,7 +282,7 @@ describe("apiClient.share.create — agent-py-only dispatch", () => {
 
   test("python → agent-py /v1/share with bearer, body unchanged", async () => {
     const log = installFetchStub({ jsonBody: created })
-    const res = await apiClient.share.create(body, { dispatch: "remote", remote: REMOTE })
+    const res = await apiClient.share.create(body, { target: REMOTE })
     expect(res).toEqual({ ok: true, status: 200, data: created })
     expect(log).toHaveLength(1)
     expect(log[0].url).toBe("https://agent-py.example/v1/share")
@@ -423,25 +291,9 @@ describe("apiClient.share.create — agent-py-only dispatch", () => {
     expect(log[0].body).toEqual(body)
   })
 
-  test("ts-service → in-Next route, no bearer", async () => {
-    const log = installFetchStub({ jsonBody: created })
-    const res = await apiClient.share.create(body, { dispatch: "remote", remote: TS_SERVICE })
-    expect(res.ok).toBe(true)
-    expect(log[0].url).toBe("/api/share")
-    expect(log[0].authorization).toBeUndefined()
-    expect(log[0].body).toEqual(body)
-  })
-
-  test("in-next → in-Next route", async () => {
-    const log = installFetchStub({ jsonBody: created })
-    await apiClient.share.create(body, { dispatch: "in-next" })
-    expect(log[0].url).toBe("/api/share")
-    expect(log[0].authorization).toBeUndefined()
-  })
-
   test("error → message from either envelope ({ error } / { code, message })", async () => {
     installFetchStub({ status: 404, jsonBody: { error: "Conversation not found" } })
-    expect(await apiClient.share.create(body, { dispatch: "in-next" })).toEqual({
+    expect(await apiClient.share.create(body, { target: REMOTE })).toEqual({
       ok: false,
       status: 404,
       error: "Conversation not found",
@@ -451,7 +303,7 @@ describe("apiClient.share.create — agent-py-only dispatch", () => {
       jsonBody: { code: "not_found", message: "Conversation not found" },
     })
     expect(
-      await apiClient.share.create(body, { dispatch: "remote", remote: REMOTE }),
+      await apiClient.share.create(body, { target: REMOTE }),
     ).toEqual({ ok: false, status: 404, error: "Conversation not found" })
   })
 })
@@ -461,7 +313,7 @@ describe("apiClient.share.revoke — agent-py-only dispatch", () => {
 
   test("python → DELETE agent-py /v1/share/{token} with bearer, no body", async () => {
     const log = installFetchStub({ jsonBody: { ok: true } })
-    const res = await apiClient.share.revoke(token, { dispatch: "remote", remote: REMOTE })
+    const res = await apiClient.share.revoke(token, { target: REMOTE })
     expect(res).toEqual({ ok: true, status: 200 })
     expect(log).toHaveLength(1)
     expect(log[0].url).toBe("https://agent-py.example/v1/share/abc%2Fdef%2Bghi")
@@ -471,18 +323,9 @@ describe("apiClient.share.revoke — agent-py-only dispatch", () => {
     expect(log[0].contentType).toBeUndefined()
   })
 
-  test("ts-service → DELETE in-Next route, no bearer", async () => {
-    const log = installFetchStub({ jsonBody: { ok: true } })
-    const res = await apiClient.share.revoke(token, { dispatch: "remote", remote: TS_SERVICE })
-    expect(res.ok).toBe(true)
-    expect(log[0].url).toBe("/api/share/abc%2Fdef%2Bghi")
-    expect(log[0].method).toBe("DELETE")
-    expect(log[0].authorization).toBeUndefined()
-  })
-
   test("404 → not ok with the message", async () => {
     installFetchStub({ status: 404, jsonBody: { error: "Not found" } })
-    expect(await apiClient.share.revoke(token, { dispatch: "in-next" })).toEqual({
+    expect(await apiClient.share.revoke(token, { target: REMOTE })).toEqual({
       ok: false,
       status: 404,
       error: "Not found",
@@ -584,21 +427,10 @@ describe("apiClient.mcp.upsertCloudServer — dispatch", () => {
     }
   }
 
-  test("in-Next route posts to /api/mcp/server without auth", async () => {
-    const log = installFetchStub({ jsonBody: { ok: true } })
-    const r = await apiClient.mcp.upsertCloudServer(validBody(), {
-      dispatch: "in-next",
-    })
-    expect(r.ok).toBe(true)
-    expect(log[0].url).toBe("/api/mcp/server")
-    expect(log[0].authorization).toBeUndefined()
-  })
-
   test("remote dispatch posts to {baseUrl}/v1/mcp/server with bearer JWT", async () => {
     const log = installFetchStub({ jsonBody: { ok: true } })
     const r = await apiClient.mcp.upsertCloudServer(validBody(), {
-      dispatch: "remote",
-      remote: REMOTE,
+      target: REMOTE,
     })
     expect(r.ok).toBe(true)
     expect(log[0].url).toBe("https://agent-py.example/v1/mcp/server")
@@ -613,8 +445,7 @@ describe("apiClient.mcp.upsertCloudServer — dispatch", () => {
       jsonBody: { code: "encryption_key_unset", message: "key missing" },
     })
     const r = await apiClient.mcp.upsertCloudServer(validBody(), {
-      dispatch: "remote",
-      remote: REMOTE,
+      target: REMOTE,
     })
     expect(r.ok).toBe(false)
     if (!r.ok) {
@@ -628,25 +459,16 @@ describe("apiClient.mcp.upsertCloudServer — dispatch", () => {
 describe("dispatchedFetch — error envelopes", () => {
   // Next's routes nest the error (`{ ok: false, error: { code, message } }`);
   // read as a flat message, an object reached the toast and crashed React (#31).
-  test("a Next route's nested error comes back as its code and message string", async () => {
-    installFetchStub({
-      status: 400,
-      jsonBody: { ok: false, error: { code: "validation", message: "Address 127.0.0.1 is in a private range" } },
-    })
-    const result = await apiClient.url.fetch("http://127.0.0.1/", { dispatch: "in-next" })
-    expect(result.ok).toBe(false)
-    expect(!result.ok && result.error).toEqual({ code: "validation", message: "Address 127.0.0.1 is in a private range" })
-  })
 
   test("agent-py's flat envelope and a bare string error still read as before", async () => {
     installFetchStub({ status: 429, jsonBody: { code: "rate_limit", message: "Slow down" } })
-    const flat = await apiClient.url.fetch("https://e.x", { dispatch: "remote", remote: REMOTE })
+    const flat = await apiClient.url.fetch("https://e.x", { target: REMOTE })
     expect(!flat.ok && flat.error).toEqual({
       code: "rate_limit",
       message: "Slow down",
     })
     installFetchStub({ status: 500, jsonBody: { error: "boom" } })
-    const bare = await apiClient.url.fetch("https://e.x", { dispatch: "in-next" })
+    const bare = await apiClient.url.fetch("https://e.x", { target: REMOTE })
     expect(!bare.ok && bare.error).toEqual({
       code: undefined,
       message: "boom",
@@ -655,22 +477,12 @@ describe("dispatchedFetch — error envelopes", () => {
 })
 
 describe("dispatchedFetch — wire shape", () => {
-  test("in-next dispatch sets Content-Type and no Authorization", async () => {
-    const log = installFetchStub({ jsonBody: { ok: true } })
-    const result = await apiClient.url.fetch("https://example.com", {
-      dispatch: "in-next",
-    })
-    expect(result.ok).toBe(true)
-    expect(log[0].contentType).toBe("application/json")
-    expect(log[0].authorization).toBeUndefined()
-    expect(log[0].url).toBe("/api/url/fetch")
-  })
 
   test("remote dispatch sets Authorization and routes to {baseUrl}/v1", async () => {
     const log = installFetchStub({ jsonBody: { ok: true } })
     await apiClient.summarize.file(
       { mode: "file", name: "n", text: "t" },
-      { dispatch: "remote", remote: REMOTE },
+      { target: REMOTE },
     )
     expect(log[0].url).toBe("https://agent-py.example/v1/summarize")
     expect(log[0].authorization).toBe("Bearer jwt-test-token")
@@ -702,8 +514,7 @@ describe("dispatchedFetch — wire shape", () => {
           input: { msg: "hi" },
         },
         {
-          dispatch: "remote",
-          remote: REMOTE,
+          target: REMOTE,
           credentialHeader: "base64-creds-stub",
         },
       )
@@ -726,7 +537,7 @@ describe("apiClient — REQUIRE_AUTH_FOR_AI (401 auth_required)", () => {
     installFetchStub(authRequired)
     const res = await apiClient.summarize.conversation(
       { mode: "conversation", messages: [{ role: "user", content: "hi" }] },
-      { dispatch: "in-next" },
+      { target: REMOTE },
     )
     expect(isAuthRequiredResult(res)).toBe(true)
   })
@@ -735,7 +546,7 @@ describe("apiClient — REQUIRE_AUTH_FOR_AI (401 auth_required)", () => {
     installFetchStub(authRequired)
     const res = await apiClient.artifacts.extractTable(
       { reportText: "r", sources: [{ title: "t", url: "https://x.test", snippet: "s" }] },
-      { dispatch: "in-next" },
+      { target: REMOTE },
     )
     expect(isAuthRequiredResult(res)).toBe(true)
   })
@@ -744,19 +555,9 @@ describe("apiClient — REQUIRE_AUTH_FOR_AI (401 auth_required)", () => {
     installFetchStub({ status: 401, jsonBody: { code: "auth", message: "no key" } })
     const res = await apiClient.summarize.file(
       { mode: "file", name: "n", text: "t" },
-      { dispatch: "in-next" },
+      { target: REMOTE },
     )
     expect(res).toBeNull()
-  })
-
-  test("chat.stream surfaces the auth_required code to the caller", async () => {
-    installFetchStub(authRequired)
-    const res = await apiClient.chat.stream({
-      messages: [{ role: "user", content: "hi" }],
-    })
-    expect(res.ok).toBe(false)
-    expect(res.status).toBe(401)
-    expect(res.error?.code).toBe("auth_required")
   })
 })
 
@@ -779,8 +580,7 @@ describe("apiClient.tasks.schedules — agent-py-only dispatch", () => {
     updatedAt: "2026-11-21T08:00:00+00:00",
   }
   const create = { workspaceId: "w1", name: "Morning", prompt: "p", cron: "0 8 * * *" }
-  const python = { dispatch: "remote" as const, remote: REMOTE }
-  const tsService = { dispatch: "remote" as const, remote: TS_SERVICE }
+  const python = { target: REMOTE }
 
   test("python: list → GET agent-py /v1/tasks/schedules with bearer", async () => {
     const log = installFetchStub({ jsonBody: { schedules: [schedule] } })
@@ -824,122 +624,12 @@ describe("apiClient.tasks.schedules — agent-py-only dispatch", () => {
     const res = await apiClient.tasks.schedules.create(create, python)
     expect(res).toEqual({ ok: false, status: 409, error: { code: "limit_reached", message: "cap" } })
   })
-
-  test("ts-service → in-Next routes, no bearer", async () => {
-    let log = installFetchStub({ jsonBody: { schedules: [] } })
-    await apiClient.tasks.schedules.list(tsService)
-    expect(log[0].url).toBe("/api/tasks/schedules")
-    expect(log[0].authorization).toBeUndefined()
-
-    log = installFetchStub({ status: 201, jsonBody: schedule })
-    await apiClient.tasks.schedules.create(create, tsService)
-    expect(log[0].url).toBe("/api/tasks/schedules")
-    expect(log[0].authorization).toBeUndefined()
-    expect(log[0].body).toEqual(create)
-
-    log = installFetchStub({ jsonBody: schedule })
-    await apiClient.tasks.schedules.update("s1", { name: "x" }, tsService)
-    expect(log[0].url).toBe("/api/tasks/schedules/s1")
-    expect(log[0].method).toBe("PATCH")
-    expect(log[0].authorization).toBeUndefined()
-
-    log = installFetchStub({ jsonBody: { ok: true } })
-    await apiClient.tasks.schedules.delete("s1", tsService)
-    expect(log[0].url).toBe("/api/tasks/schedules/s1")
-    expect(log[0].method).toBe("DELETE")
-    expect(log[0].authorization).toBeUndefined()
-  })
-
-  test("in-next → in-Next routes", async () => {
-    const log = installFetchStub({ jsonBody: { schedules: [] } })
-    await apiClient.tasks.schedules.list({ dispatch: "in-next" })
-    expect(log[0].url).toBe("/api/tasks/schedules")
-    expect(log[0].authorization).toBeUndefined()
-  })
 })
 
+// --- signed-out calls: tokenless to agent-py ---------------------------------
 
-// "agent-py (runs)" (Q33): every non-chat call dispatches exactly as
-// under `python` — same URL, bearer and body.
-describe("python-runs — non-chat dispatch is identical to python", () => {
-  const RUNS_REMOTE: RemoteDispatch = { ...REMOTE, backend: "python-runs" }
-
-  async function both(
-    call: (remote: RemoteDispatch) => Promise<unknown>,
-    jsonBody: unknown,
-  ): Promise<[FetchCall[], FetchCall[]]> {
-    const python = installFetchStub({ jsonBody })
-    await call(REMOTE)
-    const runs = installFetchStub({ jsonBody })
-    await call(RUNS_REMOTE)
-    return [python, runs]
-  }
-
-  const cases: Array<[string, (remote: RemoteDispatch) => Promise<unknown>, unknown]> = [
-    [
-      "summarize",
-      (remote) =>
-        apiClient.summarize.file({ mode: "file", name: "n", text: "t" }, { dispatch: "remote", remote }),
-      { summary: "ok" },
-    ],
-    [
-      "url.fetch",
-      (remote) => apiClient.url.fetch("https://example.com", { dispatch: "remote", remote }),
-      {},
-    ],
-    [
-      "files.refreshUrl (agent-py only)",
-      (remote) => apiClient.files.refreshUrl("u/f.csv", { dispatch: "remote", remote }),
-      { url: "https://cdn.example/signed" },
-    ],
-    [
-      "embed.file (agent-py only)",
-      (remote) =>
-        apiClient.embed.file({ fileId: "f-1", text: "hello" }, { dispatch: "remote", remote }),
-      { status: "indexed", sections: 1 },
-    ],
-    [
-      "memory.extract (agent-py only)",
-      (remote) =>
-        apiClient.memory.extract(
-          { turnText: "User: hi", conversationId: "c-1" },
-          { dispatch: "remote", remote },
-        ),
-      { ok: true },
-    ],
-    [
-      "tasks.schedules.list (agent-py only)",
-      (remote) => apiClient.tasks.schedules.list({ dispatch: "remote", remote }),
-      { schedules: [] },
-    ],
-  ]
-
-  for (const [name, call, jsonBody] of cases) {
-    test(name, async () => {
-      const [python, runs] = await both(call, jsonBody)
-      expect(python).toHaveLength(1)
-      expect(python[0].url.startsWith("https://agent-py.example/v1/")).toBe(true)
-      expect(runs).toEqual(python)
-    })
-  }
-
-  test("chat.stream: 'python-runs' takes the 'python' path", async () => {
-    // agent-py's URL is captured at module load and unset here, so both
-    // fall through to the in-Next route the same way.
-    const body = { model: "m", messages: [{ role: "user" as const, content: "hi" }] }
-    const python = installFetchStub({ jsonBody: {} })
-    await apiClient.chat.stream(body, { backend: "python", authToken: "t" })
-    const runs = installFetchStub({ jsonBody: {} })
-    await apiClient.chat.stream(body, { backend: "python-runs", authToken: "t" })
-    expect(runs).toEqual(python)
-  })
-})
-
-// --- wave 12: signed-out calls on agent-py + the extract dispatch -------------
-
-/** A signed-out `python-runs` browser's dispatch (Q123/Q134). */
-const ANONYMOUS: RemoteDispatch = {
-  backend: "python-runs",
+/** A signed-out browser's target: tokenless (Q123/Q134/Q142). */
+const ANONYMOUS: AgentPyTarget = {
   baseUrl: "https://agent-py.example",
   authToken: null,
 }
@@ -950,17 +640,17 @@ describe("anonymous remote dispatch (no session) sends no Authorization", () => 
     bookmark: { url: "https://e.test", title: "x", content: "", contentTruncated: false, contentHash: "0" },
   }
   const cases: [string, () => Promise<unknown>, unknown, string][] = [
-    ["url.fetch", () => apiClient.url.fetch("https://e.test", { dispatch: "remote", remote: ANONYMOUS }), bookmark, "/v1/url/fetch"],
+    ["url.fetch", () => apiClient.url.fetch("https://e.test", { target: ANONYMOUS }), bookmark, "/v1/url/fetch"],
     [
       "summarize.file",
-      () => apiClient.summarize.file({ mode: "file", text: "t" }, { dispatch: "remote", remote: ANONYMOUS }),
+      () => apiClient.summarize.file({ mode: "file", text: "t" }, { target: ANONYMOUS }),
       { summary: "s" },
       "/v1/summarize",
     ],
     [
       "mcp.proxy",
       () =>
-        apiClient.mcp.proxy("discover", { server: { id: "s1" } }, { dispatch: "remote", remote: ANONYMOUS }),
+        apiClient.mcp.proxy("discover", { server: { id: "s1" } }, { target: ANONYMOUS }),
       { capabilities: {} },
       "/v1/mcp/s1/discover",
     ],
@@ -969,14 +659,14 @@ describe("anonymous remote dispatch (no session) sends no Authorization", () => 
       () =>
         apiClient.artifacts.extractTable(
           { reportText: "r", sources: [{ title: "t", url: "https://x.test", snippet: "s" }] },
-          { dispatch: "remote", remote: ANONYMOUS },
+          { target: ANONYMOUS },
         ),
       { columns: [], rows: [], sources: [] },
       "/v1/extract-table",
     ],
     [
       "embed.file",
-      () => apiClient.embed.file({ fileId: "f", text: "t" }, { dispatch: "remote", remote: ANONYMOUS }),
+      () => apiClient.embed.file({ fileId: "f", text: "t" }, { target: ANONYMOUS }),
       { status: "skipped", sections: 0, reason: "not_signed_in" },
       "/v1/embed",
     ],
@@ -993,7 +683,7 @@ describe("anonymous remote dispatch (no session) sends no Authorization", () => 
 
   test("embed.file reads the anonymous skip (not_signed_in) as a result, not a failure", async () => {
     installFetchStub({ jsonBody: { status: "skipped", sections: 0, reason: "not_signed_in" } })
-    const res = await apiClient.embed.file({ fileId: "f", text: "t" }, { dispatch: "remote", remote: ANONYMOUS })
+    const res = await apiClient.embed.file({ fileId: "f", text: "t" }, { target: ANONYMOUS })
     expect(res).toEqual({ status: "skipped", sections: 0, reason: "not_signed_in" })
   })
 })
@@ -1028,7 +718,7 @@ describe("apiClient.extract — agent-py dispatch (wave 12)", () => {
 
   test("python → agent-py /v1/extract with the bearer, the file as multipart", async () => {
     const log = installFormStub(result)
-    const res = await apiClient.extract(file, { dispatch: "remote", remote: REMOTE })
+    const res = await apiClient.extract(file, { target: REMOTE })
     expect(res).toEqual(result)
     expect(log).toHaveLength(1)
     expect(log[0].url).toBe("https://agent-py.example/v1/extract")
@@ -1036,32 +726,78 @@ describe("apiClient.extract — agent-py dispatch (wave 12)", () => {
     expect(log[0].file?.name).toBe("notes.txt")
   })
 
-  test("signed out on python-runs → agent-py /v1/extract, no bearer", async () => {
+  test("signed out → agent-py /v1/extract, no bearer", async () => {
     const log = installFormStub(result)
-    expect(await apiClient.extract(file, { dispatch: "remote", remote: ANONYMOUS })).toEqual(result)
+    expect(await apiClient.extract(file, { target: ANONYMOUS })).toEqual(result)
     expect(log[0].url).toBe("https://agent-py.example/v1/extract")
     expect(log[0].authorization).toBeUndefined()
   })
 
-  test("ts-service → the in-Next route, no bearer", async () => {
-    const log = installFormStub(result)
-    await apiClient.extract(file, { dispatch: "remote", remote: TS_SERVICE })
-    expect(log[0].url).toBe("/api/extract")
-    expect(log[0].authorization).toBeUndefined()
-  })
-
-  test("in-next → /api/extract; the abort signal is passed on", async () => {
+  test("the abort signal is passed on", async () => {
     const log = installFormStub(result)
     const controller = new AbortController()
-    await apiClient.extract(file, { dispatch: "in-next", signal: controller.signal })
-    expect(log[0].url).toBe("/api/extract")
+    await apiClient.extract(file, { target: REMOTE, signal: controller.signal })
     expect(log[0].signal).toBe(controller.signal)
   })
 
   test("a failure or an off-schema answer resolves null", async () => {
     installFormStub({ code: "rate_limit", message: "slow" }, 429)
-    expect(await apiClient.extract(file, { dispatch: "remote", remote: REMOTE })).toBeNull()
+    expect(await apiClient.extract(file, { target: REMOTE })).toBeNull()
     installFormStub({ kind: "nope" })
-    expect(await apiClient.extract(file, { dispatch: "remote", remote: REMOTE })).toBeNull()
+    expect(await apiClient.extract(file, { target: REMOTE })).toBeNull()
+  })
+})
+
+describe("an account-bound call without a session goes tokenless; agent-py's 401 is 'Sign in required' (Q142)", () => {
+  beforeEach(() => resetAuthRequiredNotice())
+
+  /** Whether the "Sign in required" toast was just raised: a background
+   *  re-raise is then suppressed by the cooldown. */
+  const toastRaised = () => !notifyAuthRequired({ background: true })
+
+  const create = { workspaceId: "w1", name: "Morning", prompt: "p", cron: "0 8 * * *" }
+  const share = { kind: "conversation" as const, conversationId: "11111111-1111-4111-8111-111111111111" }
+
+  test("share.create: sent to agent-py without a bearer, its 401 reads as auth_required + the toast", async () => {
+    const log = installFetchStub({ status: 401, jsonBody: { code: "auth", message: "Missing bearer token." } })
+    const res = await apiClient.share.create(share as never, { target: ANONYMOUS })
+    expect(log).toHaveLength(1)
+    expect(log[0].url).toBe("https://agent-py.example/v1/share")
+    expect(log[0].authorization).toBeUndefined()
+    expect(res).toMatchObject({ ok: false, status: 401 })
+    expect(toastRaised()).toBe(true)
+  })
+
+  test("schedules.create: the 401 surfaces as auth_required, whatever code agent-py sent", async () => {
+    for (const code of ["auth", "auth_required"]) {
+      resetAuthRequiredNotice()
+      const log = installFetchStub({ status: 401, jsonBody: { code, message: "Sign in." } })
+      const res = await apiClient.tasks.schedules.create(create, { target: ANONYMOUS })
+      expect(log[0].url).toBe("https://agent-py.example/v1/tasks/schedules")
+      expect(log[0].authorization).toBeUndefined()
+      expect(res).toEqual({ ok: false, status: 401, error: { code: "auth_required", message: "Sign in." } })
+      expect(toastRaised()).toBe(true)
+    }
+  })
+
+  test("memory.extract / mcp.upsertCloudServer: sent tokenless, refused, never short-circuited", async () => {
+    let log = installFetchStub({ status: 401, jsonBody: { code: "auth" } })
+    expect(await apiClient.memory.extract({ turnText: "t", conversationId: "c" }, { target: ANONYMOUS })).toBe(false)
+    expect(log).toHaveLength(1)
+    expect(log[0].url).toBe("https://agent-py.example/v1/memory/extract")
+    log = installFetchStub({ status: 401, jsonBody: { code: "auth" } })
+    const res = await apiClient.mcp.upsertCloudServer(
+      { id: "s", workspaceId: "w", name: "n", url: "https://mcp.test", credentials: {} },
+      { target: ANONYMOUS },
+    )
+    expect(log[0].url).toBe("https://agent-py.example/v1/mcp/server")
+    expect(res).toEqual({ ok: false, status: 401, error: { code: "auth_required", message: undefined } })
+  })
+
+  test("with a session, a 401 `auth` (a rejected token) is not rewritten", async () => {
+    installFetchStub({ status: 401, jsonBody: { code: "auth", message: "Invalid token." } })
+    const res = await apiClient.tasks.schedules.create(create, { target: REMOTE })
+    expect(res).toEqual({ ok: false, status: 401, error: { code: "auth", message: "Invalid token." } })
+    expect(toastRaised()).toBe(false)
   })
 })
