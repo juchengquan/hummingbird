@@ -9,7 +9,9 @@ import { memoryStorage } from "@/client/runs/fixtures"
 
 import type { TaskPhase } from "@/client/runs/tasks/types"
 
-import { clearActiveTask, loadActiveTask, saveActiveTask } from "./active-task"
+import { serializeActiveTask } from "@/shared/agent/active-task"
+
+import { clearActiveTask, loadActiveTask } from "./active-task"
 import { pointerPlan, runsHandOff } from "./old-pointer"
 
 const USER_A = "aaaaaaaa-1111-4222-8333-444455556666"
@@ -31,7 +33,7 @@ function pointer(runId: string) {
 
 describe("the old pointer is the user's (bug 6)", () => {
   test("a pointer is the signed-in user's: another account never loads it", () => {
-    saveActiveTask(pointer("run-a"), USER_A)
+    localStorage.setItem(`humm.activeTask.${USER_A}`, serializeActiveTask(pointer("run-a")))
     expect(loadActiveTask(USER_B)).toBeNull()
     expect(loadActiveTask(USER_A)?.runId).toBe("run-a")
     clearActiveTask("run-a", USER_A)

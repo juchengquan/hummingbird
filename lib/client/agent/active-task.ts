@@ -3,9 +3,11 @@ import "client-only"
 
 /**
  * localStorage-backed pointer to the one in-flight old-path task, so a
- * reload can reconnect (resume-on-reload). The record shape + validation
- * live in the shared codec; this file is the browser I/O around it. Single
- * slot per user — the old path runs one task at a time.
+ * reload can reconnect (resume-on-reload). Nothing writes one any more
+ * (the old path is gone, wave 13): a pointer saved before that is read,
+ * followed through the runs list and cleared (`old-task-pointer.tsx`). The
+ * record shape + validation live in the shared codec; this file is the
+ * browser I/O around it. Single slot per user.
  *
  * Keyed by the signed-in user (`humm.activeTask.<userId>`, Q68): another
  * account on the same browser never replays it (survey bug 6). A pointer
@@ -27,14 +29,6 @@ import {
 
 const LEGACY_KEY = "humm.activeTask"
 const keyFor = (userId: string | null) => (userId ? `${LEGACY_KEY}.${userId}` : LEGACY_KEY)
-
-export function saveActiveTask(record: ActiveTaskRecord, userId: string | null): void {
-  try {
-    localStorage.setItem(keyFor(userId), serializeActiveTask(record))
-  } catch {
-    // Private mode / quota — non-fatal; resume-on-reload just won't work.
-  }
-}
 
 export function loadActiveTask(userId: string | null): ActiveTaskRecord | null {
   try {

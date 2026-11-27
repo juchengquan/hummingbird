@@ -8,24 +8,15 @@ import {
 } from "@/shared/verify"
 
 /**
- * SSE frame translator — re-shapes AI SDK v5 UI message stream frames
- * (`text-delta`, `reasoning-delta`, `tool-input-available`,
- * `tool-output-available`, `data-tool-image`, `data-suggestions`,
- * `error`, plus lifecycle frames) into the small internal envelope
- * `use-chat-send.ts` consumes.
+ * Frame helpers for chat on runs (`lib/client/runs/reducer.ts`): re-shape
+ * a `data-*` part (`data-tool-image`, `data-suggestions`, `data-ui`, …)
+ * or a tool result's content into the small internal envelope the turn
+ * writer consumes.
  *
- * Pure — no React, no Zustand, no fetch. Lives in `lib/client/chat/`
- * (rather than `lib/shared/`) only because the chat panel is the
- * sole caller; promote to `lib/shared/` if anything else ever needs
- * to consume SSE frames the same way.
- *
- * PLAN-useChat-adoption.md Phase B.2.
+ * Pure — no React, no Zustand, no fetch.
  */
 
-/** Shape the chat-send hook reads. The translator below re-shapes
- *  AI SDK v5 frames into this internal envelope so the handler block
- *  stays small. The legacy custom format on the wire was retired in
- *  B.3 of PLAN-useChat-adoption.md. */
+/** The internal envelope the turn writer reads. */
 export interface NormalisedFrame {
   type?: string
   value?: string
@@ -71,96 +62,9 @@ export interface NormalisedFrame {
   files?: unknown[]
 }
 
-/** Decode one SSE payload (the JSON between `data: ` and `\n\n`) and
- *  translate it into our internal shape. Returns null when the frame
- *  is one of the AI SDK lifecycle no-ops (start, start-step,
- *  text-start/end, reasoning-start/end, finish-step, finish) or
- *  when the payload doesn't parse — the handler ignores it. */
-export function translateFrame(payload: string): NormalisedFrame | null {
-  let raw: Record<string, unknown>
-  try {
-    raw = JSON.parse(payload)
-  } catch {
-    return null
-  }
-  const t = raw.type
-  if (typeof t !== "string") return null
-
-  // AI SDK error frames carry the human-readable text on
-  // `errorText`. Re-shape into the internal `{type:"error",message}`
-  // envelope the handler block expects. The optional `code` rides
-  // alongside so the consumer can render a typed inline error bubble
-  // (rate_limit / auth / context_window / provider …) — services
-  // emit it from their provider-error categoriser.
-  if (t === "error" && typeof raw.errorText === "string") {
-    const out: NormalisedFrame = { type: "error", message: raw.errorText }
-    if (typeof raw.code === "string") out.code = raw.code
-    return out
-  }
-
-  // AI SDK v5 frame types. Re-shape into the internal logical
-  // envelope the handler block expects.
-  if (t === "text-delta" && typeof raw.delta === "string") {
-    return { type: "text", value: raw.delta }
-  }
-  if (t === "reasoning-delta" && typeof raw.delta === "string") {
-    return { type: "reasoning", value: raw.delta }
-  }
-  if (t === "tool-input-available") {
-    const toolCallId = raw.toolCallId
-    const toolName = raw.toolName
-    if (typeof toolCallId === "string" && typeof toolName === "string") {
-      return {
-        type: "tool_call",
-        id: toolCallId,
-        name: toolName,
-        args: raw.input,
-      }
-    }
-    return null
-  }
-  if (t === "tool-output-available") {
-    const toolCallId = raw.toolCallId
-    if (typeof toolCallId !== "string") return null
-    return {
-      type: "tool_result",
-      id: toolCallId,
-      ...parseToolOutput(raw.output, raw.errorText),
-    }
-  }
-  if (t.startsWith("data-")) {
-    return translateDataPart(t, (raw as { data?: unknown }).data)
-  }
-  // `finish` of a turn that read third-party content: the server flags
-  // it so post-turn memory auto-extraction skips the turn.
-  if (
-    t === "finish" &&
-    (raw.messageMetadata as { memoryTainted?: unknown } | undefined)?.memoryTainted === true
-  ) {
-    return { type: "memory_tainted" }
-  }
-  // Lifecycle frames the handler doesn't need to act on.
-  if (
-    t === "start" ||
-    t === "start-step" ||
-    t === "text-start" ||
-    t === "text-end" ||
-    t === "reasoning-start" ||
-    t === "reasoning-end" ||
-    t === "finish-step" ||
-    t === "finish"
-  ) {
-    return null
-  }
-
-  // Unknown frame type — ignore.
-  return null
-}
-
-/** A tool result's `{summary, results}`, from the JSON-stringified
- *  `output` the emitters send (`lib/server/chat/sse-emitter.ts`; the same
- *  string a runs `TOOL_CALL_RESULT.content` carries, RUN_EVENTS.md § 3.2).
- *  `errorText` (a failed tool) stands in for a missing summary. */
+/** A tool result's `{summary, results}`, from the JSON string a runs
+ *  `TOOL_CALL_RESULT.content` carries (RUN_EVENTS.md § 3.2). `errorText`
+ *  (a failed tool) stands in for a missing summary. */
 export function parseToolOutput(
   output: unknown,
   errorText?: unknown,
@@ -186,18 +90,16 @@ export function parseToolOutput(
       // ignore — summary stays undefined and the pill shows "done"
     }
   }
-  // The emitter also sends `errorText` on the AI SDK side when
-  // `isError` was true on the source frame. Surface as summary so
-  // the pill shows it.
+  // A failed tool's error text surfaces as the summary so the pill
+  // shows it.
   if (typeof errorText === "string" && !summary) summary = errorText
   return { summary, results }
 }
 
 /**
  * Translate one AI SDK `data-*` part (`type` the frame type, `data` its
- * payload) into the internal envelope. The per-kind parsers live here so
- * chat on runs reuses them: a runs `ACTIVITY_SNAPSHOT.content` is exactly
- * the `data` object of the frame chat sends today (RUN_EVENTS.md § 3.3,
+ * payload) into the internal envelope: a runs `ACTIVITY_SNAPSHOT.content`
+ * is exactly the `data` object of such a part (RUN_EVENTS.md § 3.3,
  * mapped by `lib/client/runs/reducer.ts`). Null for an unknown type or a
  * malformed payload.
  */
