@@ -44,9 +44,7 @@ const NEXT_ENV: Record<string, string> = {
   // tasks need sign-in); its sync writes are accepted and dropped.
   NEXT_PUBLIC_SUPABASE_URL: SUPABASE_ORIGIN,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: "e2e-anon",
-  NEXT_PUBLIC_AGENT_TS_URL: "",
   NEXT_PUBLIC_API_BASE_URL: "",
-  REQUIRE_AUTH_FOR_AI: "",
   NEXT_TELEMETRY_DISABLED: "1",
   // The runs task UI's specs (`tasks-list` / `tasks-launch`) swap in the
   // in-page fake tasks interface (`components/agent/tasks/e2e-fake.ts`)
