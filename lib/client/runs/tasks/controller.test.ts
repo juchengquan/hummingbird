@@ -420,6 +420,77 @@ describe("only on runs (Q61)", () => {
   })
 })
 
+describe("a task started the old way, followed on runs (Q126)", () => {
+  // The same `tasks` row as any background run: the old `/api/tasks` start
+  // and the runs API differ only in the route that created it.
+  test("paused and answered through the old respond route: shown as sent, a resume refused 409 run_already_answered", async () => {
+    const { server, p0 } = chainServer()
+    // A queued `respond` job holds the question (0045).
+    server.update(p0, { answerPending: true })
+    const t = tab({ server })
+    await t.controller.refreshNow()
+    const task = t.controller.snapshot().tasks![0]
+    expect(task.phase).toBe("answer_sent")
+    expect(task.questions[0]).toMatchObject({ answeredBy: "resume", answerPending: true })
+    // Another tab still showing the card answers it: the server refuses,
+    // and the list is read again.
+    server.nextResumeError = new RunsError("http", "run_already_answered", "Answered already.", 409)
+    const lists = server.calls.filter((c) => c.op === "list").length
+    const res = await t.controller.answer(task.questions[0], { value: "red" })
+    expect(res).toEqual({ ok: false, code: "run_already_answered", message: "Answered already." })
+    await until(() => server.calls.filter((c) => c.op === "list").length > lists)
+  })
+
+  test("watched, its sub-agents are read through the runs list (parentRunId), none asking", async () => {
+    const manifest = loadBackgroundScenario("spawn")
+    const parent = manifest.runs.parent.runId
+    const works = manifest.runs["child-works"].runId
+    const server = new FakeRunsServer()
+    server.add(makeRun({ id: parent, status: "running" }), loadBackgroundFixture("spawn", "parent").items)
+    server.add(makeRun({ id: works, rootRunId: parent, parentRunId: parent, status: "running" }))
+    const t = tab({ server })
+    await t.controller.refreshNow()
+    const off = t.controller.subscribeTask(parent, () => {})
+    await until(() => (t.controller.getTask(parent)?.children.length ?? 0) > 0)
+    expect(t.controller.getTask(parent)!.children.map((c) => c.runId)).toEqual([works])
+    expect(server.calls.some((c) => c.op === "list" && (c.arg as { parentRunId?: string }).parentRunId === parent)).toBe(true)
+    off()
+  })
+
+  test("the old respond job's answer applied: the task carries on in its own run, watched from its full log", async () => {
+    const { server, p0 } = chainServer()
+    const t = tab({ server })
+    await t.controller.refreshNow()
+    const off = t.controller.subscribeTask(p0, () => {})
+    await until(() => t.controller.getTask(p0)?.connection === "closed")
+    // The worker took the old route's answer: the same run goes on (no
+    // resume run), its log grows past the interrupt.
+    server.update(p0, { status: "succeeded", openInterrupts: [], result: { text: "Done the old way." } })
+    await t.controller.refreshNow()
+    const task = t.controller.getTask(p0)!
+    expect(task.currentRunId).toBe(p0)
+    expect(task.phase).toBe("succeeded")
+    expect(task.questions).toEqual([])
+    expect(server.calls.some((c) => c.op === "resume")).toBe(false)
+    off()
+  })
+
+  test("finished while away and never marked delivered: delivered here under the task's ids, once", async () => {
+    const server = new FakeRunsServer()
+    const root = "00000000-0000-4000-8000-0000000000e9"
+    server.add(makeRun({ id: root, threadId: CONV, status: "succeeded", result: { text: "Old answer." } }))
+    const t = tab({ server })
+    t.store.addConversation(CONV)
+    // The old path already wrote it under the same derived id (Q70).
+    t.store.addMessageWithId(resultIdsFor(USER, root).messageId, { role: "assistant", content: "Old answer." } as never, CONV)
+    const before = t.store.writes
+    await t.controller.refreshNow()
+    await until(() => server.marks.size === 1)
+    expect(t.store.writes).toBe(before)
+    expect(t.store.conversations.get(CONV)!.messages).toHaveLength(1)
+  })
+})
+
 describe("delivery output", () => {
   test("an unwatched task's images are read from its chain and stored on the delivered message", async () => {
     const { loadFixture } = await import("../fixtures")

@@ -6,7 +6,7 @@ import { backendAcceptsModel } from "../lib/shared/backend-models"
 import { WIRE_ORIGIN } from "./tasks-wire.config"
 import { composer } from "./support/runs"
 import { manifest, recordedInterrupt } from "./support/tasks-fake"
-import { signIn } from "./support/tasks-session"
+import { USER_ID, signIn } from "./support/tasks-session"
 
 /**
  * The runs task UI on the wire (config `tasks-wire.config.ts`): what the
@@ -221,4 +221,91 @@ test("the list, a sub-agent's question answered in place, Skip and Cancel (Q59, 
   await expect.poll(async () => (await sent("cancel")).map((s) => s.path)).toContain(`/v1/runs/${works}/cancel`)
   await item.getByRole("button", { name: "Cancel task" }).click()
   await expect.poll(async () => (await sent("cancel")).map((s) => s.path)).toContain(`/v1/runs/${parent}/cancel`)
+})
+
+const POINTER_KEY = `humm.activeTask.${USER_ID}`
+
+/** The saved pointer of a task started the old way (`/api/tasks`), before load. */
+async function oldPathPointer(page: Page, runId: string, status: "running" | "paused") {
+  await page.addInitScript(
+    ({ key, pointer }) => {
+      if (localStorage.getItem("e2e-pointer-seeded")) return
+      localStorage.setItem(key, JSON.stringify(pointer))
+      localStorage.setItem("e2e-pointer-seeded", "1")
+    },
+    {
+      key: POINTER_KEY,
+      pointer: {
+        runId,
+        conversationId: crypto.randomUUID(),
+        cursor: 0,
+        status,
+        title: "Ask the helpers",
+        updatedAt: new Date().toISOString(),
+      },
+    },
+  )
+}
+
+/** Every browser request to an old `/api/tasks` route, from now on. */
+function oldTaskRoutes(page: Page): string[] {
+  const seen: string[] = []
+  page.on("request", (req) => {
+    const path = new URL(req.url()).pathname
+    if (path.startsWith("/api/tasks")) seen.push(`${req.method()} ${path}`)
+  })
+  return seen
+}
+
+test("a task started the old way is followed through /v1/runs, never /api/tasks (Q126)", async ({ page }) => {
+  const spawn = manifest("spawn").runs
+  const parent = spawn.parent.runId
+  const works = spawn["child-works"].runId
+  await control("runs", {
+    runs: [
+      { id: parent, rootRunId: parent, status: "running", step: 2, goal: "Ask the helpers" },
+      { id: works, rootRunId: parent, parentRunId: parent, status: "running", goal: "works" },
+    ],
+  })
+  await control("streams", {
+    streams: { [parent]: "background/spawn/parent.sse", [works]: "background/spawn/child-works.sse" },
+  })
+  const old = oldTaskRoutes(page)
+  await oldPathPointer(page, parent, "running")
+  await signedIn(page)
+  // The panel opens on it, as the old path's reload did; its log, its
+  // sub-agents and its cancel all go to the runs API.
+  const item = panel(page).getByRole("listitem", { name: "Task: Ask the helpers" })
+  await expect(item).toBeVisible()
+  await expect.poll(async () => (await sent("events")).map((s) => s.path)).toContain(`/v1/runs/${parent}/events`)
+  await expect.poll(async () => (await sent("list")).map((s) => s.query).join(" ")).toContain(`parentRunId=${parent}`)
+  await item.getByRole("button", { name: "Cancel task" }).click()
+  await expect.poll(async () => (await sent("cancel")).map((s) => s.path)).toContain(`/v1/runs/${parent}/cancel`)
+  // Ended: the pointer goes.
+  await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), POINTER_KEY)).toBeNull()
+  expect(old).toEqual([])
+})
+
+test("a pointer to an old-path task that finished while away is dropped, read only through /v1/runs (Q126)", async ({ page }) => {
+  const root = crypto.randomUUID()
+  await control("runs", {
+    runs: [
+      {
+        id: root,
+        rootRunId: root,
+        status: "succeeded",
+        goal: "Ask the helpers",
+        result: { text: "Done." },
+        finishedAt: new Date().toISOString(),
+      },
+    ],
+  })
+  const old = oldTaskRoutes(page)
+  await oldPathPointer(page, root, "paused")
+  await signedIn(page)
+  await expect.poll(async () => (await sent("list")).length).toBeGreaterThan(0)
+  await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), POINTER_KEY)).toBeNull()
+  // Time for a stray old-path watch to show itself.
+  await page.waitForTimeout(1_000)
+  expect(old).toEqual([])
 })

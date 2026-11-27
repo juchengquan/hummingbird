@@ -35,10 +35,13 @@ import "client-only"
  * - **Delivery** (`./deliver.ts`) and **notifications** (`./notify.ts`),
  *   from the list, once across tabs and browsers.
  *
- * Old-path tasks keep their own watcher (`lib/client/agent/*`, "a task
- * stays on its path", Q61): the list shows them, and delivers them with
- * the same derived ids, so whichever writes first wins and the other is a
- * no-op.
+ * Tasks started the old way (`/api/tasks`) are followed here too on runs
+ * (Q126): the list shows, watches, answers, cancels and delivers them like
+ * any other — the same `tasks` rows — and the old path's saved pointer
+ * only opens the panel on its task (`lib/client/agent/old-pointer.ts`).
+ * Off runs the old watcher (`lib/client/agent/*`) keeps them, delivering
+ * with the same derived ids, so whichever writes first wins and the other
+ * is a no-op.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"

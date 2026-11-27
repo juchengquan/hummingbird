@@ -14,7 +14,10 @@ import { useStore } from "@/client/hooks/use-store"
 import { EMPTY_RUN_VIEW, type TaskRunView } from "@/shared/agent/project"
 import { resultIdsFor } from "@/shared/runs/ids"
 
+import type { TaskPhase } from "@/client/runs/tasks/types"
+
 import { clearActiveTask, loadActiveTask, saveActiveTask } from "./active-task"
+import { pointerPlan, runsHandOff } from "./old-pointer"
 import { settleTask } from "./settle-task"
 
 const USER_A = "aaaaaaaa-1111-4222-8333-444455556666"
@@ -124,5 +127,45 @@ describe("old-path launch guard (bug 1)", () => {
     expect(oldPathLaunchBlocked(false, { runId: "r1", status: "queued" }, "r1")).toBeNull()
     expect(oldPathLaunchBlocked(false, { runId: "r2", status: "done" }, null)).toBeNull()
     expect(oldPathLaunchBlocked(false, null, null)).toBeNull()
+  })
+})
+
+describe("a pointer to a task started the old way, on runs (Q126)", () => {
+  const live = { runId: "r-old", status: "running" as const }
+  const row = (phase: TaskPhase) => ({ rootRunId: "r-old", phase })
+
+  test("on agent-py (runs) it is followed through the runs list, never the old route", () => {
+    expect(pointerPlan(live, { ok: true })).toBe("runs")
+    // The old path keeps it off runs (ts / python / ts-service until wave 13).
+    expect(pointerPlan(live, { ok: false, reason: "not_runs" })).toBe("old_path")
+    // The session isn't read yet: neither path, so no `/api/tasks` read
+    // goes out before the backend is known.
+    expect(pointerPlan(live, { ok: false, reason: "loading" })).toBe("wait")
+    // Signed out, a background task can't be read on either path.
+    expect(pointerPlan(live, { ok: false, reason: "signed_out" })).toBe("none")
+    expect(pointerPlan(null, { ok: true })).toBe("none")
+  })
+
+  test("a pointer this browser already saw end is dropped, whatever the backend", () => {
+    for (const status of ["done", "failed", "cancelled"] as const) {
+      expect(pointerPlan({ runId: "r", status }, { ok: true })).toBe("clear")
+      expect(pointerPlan({ runId: "r", status }, { ok: false, reason: "not_runs" })).toBe("clear")
+    }
+  })
+
+  test("the runs list decides: a live task opens in the panel, an ended or unlisted one is dropped", () => {
+    // Not read yet, or the read failed: wait for the list.
+    expect(runsHandOff(live, { tasks: null, listError: null })).toBe("wait")
+    expect(runsHandOff(live, { tasks: [], listError: { code: "network", message: "x" } })).toBe("wait")
+    for (const phase of ["queued", "running", "needs_answer", "answer_sent"] as const) {
+      expect(runsHandOff(live, { tasks: [row(phase)], listError: null })).toBe("focus")
+    }
+    // Finished while away (the pointer still says running): the runs list
+    // delivers it under the task's derived ids, so the pointer just goes.
+    for (const phase of ["succeeded", "failed", "cancelled"] as const) {
+      expect(runsHandOff(live, { tasks: [row(phase)], listError: null })).toBe("clear")
+    }
+    // Another account's, or deleted.
+    expect(runsHandOff(live, { tasks: [{ rootRunId: "other", phase: "running" }], listError: null })).toBe("clear")
   })
 })
