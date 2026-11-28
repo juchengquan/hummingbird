@@ -30,7 +30,7 @@ async function openEditor(page: Page, { signIn, ghostText = false }: { signIn: b
     await page.context().addCookies([{ name: "sb-127-auth-token", value: raw, domain: "127.0.0.1", path: "/" }])
   }
   // Ghost text only where it is under test: typing would fire completions.
-  const seed = { chatBackend: "python-runs", editorPrefs: { aiReviewChanges: false, inlineComplete: ghostText } }
+  const seed = { editorPrefs: { aiReviewChanges: false, inlineComplete: ghostText } }
   await page.addInitScript(({ seed, version }) => {
     if (localStorage.getItem("e2e-seeded")) return
     localStorage.setItem("hummingbird-storage", JSON.stringify({ state: seed, version }))

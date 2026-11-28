@@ -1,9 +1,9 @@
-"""The task routes on the real stack (`e2e-live/stack.sh`): a GoTrue session, the Next routes and
-`/v1/runs`, agent-py's worker, a scripted model and an MCP server that counts effects. Exits non-zero on
-any failure."""
+"""Tasks on the real stack (`e2e-live/stack.sh`): a GoTrue session, `/v1/runs`, agent-py's worker, a
+scripted model and an MCP server that counts effects — and Next serving no API route (wave 13, Q147:
+its `/api/tasks*` routes are gone, so every scenario starts, answers and cancels through `/v1/runs`).
+Exits non-zero on any failure."""
 
 import asyncio
-import base64
 import json
 import os
 import time
@@ -46,15 +46,7 @@ async def main():
     ).json()
     assert "access_token" in s, s
     uid, token = s["user"]["id"], s["access_token"]
-    raw = "base64-" + base64.urlsafe_b64encode(json.dumps(s).encode()).decode().rstrip("=")
-    name = "sb-127-auth-token"
-    parts = [raw[i : i + 3180] for i in range(0, len(raw), 3180)]
-    cookie = (
-        f"{name}={raw}"
-        if len(parts) == 1
-        else "; ".join(f"{name}.{i}={p}" for i, p in enumerate(parts))
-    )
-    web, api = {"cookie": cookie, "origin": NEXT}, {"authorization": f"Bearer {token}"}
+    api = {"authorization": f"Bearer {token}"}
 
     ws, conv = uuid.uuid4(), uuid.uuid4()
     await db.execute(
@@ -101,23 +93,22 @@ async def main():
                     gate,
                 )
 
-    async def start(scn, tag=None, **extra):
+    async def start(scn, tag=None, model=MODEL, **props):
+        """A new background task: `POST /v1/runs` with `mode: background`."""
+        rid = str(uuid.uuid4())
+        fp = {"mode": "background", "workspaceId": str(ws), "model": model, **props}
         body = {
-            "conversationId": str(conv),
-            "workspaceId": str(ws),
-            "skills": [],
-            "model": MODEL,
-            "messages": [{"role": "user", "content": f"SCENARIO:{scn}/{tag}"}],
-            **extra,
+            "threadId": str(conv),
+            "runId": rid,
+            "messages": [{"id": "m1", "role": "user", "content": f"SCENARIO:{scn}/{tag}"}],
+            "forwardedProps": {k: v for k, v in fp.items() if v is not None},
         }
-        return await http.post(
-            f"{NEXT}/api/tasks", headers=web, json={k: v for k, v in body.items() if v is not None}
-        )
+        return rid, await http.post(f"{PYAPI}/v1/runs", headers=api, json=body)
 
-    async def begin(scn, tag, **extra):
-        r = await start(scn, tag, **extra)
+    async def begin(scn, tag, **props):
+        rid, r = await start(scn, tag, **props)
         assert r.status_code == 202, r.text
-        return r.json()["runId"]
+        return rid
 
     async def row(rid):
         return await db.fetchrow(
@@ -152,11 +143,6 @@ async def main():
             await asyncio.sleep(0.2)
         return None
 
-    async def respond(rid, q, **answer):
-        return await http.post(
-            f"{NEXT}/api/tasks/{rid}/respond", headers=web, json={"requestId": q, **answer}
-        )
-
     async def resume(rid, q, payload=None, status="resolved", **props):
         new = str(uuid.uuid4())
         entry = {"interruptId": q, "status": status}
@@ -172,16 +158,15 @@ async def main():
         body["forwardedProps"] = {k: v for k, v in body["forwardedProps"].items() if v is not None}
         return new, await http.post(f"{PYAPI}/v1/runs", headers=api, json=body)
 
-    async def cancel(rid, via="next"):
-        return await http.post(
-            *(
-                [f"{NEXT}/api/tasks/{rid}/cancel"]
-                if via == "next"
-                else [f"{PYAPI}/v1/runs/{rid}/cancel"]
-            ),
-            headers=web if via == "next" else api,
-            json={},
-        )
+    async def cancel(rid):
+        return await http.post(f"{PYAPI}/v1/runs/{rid}/cancel", headers=api, json={})
+
+    async def answer(rid, q, payload=None, status="resolved"):
+        """Answer a paused task's question: a background resume (RUN_EVENTS.md § 4.2).
+        Returns the resume's run id — the task's current run from then on."""
+        new, r = await resume(rid, q, payload, status)
+        assert r.status_code == 202, r.text
+        return new
 
     async def effects(tag):
         e = (await http.get(f"{FAKE}/state")).json()["effects"]
@@ -205,14 +190,24 @@ async def main():
     async def texts(needle):
         return needle in (await http.get(f"{FAKE}/state")).json()["all_text"]
 
+    async def next_gone():
+        """Q147: Next serves no API route any more — the browser reaches only agent-py."""
+        for method, path in (
+            ("GET", "/api/tasks"),
+            ("POST", "/api/tasks"),
+            ("POST", "/api/chat"),
+        ):
+            r = await http.request(method, f"{NEXT}{path}", headers=api, json={})
+            check(f"next: {method} {path} -> 404", r.status_code == 404, r.status_code)
+
     async def models():
+        """A model a background run can't run is refused before anything exists (Q55)."""
         n = await db.fetchval("select count(*) from public.tasks")
         for label, m in (
-            ("default", None),
-            ("deepseek", "deepseek/deepseek-v4-flash"),
+            ("unlisted", "anthropic/not-a-model"),
             ("auto", "auto"),
         ):
-            r = await start("multi", "m", model=m)
+            _, r = await start("multi", "m", model=m)
             check(
                 f"models: {label} -> 400",
                 r.status_code == 400 and r.json().get("code") == "unknown_model",
@@ -290,22 +285,25 @@ async def main():
             await effects("ma") == {"lookup": 1},
             await effects("ma"),
         )
-        bad = await respond(t, q1)
+        _, bad = await resume(t, q1, {})
         check(
             "multi: no approved -> 400",
             bad.status_code == 400 and await effects("ma") == {"lookup": 1},
             (bad.status_code, bad.text),
         )
-        rs = await asyncio.gather(respond(t, q1, approved=True), respond(t, q1, approved=True))
+        rs = await asyncio.gather(
+            resume(t, q1, {"approved": True}), resume(t, q1, {"approved": True})
+        )
         check(
             "multi: double answer -> one winner",
-            sorted(r.status_code for r in rs) == [202, 409],
-            [(r.status_code, r.text[:100]) for r in rs],
+            sorted(r.status_code for _, r in rs) == [202, 409],
+            [(r.status_code, r.text[:100]) for _, r in rs],
         )
-        q2 = await question(t, not_=q1)
+        won = next((n for n, r in rs if r.status_code == 202), t)
+        q2 = await question(won, not_=q1)
         check("multi: second question follows", bool(q2))
-        await respond(t, q2, approved=True)
-        st = await wait(t, ENDED)
+        last = await answer(won, q2, {"approved": True})
+        st = await wait(last, ENDED)
         check(
             "multi: done, one effect each",
             st == "done" and await effects("ma") == {"lookup": 1, "one": 1, "two": 1},
@@ -313,40 +311,17 @@ async def main():
         )
 
     async def decline():
+        """Both ways to decline: `approved: false`, then `status: cancelled`."""
         t = await begin("multi", "de")
         q1 = await question(t)
-        await respond(t, q1, approved=False)
-        q2 = await question(t, not_=q1)
-        await respond(t, q2, approved=False)
-        st = await wait(t, ENDED)
+        new = await answer(t, q1, {"approved": False})
+        q2 = await question(new, not_=q1)
+        last = await answer(new, q2, status="cancelled")
+        st = await wait(last, ENDED)
         check(
             "decline: done, nothing gated ran",
             st == "done" and await effects("de") == {"lookup": 1},
             (st, await effects("de")),
-        )
-
-    async def mixed():
-        t = await begin("seq", "mx")
-        q1 = await question(t)
-        await respond(t, q1, approved=True)
-        q2 = await question(t, not_=q1)
-        new, r = await resume(t, q2, {"approved": True})
-        st = await wait(new, ENDED) if r.status_code == 202 else r.text
-        check(
-            "mixed: old answer, then runs answer",
-            st == "done" and await effects("mx") == {"q1": 1, "q2": 1},
-            (st, await effects("mx")),
-        )
-        t = await begin("seq", "my")
-        q1 = await question(t)
-        new, r = await resume(t, q1, {"approved": True})
-        q2 = await question(new)
-        await respond(new, q2, approved=True)
-        st = await wait(new, ENDED)
-        check(
-            "mixed: runs answer, then old answer",
-            st == "done" and await effects("my") == {"q1": 1, "q2": 1},
-            (st, await effects("my")),
         )
 
     async def applyfail():
@@ -355,15 +330,14 @@ async def main():
         new, _ = await resume(t, q, {"approved": True})
         st = await wait(new, ENDED)
         _, again = await resume(t, q, {"approved": True})
-        old = await respond(t, q, approved=True)
         await asyncio.sleep(2)
         check(
             "applied then failed: no replay",
             st == "failed"
             and again.status_code == 409
-            and old.status_code == 409
+            and again.json().get("code") == "run_answer_applied"
             and await effects("af") == {"sent": 1},
-            (st, again.status_code, old.status_code, await effects("af")),
+            (st, again.status_code, again.text[:160], await effects("af")),
         )
 
     async def narrow():
@@ -378,48 +352,44 @@ async def main():
         )
 
     async def running_cancel():
-        for via in ("next", "runs"):
-            tag = "rc" + via
-            t = await begin("slowgate", tag)
-            st = await wait(t, ("running",), 8)
-            got = (await http.get(f"{PYAPI}/v1/runs/{t}", headers=api)).json()
-            check(
-                f"running ({via}): reads running",
-                st == "running" and got.get("status") == "running",
-                (st, got.get("status")),
-            )
-            r = await cancel(t, via)
-            await asyncio.sleep(8)
-            final = (await row(t))["status"]
-            events = await db.fetch(
-                "select payload::text p from public.task_events where task_id=$1 and kind='approval'",
-                uuid.UUID(t),
-            )
-            check(
-                f"cancel during model ({via}): stays cancelled, no effect",
-                r.status_code == 200 and final == "cancelled" and await effects(tag) == {},
-                (r.status_code, r.text[:100], final, await effects(tag)),
-            )
-            check(
-                f"cancel during model ({via}): no question left",
-                not events,
-                [e["p"] for e in events],
-            )
+        tag = "rcruns"
+        t = await begin("slowgate", tag)
+        st = await wait(t, ("running",), 8)
+        got = (await http.get(f"{PYAPI}/v1/runs/{t}", headers=api)).json()
+        check(
+            "running: reads running",
+            st == "running" and got.get("status") == "running",
+            (st, got.get("status")),
+        )
+        r = await cancel(t)
+        await asyncio.sleep(8)
+        final = (await row(t))["status"]
+        events = await db.fetch(
+            "select payload::text p from public.task_events where task_id=$1 and kind='approval'",
+            uuid.UUID(t),
+        )
+        check(
+            "cancel during model: stays cancelled, no effect",
+            r.status_code == 200 and final == "cancelled" and await effects(tag) == {},
+            (r.status_code, r.text[:100], final, await effects(tag)),
+        )
+        check("cancel during model: no question left", not events, [e["p"] for e in events])
 
     async def cancel_chain():
-        for via in ("next", "runs"):
-            t = await begin("slowafter", "cc" + via)
-            q = await question(t)
-            new, _ = await resume(t, q, {"approved": True})
-            await wait(new, ("running",), 8)
-            await asyncio.sleep(1)
-            await cancel(t, via)
-            await asyncio.sleep(7)
-            a, b = (await row(t))["status"], (await row(new))["status"]
-            check(f"cancel root ({via}): whole chain", (a, b) == ("cancelled", "cancelled"), (a, b))
+        t = await begin("slowafter", "ccruns")
+        q = await question(t)
+        new, _ = await resume(t, q, {"approved": True})
+        await wait(new, ("running",), 8)
+        await asyncio.sleep(1)
+        await cancel(t)
+        await asyncio.sleep(7)
+        a, b = (await row(t))["status"], (await row(new))["status"]
+        check("cancel root: whole chain", (a, b) == ("cancelled", "cancelled"), (a, b))
 
-    async def child_answer():
-        t = await begin("spawn", "ca")
+    async def child_answer_runs():
+        """Wave 6-A: a child answered in place through `/v1/runs` (Q59), its
+        task's fields on the way, then delivered (Q77)."""
+        t = await begin("spawn", "car")
         kid, q = await asking_child(t)
         check(
             "child: asks while parent waits",
@@ -433,25 +403,12 @@ async def main():
             (r.status_code, r2.status_code) == (409, 409),
             (r.status_code, r2.status_code, r2.text[:150]),
         )
-        listed = await http.get(f"{NEXT}/api/tasks/{t}/children", headers=web)
+        listed = await http.get(f"{PYAPI}/v1/runs", headers=api, params={"parentRunId": t})
         check(
             "child: listed for the parent",
-            listed.status_code == 200 and kid in listed.text,
+            listed.status_code == 200 and kid in {x["id"] for x in listed.json().get("runs", [])},
             listed.text[:200],
         )
-        a = await respond(kid, q, value="this")
-        st = await wait(t, ENDED)
-        check(
-            "child: answered, parent done",
-            a.status_code == 202 and st == "done" and await effects("ca") == {"beside": 1},
-            (a.status_code, a.text, st, await effects("ca")),
-        )
-
-    async def child_answer_runs():
-        """Wave 6-A: a child answered in place through `/v1/runs` (Q59), its
-        task's fields on the way, then delivered (Q77)."""
-        t = await begin("spawn", "car")
-        kid, q = await asking_child(t)
         parent = (await http.get(f"{PYAPI}/v1/runs/{t}", headers=api)).json()
         check(
             "runs child: the parent reads running with a child asking",
@@ -511,12 +468,11 @@ async def main():
         )
 
     async def child_skip():
-        for via in ("next", "runs"):
-            t = await begin("spawn", "cs" + via)
-            kid, _q = await asking_child(t)
-            await cancel(kid, via)
-            st = await wait(t, ENDED)
-            check(f"child skip ({via}): parent continues", st == "done", st)
+        t = await begin("spawn", "csruns")
+        kid, _q = await asking_child(t)
+        await cancel(kid)
+        st = await wait(t, ENDED)
+        check("child skip: parent continues", st == "done", st)
         check("child skip: model told", await texts("skipped") or await texts("Skipped"))
 
     async def parent_cancel():
@@ -529,9 +485,9 @@ async def main():
     async def respawn():
         t = await begin("respawn", "rs")
         q = await question(t)
-        await respond(t, q, value="go")
-        st = await wait(t, ENDED)
-        kids = await children(t)
+        new = await answer(t, q, {"value": "go"})
+        st = await wait(new, ENDED)
+        kids = await children(new)
         check(
             "respond then spawn: really spawns",
             st == "done" and len(kids) == 1 and kids[0]["status"] == "done",
@@ -541,10 +497,17 @@ async def main():
     async def stream():
         t = await begin("quick", "st")
         await wait(t, ENDED)
-        r = await http.get(f"{NEXT}/api/tasks/{t}/stream?cursor=0", headers=web)
+        r = await http.get(f"{PYAPI}/v1/runs/{t}/events", headers=api)
+        text = "".join(
+            ev.get("delta", "")
+            for ev in (
+                json.loads(line[5:]) for line in r.text.splitlines() if line.startswith("data:")
+            )
+            if ev.get("type") == "TEXT_MESSAGE_CONTENT"
+        )
         check(
             "stream: replay has the final text",
-            "FINAL quick" in r.text,
+            r.status_code == 200 and "FINAL quick" in text,
             (r.status_code, r.text[-300:]),
         )
 
@@ -553,7 +516,7 @@ async def main():
         waiting = [await begin("seq", f"cap{i}") for i in range(5)]
         questions = [await question(t) for t in waiting]
         before = await db.fetchval("select count(*) from public.tasks")
-        sixth = await start("quick", "cap6")
+        _, sixth = await start("quick", "cap6")
         check(
             "cap: a sixth active task is refused",
             sixth.status_code == 409 and sixth.json().get("code") == "limit_reached",
@@ -562,35 +525,34 @@ async def main():
         check(
             "cap: nothing created", before == await db.fetchval("select count(*) from public.tasks")
         )
-        answer = await respond(waiting[0], questions[0], approved=False)
+        _, answered = await resume(waiting[0], questions[0], {"approved": False})
         check(
             "cap: an answer is never refused",
-            answer.status_code == 202,
-            (answer.status_code, answer.text[:160]),
+            answered.status_code == 202,
+            (answered.status_code, answered.text[:160]),
         )
         for t in waiting:
             await cancel(t)
-        after = await start("quick", "cap7")
+        last, after = await start("quick", "cap7")
         check(
             "cap: room again once they end",
             after.status_code == 202,
             (after.status_code, after.text[:160]),
         )
         if after.status_code == 202:
-            await wait(after.json()["runId"], ENDED)
+            await wait(last, ENDED)
 
     for case in (
+        next_gone,
         models,
         schedule,
         stream,
         multi,
         decline,
-        mixed,
         applyfail,
         narrow,
         running_cancel,
         cancel_chain,
-        child_answer,
         child_answer_runs,
         child_skip,
         parent_cancel,

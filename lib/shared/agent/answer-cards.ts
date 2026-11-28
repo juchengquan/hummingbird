@@ -1,24 +1,15 @@
 /**
  * The answer cards' model — what a paused agent asks the human, and what
- * the human answers — independent of where the question came from:
- *
- * - the task strip (`PendingInput`, answered via `/api/tasks/:id/respond`),
- * - chat on runs (`PendingInterrupt`, answered by resuming the run —
- *   Q24/Q35; the adapter is `lib/client/runs/interrupt-answers.ts`).
+ * the human answers. The questions come from runs (`PendingInterrupt`,
+ * answered by resuming the run — Q24/Q35; the adapter is
+ * `lib/client/runs/interrupt-answers.ts`).
  *
  * The cards (`components/agent/interrupt-cards/`) render an
  * `AnswerQuestion` and emit a `CardAnswer`; each surface maps the answer
  * to its own wire shape. Pure — no React, no I/O.
  */
 
-import type { RespondRequestInput } from "@/shared/api-schemas"
-import {
-  respondBodyForUiAnswer,
-  type UiAnswer,
-  type UiKind,
-} from "@/shared/generative-ui/schemas"
-
-import type { PendingInput } from "@/shared/agent/project"
+import type { UiAnswer, UiKind } from "@/shared/generative-ui/schemas"
 
 /** The four kinds of question a card can answer. */
 export type AnswerReason = "approval" | "choice" | "input" | "ui-part"
@@ -54,35 +45,6 @@ export type CardAnswer =
   | { selection: string[] }
   | { value: string }
   | { uiAnswer: UiAnswer; part: { kind: UiKind; props: unknown } }
-
-/** The task strip's question (its `kind` defaults to `approval`). */
-export function questionFromPendingInput(input: PendingInput): AnswerQuestion {
-  return {
-    id: input.requestId,
-    reason: input.kind ?? "approval",
-    tool: input.tool,
-    args: input.args,
-    prompt: input.prompt,
-    options: input.options,
-    multi: input.multi,
-    uiKind: input.uiKind,
-    uiProps: input.uiProps,
-  }
-}
-
-/** The `/api/tasks/:id/respond` body for a card's answer — exactly what
- *  the task strip has always sent: `{ requestId, approved }`,
- *  `{ requestId, selection }`, `{ requestId, value }`, or
- *  `respondBodyForUiAnswer(...)` for a generative-UI part. */
-export function respondBodyForCardAnswer(
-  requestId: string,
-  answer: CardAnswer,
-): RespondRequestInput {
-  if ("uiAnswer" in answer) {
-    return respondBodyForUiAnswer(requestId, answer.part, answer.uiAnswer)
-  }
-  return { requestId, ...answer }
-}
 
 // --- Card form helpers ------------------------------------------------------
 

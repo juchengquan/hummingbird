@@ -87,16 +87,6 @@ export function canonicalBlobItems<T extends BlobBearingItem>(
   return out ?? items
 }
 
-/** True when any item of `items` is a placeholder reference. */
-export function hasMessageBlobRef(items: unknown): boolean {
-  return (
-    Array.isArray(items) &&
-    items.some(
-      (it) => !!it && typeof it === "object" && isMessageBlobRef((it as { url?: unknown }).url)
-    )
-  )
-}
-
 /** Message columns that may carry blob-bearing items. */
 export const MESSAGE_BLOB_COLUMNS = ["generated_images", "generated_files"] as const
 

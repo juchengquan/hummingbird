@@ -6,7 +6,7 @@ import { CopilotPlugin } from '@platejs/ai/react';
 import { serializeMd, stripMarkdown } from '@platejs/markdown';
 
 import { apiUrls } from '@/client/api-client';
-import { resolveEditorAiTarget } from '@/client/api/backend-resolver';
+import { resolveAgentPyTarget } from '@/client/api/backend-resolver';
 import { agentPyInit } from '@/components/editor/ai/agent-py-body';
 import { asPlateCompletion } from '@/components/editor/ai/plate-completion';
 import { notifyAuthRequired } from '@/client/auth/auth-required';
@@ -21,7 +21,7 @@ import {
 import { MarkdownKit } from './markdown-kit';
 
 /**
- * Plate Copilot plugin wired to `/api/ai/complete`. Reads
+ * Plate Copilot plugin wired to agent-py's `/v1/ai/complete`. Reads
  * `editorPrefs.inlineComplete` synchronously per trigger so the
  * settings toggle takes effect without re-creating the editor.
  *
@@ -77,14 +77,15 @@ function buildPrefixMarkdown(
  * ever arrive until the user signs in, so raise the (background,
  * rate-limited) "Sign in" toast. Passes the response through untouched.
  */
-async function noticeAuthRequired(res: Response): Promise<Response> {
+async function noticeAuthRequired(res: Response, tokenless: boolean): Promise<Response> {
   if (res.status === 401) {
+    let body: { code?: string } | null = null;
     try {
-      const body = (await res.clone().json()) as { code?: string };
-      if (isAuthRequiredError(body)) notifyAuthRequired({ background: true });
+      body = (await res.clone().json()) as { code?: string };
     } catch {
-      /* non-JSON 401 — nothing to say */
+      /* non-JSON 401 */
     }
+    if (tokenless || isAuthRequiredError(body)) notifyAuthRequired({ background: true });
   }
   return res;
 }
@@ -110,31 +111,23 @@ export const CopilotKit = [
             const payloadString = parsed?.prompt;
             if (payloadString) {
               const payload = JSON.parse(payloadString) as CompleteRequestInput;
-              // agent-py where it serves chat (Q105) — `/v1/ai/complete`,
-              // same body. No own-key setting any more (Q124).
-              const target = await resolveEditorAiTarget();
-              if (target) {
-                return fetch(
-                  `${target.baseUrl}/v1/ai/complete`,
-                  agentPyInit(init, target.authToken, payload)
-                )
-                  .then(noticeAuthRequired)
-                  .then(asPlateCompletion);
-              }
-              return fetch(input, {
-                ...init,
-                body: JSON.stringify(payload),
-              })
-                .then(noticeAuthRequired)
+              // agent-py's `/v1/ai/complete` (Q105), same body, with the
+              // session's bearer or tokenless. No own-key setting (Q124).
+              const target = await resolveAgentPyTarget();
+              const tokenless = target.authToken === null;
+              return fetch(
+                `${target.baseUrl}/v1/ai/complete`,
+                agentPyInit(init, target.authToken, payload)
+              )
+                .then((res) => noticeAuthRequired(res, tokenless))
                 .then(asPlateCompletion);
             }
           } catch {
-            // Fall through to the unmodified POST — the route will
-            // reject as invalid and the plugin's onError handler
-            // suppresses it. Never crash the editor on a transform
-            // failure.
+            // Fall through to the unmodified POST — agent-py rejects it
+            // as invalid and the plugin's onError handler suppresses it.
+            // Never crash the editor on a transform failure.
           }
-          return fetch(input, init).then(noticeAuthRequired);
+          return fetch(input, init);
         }) as typeof fetch,
         onError: () => {
           // Swallow — the user is typing; a transient route failure

@@ -210,7 +210,7 @@ async def _open_session(
 
     The URL is re-validated here (SSRF gate) and the SDK's HTTP client
     is the guarded one (`mcp_http_client_factory`), whichever caller —
-    proxy, `/v1/chat`, the task executor, a run — opened the session,
+    proxy, the task executor, a run — opened the session,
     both under `policy` (default `mcp_outbound_policy()`).
 
     Headers from `credentials["headers"]` are forwarded to the upstream

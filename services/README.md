@@ -1,180 +1,136 @@
-# Hummingbird backends — where they live
+# Hummingbird's backend — where it lives
 
-Hummingbird ships with **three interchangeable backends** for the chat
-turn (`/v1/chat`-shaped wire) plus the non-chat endpoints
-(`summarize`, `extract`, `url/fetch`, `images/refresh-url`, `mcp/...`;
-agent-py also serves `files/refresh-url`, `extract-table`, `share`,
-`tasks/schedules`, `embed`, `memory/extract` and `csp-report`).
-Two live here under `services/`; the third lives split across `app/api/`
-and `lib/server/` at the repo root because Next.js's App Router owns
-those paths. The frontend picks one per account via
-`lib/client/api/backend-resolver.ts`'s `DispatchOption` union (`'in-next'`
-/ `'remote'`).
+Hummingbird has **one backend**: **agent-py** (`services/agent-py/`,
+Python 3.12 · FastAPI · uv · asyncpg · the Anthropic SDK), which the app
+requires (wave 13 of `docs/PLAN-frontend-backend-split.md`, Q121). The
+browser reaches it at `NEXT_PUBLIC_AGENT_PY_URL` (`/` behind the
+same-origin proxy) for every API surface: chat (interactive runs on
+`/v1/runs`), tasks (background runs, the `task_jobs` worker, the
+schedule dispatcher, the no-worker reconciler), the editor AI, the
+signed-out calls and everything account-bound.
 
-Both `services/` backends stay live and the user picks one per account
-via the Phase 4-2 selector (`PLAN-agent-api.md`). **agent-ts is frozen**,
-though: bug and security fixes only, no new endpoints (decision Q11 of
-`docs/PLAN-frontend-backend-split.md`; see
-[`agent-ts/README.md`](agent-ts/README.md) § Frozen). It is
-self-contained: what it used from the Next app's `lib/` is vendored
-under `services/agent-ts/src/vendor/` as frozen copies.
+The Next.js app is the frontend only: no API routes, no server secrets
+(it reads `NODE_ENV`, `CSP_MODE` and `NEXT_PUBLIC_*`, Q143). It stays a
+server for the per-request CSP nonce (`proxy.ts`, Q128) and serves the
+static sandbox frame (`/sandbox/frame`); `lib/server` holds just the two
+modules behind them. A deploy without `NEXT_PUBLIC_AGENT_PY_URL` builds
+and shows a "This deploy has no backend configured" screen (Q137).
 
-| Backend | Where | Stack | DispatchOption | Notes |
-|---|---|---|---|---|
-| **Next.js (original TS)** | `app/api/**/route.ts` + `lib/server/**` | Next.js App Router · `@ai-sdk/*` · Vercel AI Gateway | `'in-next'` | Co-located with the frontend; route handlers can't move out of `app/` without giving up App Router routing. Shared by Server Components too. |
-| **agent-py** | `services/agent-py/` | Python 3.12 · FastAPI · uv · asyncpg · Anthropic SDK | `'remote'` (`NEXT_PUBLIC_AGENT_PY_URL`) | Standalone container. Owns the `task_jobs` poller + executor. |
-| **agent-ts** | `services/agent-ts/` | Bun · Hono · `@ai-sdk/*` · `postgres` (pg under RLS impersonation) | `'remote'` (`NEXT_PUBLIC_AGENT_TS_URL`) | Standalone container. **Frozen** (Q11): mirrors agent-py's surface as of the freeze; no new endpoints. Doesn't import the Next app's `lib/`. |
+What wave 13 removed: the in-Next API routes (`app/api/**`) and the
+`lib/server` code behind them, the per-account chat-backend switch
+(`ts`, `python`, `ts-service` — and the `in-next` dispatch), agent-ts
+(the frozen TypeScript service, Q129), agent-py's `/v1/chat` route (the
+AI SDK stream; chat is a run), and the Vercel Cron (`vercel.json`). A
+later TypeScript backend would be another deploy URL, not a user
+setting, and would start fresh against the contract's conformance suite
+(`packages/contract/conformance/`).
 
 ## Background tasks — who executes them
 
-Only **agent-py** executes `task_jobs` (`start` / `continue` /
-`respond`), for every user unless an admin opts the user out
+**agent-py** executes `task_jobs` (`start` / `continue` / `respond`) for
+every user unless an admin opts the user out
 (`auth.users.raw_app_meta_data->>'agent_backend'` set to anything but
 `'python'` — see `services/agent-py/README.md` § "Who executes tasks").
-agent-ts has no executor; its poll loop only claims and releases, so it
-is off unless `AGENT_TS_POLLER_ENABLED=true` (each release pushes the
-job's `scheduled_at` back and delays agent-py). The Next.js app runs no
-worker; its stale-run reconciler fails a task no worker started within
-`TASK_NO_WORKER_TIMEOUT_MINUTES` (default 10) with "No task worker
-available".
+Its no-worker reconciler (`runs/reconcile.py`) fails a task no worker
+started within `TASK_NO_WORKER_TIMEOUT_MINUTES` (default 10) with "No
+task worker available".
 
-Recurring runs (`task_schedules`) are enqueued by a dispatcher:
-agent-py's own loop (`scheduler.py`), on by default wherever its worker
-runs (`WORKER_DRY_RUN=false` with `SUPABASE_DB_URL`; `SCHEDULER_ENABLED`
-overrides, Q130), and — until wave 13 deletes it — the now-redundant
-Vercel Cron calling `/api/tasks/jobs/tick` every minute. The two can run
-side by side (a guarded `next_run_at` claim fires each occurrence once);
-see `services/agent-py/README.md` § "Scheduled tasks".
-
-## Why the third backend doesn't live under `services/`
-
-Next.js's App Router resolves URLs by the filesystem layout under
-`app/`. Moving `app/api/chat/route.ts` to `services/agent-next/...`
-would lose the route entirely. The two structural options were:
-
-1. **Thin shims under `app/api/`** that delegate to
-   `services/agent-next/` — pure indirection, no runtime win,
-   doubled the discovery cost.
-2. **A parallel Hono server alongside Next.js** — duplicates the
-   transport layer + breaks the `lib/server/*` imports that Server
-   Components rely on.
-
-Neither earned its keep, so the layout above is the deliberate
-choice. If Hummingbird ever ships a TS backend without Next.js
-(no current roadmap), the natural unwind is option 2 + a path-alias
-sweep of `@/server/*` to point at the new location.
+Recurring runs (`task_schedules`) are enqueued by agent-py's dispatcher
+(`scheduler.py`), on by default wherever its worker runs
+(`WORKER_DRY_RUN=false` with `SUPABASE_DB_URL`; `SCHEDULER_ENABLED`
+overrides, Q130); several replicas share it safely (a guarded
+`next_run_at` claim fires each occurrence once). See
+`services/agent-py/README.md` § "Scheduled tasks".
 
 ## Entry points — quick map
 
-If you're looking for the chat-route equivalent in each backend:
+| Surface | agent-py |
+|---|---|
+| Chat + tasks (`/v1/runs`) | `routers/runs.py` (+ `runs/`: wiring, driver, repositories, event logs, AG-UI encoder + stream, native harness over `chat_loop.py`) |
+| Task worker | `poller.py` → `executor.py` |
+| Schedule dispatcher | `scheduler.py` |
+| No-worker reconciler | `runs/reconcile.py` |
+| Editor AI | `routers/editor_ai.py` (+ `editor_ai/`) |
+| Models served | `routers/models.py` (`GET /v1/models`) |
+| Summarize | `routers/summarize.py` |
+| Extract | `routers/extract.py` (+ `extraction_vision.py`) |
+| URL fetch | `routers/url.py` |
+| MCP proxy + server save | `routers/mcp.py` |
+| Refresh image URL | `routers/images.py` |
+| Refresh file URL | `routers/files.py` |
+| Extract table | `routers/extract_table.py` |
+| Share create / revoke / public read | `routers/share.py` (data: `shares.py`) |
+| Task schedules (CRUD) | `routers/schedules.py` |
+| Embed file | `routers/embed.py` (+ `embeddings.py`, `chunk.py`) |
+| Memory extract | `routers/memory.py` (+ `memory_extract.py`) |
+| CSP reports | `routers/csp_report.py` (+ `csp_report.py`) |
 
-| Surface | Next.js (`'in-next'`) | agent-py | agent-ts |
-|---|---|---|---|
-| Chat | `app/api/chat/route.ts` | `services/agent-py/src/agent_py/routers/chat.py` | `services/agent-ts/src/routes/chat.ts` |
-| Summarize | `app/api/summarize/route.ts` | `routers/summarize.py` | `routes/summarize.ts` |
-| Extract | `app/api/extract/route.ts` | `routers/extract.py` | `routes/extract.ts` |
-| URL fetch | `app/api/url/fetch/route.ts` | `routers/url.py` | `routes/url-fetch.ts` |
-| MCP proxy | `app/api/mcp/[serverId]/[action]/route.ts` | `routers/mcp.py` | `routes/mcp-proxy.ts` |
-| Refresh image URL | `app/api/images/refresh-url/route.ts` | `routers/images.py` | `routes/refresh-url.ts` |
-| Refresh file URL | `app/api/files/refresh-url/route.ts` | `routers/files.py` | — (frozen; client uses the Next.js route) |
-| Extract table | `app/api/extract-table/route.ts` | `routers/extract_table.py` | — (frozen; client uses the Next.js route) |
-| Share create / revoke | `app/api/share/route.ts`, `app/api/share/[token]/route.ts` | `routers/share.py` (data: `shares.py`) | — (frozen; client uses the Next.js routes) |
-| Share public read | `lib/server/share/resolve.ts` (server-rendered in `app/share/*/[token]/page.tsx`) | `routers/share.py` — `GET /v1/share/{token}`, no auth | — |
-| Task schedules (CRUD) | `app/api/tasks/schedules/**/route.ts` | `routers/schedules.py` | — (frozen; client uses the Next.js routes) |
-| Schedule dispatcher | `app/api/tasks/jobs/tick/route.ts` (Vercel Cron) | `scheduler.py` (`SCHEDULER_ENABLED`) | — |
-| Embed file | `app/api/embed/route.ts` | `routers/embed.py` (+ `embeddings.py`, `chunk.py`) | — (frozen; client uses the Next.js route) |
-| Memory extract | `app/api/memory/extract/route.ts` | `routers/memory.py` (+ `memory_extract.py`) | — (frozen; client uses the Next.js route) |
-| CSP reports | `app/api/csp-report/route.ts` | `routers/csp_report.py` (+ `csp_report.py`) | — |
-| Runs (`/v1/runs`, Phase 2) | — (the old task routes read the same `tasks` rows, background only) | `routers/runs.py` (+ `runs/`: wiring, driver, repositories, event logs, AG-UI encoder + stream, native harness over `chat_loop.py`) | — |
+(Paths under `services/agent-py/src/agent_py/`.) The wire shapes are the
+spec-first contract's (`packages/contract/openapi.yaml`, run events in
+`packages/contract/RUN_EVENTS.md`), with the browser's Zod schemas in
+`lib/shared/api-schemas.ts`.
 
-Shared by all three: the Zod wire schemas in `lib/shared/api-schemas.ts`
-(agent-ts uses a frozen copy, `src/vendor/shared/api-schemas.ts`) and
-the streaming SSE protocol documented in `docs/API.md`.
-
-agent-ts is frozen (no new endpoints — `docs/PLAN-frontend-backend-split.md`,
-Q11), so surfaces added after the freeze exist only in agent-py. For
-those (`files/refresh-url`, `extract-table`, share create / revoke,
-`tasks/schedules`, `embed`, `memory/extract`)
-`lib/client/api-client.ts` dispatches remotely only when the account's
-backend is agent-py (`agentPyOnlyDispatch`); `ts-service` accounts stay
-on the Next.js route.
-
-The share pages are not per-account (their viewers are usually
-anonymous): when `NEXT_PUBLIC_AGENT_PY_URL` is set they read every share
-from agent-py's public `GET /v1/share/{token}` in the browser
-(`components/share/backend-share-view.tsx` → `apiClient.share.resolve`);
-unset, they resolve it server-side with the service-role key as before.
-For a cross-origin agent-py the page's origin must be in agent-py's
-`CORS_ALLOWED_ORIGINS`.
-
-CSP reports are not per-account: the browser posts them wherever the
-page's policy says. `proxy.ts` points `report-uri` /
-`Reporting-Endpoints` at agent-py's `/v1/csp-report` whenever
-`NEXT_PUBLIC_AGENT_PY_URL` is set (`/` → same-origin `/v1/csp-report`;
-an absolute URL → `<base>/v1/csp-report`; `cspReportUri` in
-`lib/server/security/csp.ts`), else at the Next.js route. A
+The share pages read every share from agent-py's public `GET
+/v1/share/{token}` in the browser (Q127). CSP reports go to agent-py's
+`/v1/csp-report`: `proxy.ts` points `report-uri` / `Reporting-Endpoints`
+there (`/` → same-origin `/v1/csp-report`; an absolute URL →
+`<base>/v1/csp-report`; `cspReportUri` in `lib/server/security/csp.ts`);
+with no agent-py URL the policy carries no `report-uri` (Q140). A
 cross-origin agent-py needs the frontend's origin in
-`CORS_ALLOWED_ORIGINS`: Reporting-API deliveries
-(`application/reports+json`) are CORS requests with a preflight.
+`CORS_ALLOWED_ORIGINS` (Reporting-API deliveries are CORS requests with
+a preflight).
 
-Ports of TypeScript logic that must behave identically — the embedding
-chunker, the memory prompt + merge, CSP report sanitising — are pinned
-by parity fixtures generated from the TS originals
-(`bun run codegen:agent-py-parity` → `services/agent-py/tests/fixtures/`;
-`scripts/__tests__/agent-py-parity.test.ts` fails when a TS original
-changes without regenerating them).
+Ports of logic first written in TypeScript — the embedding chunker, the
+memory prompt + merge, CSP report sanitising, the editor AI prompts, the
+cron math — are pinned by golden files under
+`services/agent-py/tests/fixtures/`, frozen since the TypeScript
+originals were deleted (Q141): each names the commit it was generated
+at. agent-py is now their source of truth; change the Python and its
+golden file together.
 
 ## Model allowlist
 
-One list governs every backend: `config/models.json`. The Next.js
-routes accept any id in it (`selectModel` → 400 `unknown_model`
-otherwise, unless the request brings its own gateway key).
-
-**agent-py** (wave 10) accepts every catalog id too and serves each on
-its provider (`agent_py/model_routes.py`). It speaks one wire format,
-Anthropic's Messages API, to every provider Next uses: the Vercel AI
-Gateway (`/v1/messages`), OpenRouter (`/api/v1/messages`), Ollama (≥ 0.14)
-and Minimax (already `"type": "anthropic"`). The providers come from
+One list governs the backend: `config/models.json`. agent-py (wave 10)
+accepts every catalog id and serves each on its provider
+(`agent_py/model_routes.py`). It speaks one wire format, Anthropic's
+Messages API, to every provider: the Vercel AI Gateway
+(`/v1/messages`), OpenRouter (`/api/v1/messages`), Ollama (≥ 0.14) and
+Minimax (already `"type": "anthropic"`). The providers come from
 `config/providers.json` and the variables it names; a model takes its
-catalog `routes` in order, the first whose provider is configured, as
-`lib/server/model-provider.ts` picks it, except that an `anthropic/*`
-model goes to Anthropic directly when `ANTHROPIC_API_KEY` is set (its
-`anthropicModelId`: `anthropic/claude-sonnet-4.6` → `claude-sonnet-4-6`).
-A provider whose URL is plain http, loopback or private is skipped with
-a warning unless it is `allowInsecureBaseUrl` (Ollama), as Next's
-`isSafeBaseUrl` does. A catalog id without a configured provider is still
-valid: its calls answer 503 (`unavailable` / `auth`), as a missing
-Anthropic key did. `GET /v1/models` lists the ids that do run, and the
-browser's picker offers those.
+catalog `routes` in order, the first whose provider is configured,
+except that an `anthropic/*` model goes to Anthropic directly when
+`ANTHROPIC_API_KEY` is set (its `anthropicModelId`:
+`anthropic/claude-sonnet-4.6` → `claude-sonnet-4-6`). A provider whose
+URL is plain http, loopback or private is skipped with a warning unless
+it is `allowInsecureBaseUrl` (Ollama). A catalog id without a configured
+provider is still valid: its calls answer 503 (`unavailable` / `auth`).
+`GET /v1/models` lists the ids that do run, and the browser's picker
+offers those; with none it says so plainly (Q131). Anything outside the
+catalog is `400 {"code": "unknown_model", "message"}`.
 
-**agent-ts** (frozen) still accepts only the `anthropic/*` entries and
-calls Anthropic directly. Anything else is a 400 `unknown_model` there.
-
-| | agent-py | agent-ts |
-|---|---|---|
-| Rule | `agent_py/model_allowlist.py` + `model_routes.py` (read the JSON themselves) | `src/models.ts` over `ANTHROPIC_SERVICE_MODELS` in `src/vendor/shared/models.ts` (frozen copy of `lib/shared/models.ts`; reads `config/models.json` via `@config/*`) |
-| 400 body | `{"code": "unknown_model", "message"}` | `{code: "unknown_model", message}` (Next.js envelope) |
-
-What a model can do follows the catalog's flags, as on Next:
+What a model can do follows the catalog's flags:
 
 - `supportsStructuredOutput`: a forced tool call (structured output) runs
   on the model only when set; otherwise on `AGENT_DEFAULT_MODEL` — the
   editor's tool choice and its comment / table elements, memory
   extraction. (The wave-10 probe found Minimax answers a forced
-  `tool_choice` in plain text.) `/v1/extract-table` keeps Next's rule:
+  `tool_choice` in plain text.) `/v1/extract-table` takes the
   structured path when flagged, the lenient JSON text path otherwise.
 - `supportsReasoningEffort`: thinking is sent only to these.
 - `supportsTools: false`: chat only — no tools on runs, refused as a task
   (no catalog entry sets it today).
 - `thinksUnprompted`: the model thinks before answering without being
   asked (MiniMax M2.7 / M3 / M3.1 Flash); ghost text gives it room.
-- Images go to every model as on Next (Next doesn't refuse them either).
+- Images go to every model.
 - OpenRouter `fallbacks` go as OpenRouter's `models` list.
 
 Where it's enforced:
 
-- **`/v1/chat`** — `model` is required and must be a catalog id; checked
-  before the provider check, like the Next.js route.
+- **`/v1/runs`** — `forwardedProps.model` is optional (absent →
+  `AGENT_DEFAULT_MODEL`); present, it must be a catalog id, checked
+  before the run exists and before the provider check (`400
+  unknown_model`, no row). A background run also refuses `auto` and a
+  model without tools (Q55, Q117).
 - **`/v1/summarize`** — `model` is optional; absent →
   `AGENT_DEFAULT_MODEL`, present → must be a catalog id.
 - **Follow-up suggestions** — always `AGENT_DEFAULT_MODEL`, on its own
@@ -183,9 +139,9 @@ Where it's enforced:
   before the run calls its provider. The checkpoint row is owner-writable
   under RLS, so a tampered id fails the run (`result: failed`, task
   `failed`) instead of reaching a model.
-- **`/v1/extract-table`** (agent-py only) — `model` is optional; absent
+- **`/v1/extract-table`** — `model` is optional; absent
   → `AGENT_DEFAULT_MODEL`, present → must be a catalog id.
-- **`/v1/memory/extract`** (agent-py only) — no request model; the
+- **`/v1/memory/extract`** — no request model; the
   operator's `MEMORY_EXTRACT_MODEL` is used when it is a catalog id with
   structured output that a provider serves here, otherwise (and when
   unset) `AGENT_DEFAULT_MODEL`. Always the forced-tool structured path
@@ -197,14 +153,14 @@ Where it's enforced:
 
 Config:
 
-- `AGENT_DEFAULT_MODEL` (both; default `anthropic/claude-haiku-4.5`,
+- `AGENT_DEFAULT_MODEL` (default `anthropic/claude-haiku-4.5`,
   empty → default) — validated at boot: a value outside the allowlist
   stops the service from starting.
 - `MODELS_CONFIG_PATH` (agent-py) — path to the catalog. Empty →
   searched upward from the package. agent-py's Docker image is built
   from the **repo root** (`docker build -f services/agent-py/Dockerfile .`,
   as `docker-compose.yml` does) and ships the file at
-  `/app/config/models.json`; agent-ts's image already copies `config/`.
+  `/app/config/models.json`.
   A missing or invalid catalog fails boot.
 
 `VERIFY_MODEL` (agent-py's citation verifier) is an operator setting,

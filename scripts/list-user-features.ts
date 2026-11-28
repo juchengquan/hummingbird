@@ -392,7 +392,6 @@ export async function scanSettings(): Promise<SettingEntry[]> {
   const KNOWN: { id: string; label: string; values?: string[]; hint?: RegExp }[] = [
     { id: "theme", label: "Theme", values: ["system", "dark", "light"], hint: /type Theme =/ },
     { id: "colorScheme", label: "Color scheme", values: ["default", "anthropic"], hint: /type ColorScheme =/ },
-    { id: "chatBackend", label: "Chat backend", values: ["ts", "python", "ts-service", "python-runs"], hint: /type ChatBackend =/ },
     { id: "localOnlyMode", label: "Local-only mode", hint: /localOnlyMode: boolean/ },
     { id: "localFilesOnly", label: "Local files only", hint: /localFilesOnly: boolean/ },
     { id: "editorPrefs.aiReviewChanges", label: "AI review changes (editor)", hint: /aiReviewChanges: boolean/ },
@@ -558,7 +557,7 @@ async function buildInventory(): Promise<FeatureInventory> {
     settings,
     envVars,
     shortcuts,
-    mcpServers: { sourceFile: "app/api/mcp" },
+    mcpServers: { sourceFile: "services/agent-py/src/agent_py/routers/mcp.py" },
     agentTaskKinds,
   }
 }

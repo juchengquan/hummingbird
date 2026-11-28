@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2, Sun, Moon, Monitor, Bot, Wand2, ShieldCheck, Sparkles, Brain } from "lucide-react"
+import { LogIn, LogOut, Loader2, CloudOff, Cloud, HardDrive, Trash2, Sun, Moon, Monitor, Wand2, ShieldCheck, Sparkles, Brain } from "lucide-react"
 import { toast } from "sonner"
 import {
   Popover,
@@ -15,18 +15,13 @@ import { CustomInstructionsDialog } from "@/components/chat/custom-instructions-
 import { MemoryPanel } from "@/components/chat/memory-panel"
 import { useAuth } from "@/client/hooks/use-auth"
 import { useSyncEnabled } from "@/client/hooks/use-sync-enabled"
-import { writeChatBackend } from "@/client/supabase/chat-backend"
-import { useBackendMovedNotice } from "@/client/hooks/use-backend-moved-notice"
+import { useBackendRemovedNotice } from "@/client/hooks/use-backend-removed-notice"
 import { writeMemoryEnabled } from "@/client/supabase/memory"
 import { useStore } from "@/client/hooks/use-store"
-import type { ChatBackend } from "@/client/hooks/store/slices/ui"
 import { useSidebar } from "@/components/ui/sidebar"
 import { cn } from "@/shared/utils"
 import { clearAll, estimateUsage } from "@/client/files/local-store"
 import { formatFileSize } from "@/client/file-utils"
-import { isAgentPyConfigured, isAgentTsConfigured } from "@/client/api-client"
-import { RUNS_CHAT_ENABLED } from "@/client/runs/config"
-import { defaultChatBackend } from "@/shared/chat-backend"
 
 /**
  * Sidebar footer auth + local-mode surface.
@@ -40,14 +35,10 @@ import { defaultChatBackend } from "@/shared/chat-backend"
  */
 export function AccountMenu() {
   const { status, user, signOut } = useAuth()
-  useBackendMovedNotice()
+  useBackendRemovedNotice()
   const localOnlyMode = useStore((s) => s.localOnlyMode)
   const setLocalOnlyMode = useStore((s) => s.setLocalOnlyMode)
   const localFilesOnly = useStore((s) => s.localFilesOnly)
-  const chatBackend = useStore((s) => s.chatBackend)
-  const storeSetChatBackend = useStore((s) => s.setChatBackend)
-  const agentPyAvailable = isAgentPyConfigured()
-  const agentTsAvailable = isAgentTsConfigured()
   const setLocalFilesOnly = useStore((s) => s.setLocalFilesOnly)
   const inlineComplete = useStore((s) => s.editorPrefs.inlineComplete)
   const setEditorPref = useStore((s) => s.setEditorPref)
@@ -99,16 +90,6 @@ export function AccountMenu() {
   // Toggle cross-conversation memory: update local state immediately,
   // then best-effort write-through to the user's profile row (mirrors the
   // custom-instructions write). Not awaited — local state is authoritative.
-  // The chat backend: a choice here is explicit and, signed in, follows the
-  // account (`profiles.chat_backend`, wave 11 Q111) — same write-through.
-  const setChatBackend = useCallback(
-    (next: ChatBackend) => {
-      storeSetChatBackend(next)
-      if (userId) void writeChatBackend(userId, next)
-    },
-    [storeSetChatBackend, userId]
-  )
-
   const handleToggleMemory = useCallback(
     (next: boolean) => {
       setMemoryEnabled(next)
@@ -149,29 +130,6 @@ export function AccountMenu() {
     </Button>
   )
 
-  // Signed-out / no-Supabase users may chat on runs too (anonymous
-  // runs, Q34) — the only remote choice they get, since `python` and
-  // `ts-service` need a session. Hidden until chat is wired onto runs.
-  const runsToggleSignedOut =
-    RUNS_CHAT_ENABLED && agentPyAvailable && !collapsed ? (
-      <ToggleRow
-        icon={Bot}
-        label="agent-py (runs)"
-        description={
-          chatBackend === "python-runs"
-            ? "Chat turns run on agent-py (runs), the default"
-            : "Chat turns use the Next.js route"
-        }
-        checked={chatBackend === "python-runs"}
-        onCheckedChange={(v) => setChatBackend(v ? "python-runs" : "ts")}
-        ariaLabel={
-          chatBackend === "python-runs"
-            ? "Switch back to the Next.js chat backend"
-            : "Switch to the agent-py (runs) chat backend"
-        }
-      />
-    ) : null
-
   if (status === "unconfigured") {
     // No Supabase configured at runtime — show a static badge so users know
     // their data isn't being synced anywhere.
@@ -185,7 +143,6 @@ export function AccountMenu() {
           {!collapsed && <span>Local only</span>}
         </div>
         {customInstructionsButton}
-        {runsToggleSignedOut}
         <CustomInstructionsDialog open={ciOpen} onClose={() => setCiOpen(false)} />
       </>
     )
@@ -205,7 +162,6 @@ export function AccountMenu() {
           {!collapsed && <span>Sign in</span>}
         </Button>
         {customInstructionsButton}
-        {runsToggleSignedOut}
         <AuthDialog open={dialogOpen} onOpenChange={setDialogOpen} />
         <CustomInstructionsDialog open={ciOpen} onClose={() => setCiOpen(false)} />
       </>
@@ -358,22 +314,6 @@ export function AccountMenu() {
               : "Enable cross-conversation memory"
           }
         />
-        {/* Chat backend selector. Phase 4-2 of PLAN-agent-api +
-            Phase 5 of PLAN-agent-ts — users can route their chat
-            turns at the Python agent service OR the TypeScript
-            agent service while the in-Next TS route stays live.
-            Only surfaces when at least one remote service URL is
-            configured; the segmented selector appears when both
-            are. */}
-        {(agentPyAvailable || agentTsAvailable) && (
-          <ChatBackendSelector
-            value={chatBackend}
-            onChange={setChatBackend}
-            agentPyAvailable={agentPyAvailable}
-            agentTsAvailable={agentTsAvailable}
-            runsAvailable={RUNS_CHAT_ENABLED && agentPyAvailable}
-          />
-        )}
         <div className="border-t my-1" />
         {/* Color scheme */}
         <div className="px-2 py-1">
@@ -596,127 +536,6 @@ function ToggleRow({
         aria-label={ariaLabel}
         className="shrink-0"
       />
-    </div>
-  )
-}
-
-/**
- * Chat-backend picker. Surfaces a segmented control when both remote
- * services are configured (or agent-py plus its "agent-py (runs)"
- * option, `RUNS_CHAT_ENABLED`), or a one-row Switch when only one is.
- * The in-Next TS route is always available under "Next.js"; the deploy's
- * default (runs when agent-py is configured, wave 11) is marked.
- */
-function ChatBackendSelector({
-  value,
-  onChange,
-  agentPyAvailable,
-  agentTsAvailable,
-  runsAvailable,
-}: {
-  value: ChatBackend
-  onChange: (next: ChatBackend) => void
-  agentPyAvailable: boolean
-  agentTsAvailable: boolean
-  /** "agent-py (runs)" (Q33) — `RUNS_CHAT_ENABLED` and agent-py configured. */
-  runsAvailable: boolean
-}) {
-  // When only Python is configured, keep the existing single-Switch
-  // shape so the simple deploy stays visually unchanged.
-  if (agentPyAvailable && !agentTsAvailable && !runsAvailable) {
-    return (
-      <ToggleRow
-        icon={Bot}
-        label="Python agent backend"
-        description={
-          value === "python"
-            ? "Chat turns route to the Python agent service (experimental)"
-            : "Chat turns use the Next.js route (default, full feature set)"
-        }
-        checked={value === "python"}
-        onCheckedChange={(v) => onChange(v ? "python" : "ts")}
-        ariaLabel={
-          value === "python"
-            ? "Switch back to the Next.js chat backend"
-            : "Switch to the Python agent chat backend"
-        }
-      />
-    )
-  }
-  // Same shape, just for the TS-service-only deploy.
-  if (agentTsAvailable && !agentPyAvailable) {
-    return (
-      <ToggleRow
-        icon={Bot}
-        label="TS agent service backend"
-        description={
-          value === "ts-service"
-            ? "Chat turns route to the TypeScript agent service"
-            : "Chat turns use the Next.js route (default, full feature set)"
-        }
-        checked={value === "ts-service"}
-        onCheckedChange={(v) => onChange(v ? "ts-service" : "ts")}
-        ariaLabel={
-          value === "ts-service"
-            ? "Switch back to the Next.js chat backend"
-            : "Switch to the TypeScript agent service backend"
-        }
-      />
-    )
-  }
-  // Both remote services configured (or agent-py with its runs option)
-  // → segmented picker.
-  // The deploy's default (wave 11, Q110): runs when agent-py is configured.
-  const byDefault = defaultChatBackend(agentPyAvailable)
-  const mark = (id: ChatBackend, desc: string) => (id === byDefault ? `${desc}, default` : desc)
-  const options: ReadonlyArray<{ id: ChatBackend; label: string; desc: string }> = [
-    { id: "ts", label: "Next.js", desc: mark("ts", "in-process") },
-    ...(agentTsAvailable
-      ? [{ id: "ts-service" as const, label: "TS service", desc: "agent-ts" }]
-      : []),
-    ...(agentPyAvailable
-      ? [{ id: "python" as const, label: "Python", desc: "agent-py" }]
-      : []),
-    ...(runsAvailable
-      ? [{ id: "python-runs" as const, label: "Runs", desc: mark("python-runs", "agent-py (runs)") }]
-      : []),
-  ]
-  return (
-    <div
-      className={cn(
-        "w-full flex flex-col gap-1 px-2 py-1.5 rounded-md",
-        "hover:bg-[var(--accent)] transition-colors"
-      )}
-    >
-      <div className="flex items-center gap-2">
-        <Bot size={14} className="shrink-0 text-[var(--muted-foreground)]" />
-        <p className="text-xs font-medium leading-tight">Chat backend</p>
-      </div>
-      <div
-        role="radiogroup"
-        aria-label="Choose which chat backend handles your chat turns"
-        className="flex gap-0.5 mt-1 rounded-md border border-[var(--border)] p-0.5"
-      >
-        {options.map((opt) => (
-          <button
-            key={opt.id}
-            role="radio"
-            aria-checked={value === opt.id}
-            aria-label={`Use the ${opt.label} chat backend — ${opt.desc}`}
-            type="button"
-            onClick={() => onChange(opt.id)}
-            className={cn(
-              "flex-1 text-[10px] leading-tight px-2 py-1 rounded-sm",
-              "transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]",
-              value === opt.id
-                ? "bg-[var(--background)] font-medium shadow-sm"
-                : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-            )}
-          >
-            {opt.label}
-          </button>
-        ))}
-      </div>
     </div>
   )
 }

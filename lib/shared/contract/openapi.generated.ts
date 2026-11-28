@@ -535,7 +535,7 @@ export interface paths {
          *     paused run's saved one.
          *
          *     A `forwardedProps.model` outside the backend's allow-list is `400
-         *     unknown_model`, answered before the run exists (as `/v1/chat`):
+         *     unknown_model`, answered before the run exists:
          *     no row, no stream, nothing to rejoin. So is a user message part
          *     the backend cannot give the model (`400 invalid_attachment`, the
          *     `message` naming the part and the limit — see `StartRunRequest`):
@@ -2646,7 +2646,7 @@ export interface components {
          * @enum {string}
          */
         ShareKind: "conversation" | "document";
-        /** @description A skill enabled for a run, with optional per-skill settings (`ChatRequestSchema.shape.skills` in `lib/shared/api-schemas.ts`). */
+        /** @description A skill enabled for a run, with optional per-skill settings. */
         SkillConfig: {
             fileSearchConfig?: components["schemas"]["MaxCallsSkillConfig"];
             id: string;

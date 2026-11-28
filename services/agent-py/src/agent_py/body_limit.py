@@ -63,14 +63,14 @@ _FIXED_PATH_LIMITS = {
 }
 
 # Routes whose JSON body legitimately carries a whole conversation.
-_CONVERSATION_PATHS = frozenset({"/v1/chat", "/v1/summarize", "/v1/runs"})
+_CONVERSATION_PATHS = frozenset({"/v1/summarize", "/v1/runs"})
 
 
 def body_limit_for(settings: Settings) -> Callable[[str], int]:
     """Per-path limits:
     - `/v1/extract` — the upload cap (`EXTRACT_MAX_BYTES`) plus
       multipart overhead; the route still enforces the file cap itself;
-    - `/v1/chat`, `/v1/summarize`, `/v1/runs` — `CHAT_BODY_MAX_BYTES`;
+    - `/v1/summarize`, `/v1/runs` — `CHAT_BODY_MAX_BYTES`;
     - `/v1/extract-table` — 2 MiB, as on the Next.js route;
     - `/v1/share` — 16 KiB, as on the Next.js route;
     - `/v1/tasks/schedules[/{id}]` — 256 KiB, as on the Next.js routes;

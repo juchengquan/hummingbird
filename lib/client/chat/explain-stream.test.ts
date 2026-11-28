@@ -1,9 +1,8 @@
 /**
- * Explain-selection on runs (wave 12, Q125/Q135/Q136): on agent-py's
- * backends the popover is an ephemeral interactive run on a fresh thread —
- * history + the explain prompt, the chat model, the workspace prompt, no
- * skills — never `/api/chat`; on `ts` / `ts-service` it keeps the Next
- * route (until wave 13), mock on a missing key included.
+ * Explain-selection on runs (wave 12, Q125/Q135/Q136): the popover is an
+ * ephemeral interactive run on a fresh thread — history + the explain
+ * prompt, the chat model, the workspace prompt, no skills. No mock, no
+ * other path (wave 13).
  */
 
 import { describe, expect, test } from "bun:test"
@@ -15,7 +14,6 @@ import { explainSelectionPrompt } from "@/shared/selection-prompts"
 import type { Message } from "@/shared/types"
 
 import {
-  explainOnRuns,
   streamExplanation,
   type ExplainDeps,
   type ExplainRequest,
@@ -34,7 +32,6 @@ const REQ: ExplainRequest = {
   contextMessages: [msg("conv-u1", "user", "Tell me about cells"), msg("conv-a1", "assistant", "Cells have…")],
   model: "anthropic/claude-haiku-4.5",
   workspaceSystemPrompt: "Be brief.",
-  skills: [{ id: "webSearch" }],
 }
 
 const TARGET: RunsTarget = { baseUrl: "", authToken: "jwt" }
@@ -55,13 +52,6 @@ function recorder(): Recorder {
     reset() {
       r.text = ""
       r.log.push("reset")
-    },
-    sources(results) {
-      r.log.push(`sources:${results.length}`)
-    },
-    mock(text) {
-      r.text = text
-      r.log.push("mock")
     },
     error(message) {
       r.log.push(`error:${message}`)
@@ -113,47 +103,19 @@ function fakeSessions(script: { frames?: string[]; outcome: Outcome; hold?: bool
   }
 }
 
-function deps(over: Partial<ExplainDeps> & Pick<ExplainDeps, "resolveRunsTarget">): ExplainDeps & {
-  chatCalls: unknown[]
-} {
-  const chatCalls: unknown[] = []
+function deps(over: Partial<ExplainDeps> & Pick<ExplainDeps, "resolveRunsTarget">): ExplainDeps {
   return {
     loadSession: async () => {
       throw new Error("no session expected")
     },
-    chatStream: async (body) => {
-      chatCalls.push(body)
-      return { ok: false, status: 500, body: null, error: { message: "should not be called" } }
-    },
     noModelProvider: () => false,
     ...over,
-    chatCalls,
   }
 }
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0))
 }
-
-function sseBody(frames: object[]): ReadableStream<Uint8Array> {
-  const enc = new TextEncoder()
-  return new ReadableStream({
-    start(c) {
-      for (const f of frames) c.enqueue(enc.encode(`data: ${JSON.stringify(f)}\n\n`))
-      c.close()
-    },
-  })
-}
-
-describe("explainOnRuns", () => {
-  test("agent-py's backends run it on runs; ts / ts-service keep the Next route; unconfigured → Next", () => {
-    expect(explainOnRuns("python-runs", true)).toBe(true)
-    expect(explainOnRuns("python", true)).toBe(true)
-    expect(explainOnRuns("ts", true)).toBe(false)
-    expect(explainOnRuns("ts-service", true)).toBe(false)
-    expect(explainOnRuns("python-runs", false)).toBe(false)
-  })
-})
 
 describe("streamExplanation on runs", () => {
   test("an ephemeral run on a fresh thread: history + the prompt, model, workspace prompt, no skills; never /api/chat", async () => {
@@ -162,8 +124,6 @@ describe("streamExplanation on runs", () => {
     const r = recorder()
     streamExplanation(REQ, r, d)
     await settle()
-
-    expect(d.chatCalls).toEqual([])
     expect(s.started).toHaveLength(1)
     const { body, opts } = s.started[0]!
     expect(opts.target).toBe(TARGET)
@@ -278,72 +238,7 @@ describe("streamExplanation on runs", () => {
     streamExplanation(REQ, r, d)
     await settle()
     expect(s.started).toEqual([])
-    expect(d.chatCalls).toEqual([])
     expect(r.log[0]).toMatch(/^error:No model provider is configured on this deploy/)
     expect(r.log.at(-1)).toBe("done")
-  })
-})
-
-describe("streamExplanation on the Next route (ts, until wave 13)", () => {
-  test("the chat route with today's body (skills included), its frames streamed", async () => {
-    const calls: unknown[] = []
-    const r = recorder()
-    streamExplanation(REQ, r, {
-      resolveRunsTarget: async () => null,
-      loadSession: async () => {
-        throw new Error("no runs on ts")
-      },
-      noModelProvider: () => true, // agent-py's list is not this route's concern
-      chatStream: async (body) => {
-        calls.push(body)
-        return {
-          ok: true,
-          status: 200,
-          body: sseBody([
-            { type: "text", value: "Hi " },
-            { type: "tool_result", results: [{ title: "t", url: "https://x", snippet: "s" }] },
-            { type: "text", value: "there" },
-            { type: "done" },
-          ]),
-        }
-      },
-    })
-    await settle()
-    expect(calls).toEqual([
-      {
-        messages: [
-          { role: "user", content: "Tell me about cells" },
-          { role: "assistant", content: "Cells have…" },
-          { role: "user", content: explainSelectionPrompt("the mitochondria") },
-        ],
-        model: REQ.model,
-        workspaceSystemPrompt: "Be brief.",
-        skills: [{ id: "webSearch" }],
-      },
-    ])
-    expect(r.text).toBe("Hi there")
-    expect(r.log).toContain("sources:1")
-    expect(r.log.at(-1)).toBe("done")
-  })
-
-  test("a missing key (401 auth) is the labelled mock; auth_required the sign-in message", async () => {
-    const r1 = recorder()
-    streamExplanation(REQ, r1, {
-      resolveRunsTarget: async () => null,
-      loadSession: async () => ({}) as never,
-      noModelProvider: () => false,
-      chatStream: async () => ({ ok: false, status: 401, body: null, error: { code: "auth" } }),
-    })
-    const r2 = recorder()
-    streamExplanation(REQ, r2, {
-      resolveRunsTarget: async () => null,
-      loadSession: async () => ({}) as never,
-      noModelProvider: () => false,
-      chatStream: async () => ({ ok: false, status: 401, body: null, error: { code: "auth_required" } }),
-    })
-    await settle()
-    expect(r1.log).toEqual(["mock", "done"])
-    expect(r1.text).toContain("Mock explanation")
-    expect(r2.log).toEqual([`error:${AUTH_REQUIRED_MESSAGE}`, "authRequired", "done"])
   })
 })

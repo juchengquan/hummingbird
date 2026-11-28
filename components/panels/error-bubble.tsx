@@ -90,7 +90,7 @@ export function ErrorBubble({
   onChangeModel,
   onTryFallback,
   onDelete,
-  modelBackend = "any",
+  modelBackend = "agent-runs",
 }: ErrorBubbleProps) {
   const [showDetails, setShowDetails] = useState(false)
   // Rate-limit cooldown: retrying immediately just hits the same wall.

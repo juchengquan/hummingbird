@@ -45,3 +45,36 @@ describe("proxy()", () => {
     expect(res.headers.get("content-security-policy")).toContain("frame-src 'self'")
   })
 })
+
+describe("proxy() report endpoints", () => {
+  const prev = { mode: process.env.CSP_MODE, agentPy: process.env.NEXT_PUBLIC_AGENT_PY_URL }
+  afterEach(() => {
+    for (const [key, value] of [
+      ["CSP_MODE", prev.mode],
+      ["NEXT_PUBLIC_AGENT_PY_URL", prev.agentPy],
+    ] as const) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  })
+
+  test("no agent-py → no Reporting-Endpoints and no report-uri (Q140)", () => {
+    process.env.CSP_MODE = "enforce"
+    delete process.env.NEXT_PUBLIC_AGENT_PY_URL
+    const res = proxy(new NextRequest("http://localhost/editor"))
+    expect(res.headers.get("reporting-endpoints")).toBeNull()
+    expect(res.headers.get("content-security-policy")).not.toContain("report-uri")
+  })
+
+  test("agent-py configured → reports go to its /v1/csp-report", () => {
+    process.env.CSP_MODE = "enforce"
+    process.env.NEXT_PUBLIC_AGENT_PY_URL = "https://api.example.com"
+    const res = proxy(new NextRequest("http://localhost/editor"))
+    expect(res.headers.get("reporting-endpoints")).toBe(
+      'csp-endpoint="https://api.example.com/v1/csp-report"',
+    )
+    expect(res.headers.get("content-security-policy")).toContain(
+      "report-uri https://api.example.com/v1/csp-report",
+    )
+  })
+})

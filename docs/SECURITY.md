@@ -7,7 +7,7 @@ Operational notes for the browser-facing security headers. Code:
 | Policy builder (pure, unit-tested) | `lib/server/security/csp.ts` |
 | Per-request nonce + CSP header | `proxy.ts` (Next 16's name for `middleware.ts`) |
 | Nonce on the inline theme script | `app/layout.tsx` (`x-nonce` request header) |
-| Report intake | `app/api/csp-report/route.ts` → `lib/server/security/csp-report.ts`; with `NEXT_PUBLIC_AGENT_PY_URL` set, agent-py's `/v1/csp-report` (`services/agent-py/src/agent_py/routers/csp_report.py`, a port of the same module) |
+| Report intake | agent-py's `/v1/csp-report` (`services/agent-py/src/agent_py/routers/csp_report.py` + `csp_report.py`) — the only one since wave 13 deleted Next's `/api/csp-report` (Q140) |
 | Artifact / MCP-app frame shell + its own CSP | `app/sandbox/frame/route.ts` → `lib/server/security/sandbox-frame.ts` |
 | Frame handshake (protocol, iframe) | `lib/shared/sandbox-frame.ts`, `components/live-artifact/sandboxed-frame.tsx` |
 | Static headers | `next.config.ts` → `headers()` |
@@ -40,20 +40,22 @@ connect-src 'self' https://<project>.supabase.co wss://<project>.supabase.co htt
 worker-src 'self' blob:;
 frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com https://player.vimeo.com https://www.dailymotion.com https://coub.com https://player.youku.com;
 object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';
-report-uri /api/csp-report; report-to csp-endpoint
+report-uri /v1/csp-report; report-to csp-endpoint
 ```
+
+(with `NEXT_PUBLIC_AGENT_PY_URL=/`, the same-origin proxy setup).
 
 Dev (`NODE_ENV=development`) adds `'unsafe-eval'` to `script-src`, which
 React's dev tooling needs.
 
-When `NEXT_PUBLIC_AGENT_PY_URL` is set, `report-uri` and the
-`Reporting-Endpoints` header point at the backend instead
+`report-uri` and the `Reporting-Endpoints` header point at agent-py
 (`cspReportUri` in `csp.ts`): `/` → `/v1/csp-report` on the app's own
 origin, `https://api.example.com` → `https://api.example.com/v1/csp-report`.
-A value that isn't a plain http(s) URL or path keeps `/api/csp-report`.
-agent-py logs the same fields as `"event": "csp_violation"` structlog
-lines; a cross-origin agent-py needs the app's origin in
-`CORS_ALLOWED_ORIGINS` for Reporting-API deliveries.
+With no `NEXT_PUBLIC_AGENT_PY_URL` (or a value that isn't a plain
+http(s) URL or path) the policy carries no `report-uri` / `report-to` at
+all (Q140) — violations then show only in the browser console. A
+cross-origin agent-py needs the app's origin in `CORS_ALLOWED_ORIGINS`
+for Reporting-API deliveries.
 
 Why each non-obvious source is there:
 
@@ -76,11 +78,10 @@ Why each non-obvious source is there:
   editor media nodes. Pinning that list would break real content.
 - **`connect-src`.** Same origin, plus Supabase (https for REST/Storage,
   wss for Realtime `task_events`), plus the `NEXT_PUBLIC_API_BASE_URL` /
-  `NEXT_PUBLIC_AGENT_PY_URL` / `NEXT_PUBLIC_AGENT_TS_URL` origins when
-  set, plus react-tweet's API. `data:` / `blob:` cover the editor's
+  `NEXT_PUBLIC_AGENT_PY_URL` origins when set, plus react-tweet's API. `data:` / `blob:` cover the editor's
   export (`fetch(canvas.toDataURL())`) and viewers that re-read object
-  URLs they created. MCP servers are reached through `/api/mcp/*`, never
-  directly from the browser.
+  URLs they created. MCP servers are reached through agent-py's
+  `/v1/mcp/*`, never directly from the browser.
 - **`worker-src 'self' blob:`.** The pdfjs worker is a same-origin module
   script under `/_next/static/media/`.
 - **`frame-src`.** `'self'` for the sandbox frame shell (`/sandbox/frame`,
@@ -200,43 +201,47 @@ filters.
 
 ## Per-IP rate limits need a reverse proxy
 
-Anonymous callers are rate-limited per client IP (`rateLimitKey` in
-`lib/server/rate-limit.ts`: `/api/extract`, `/api/url/fetch`,
-`/api/ai/complete`, the MCP proxy without Supabase, chat web tools,
-CSP reports). Route handlers never see the socket peer, so the IP comes
-from `X-Forwarded-For`, read `TRUSTED_PROXY_HOPS` entries from the right.
+Per-IP limits are agent-py's concern since wave 13 (Next has no API
+routes and no limiter left). agent-py rate-limits anonymous callers per
+client IP (`rate_limit_key` in `services/agent-py/src/agent_py/rate_limit.py`:
+anonymous runs, `/v1/extract`, `/v1/url/fetch`, `/v1/embed`, the editor
+AI, the MCP proxy on a deploy without accounts, the web tools and
+`generateImage` on runs, CSP reports, the public share read). The IP is
+the `X-Forwarded-For` entry `TRUSTED_PROXY_HOPS` (default `1`) places
+from the right — entries further left are client-supplied — or, when
+set, the single-value header `CLIENT_IP_HEADER` names (e.g.
+`cf-connecting-ip`, only if your edge overwrites it). `0` ignores the
+header and keys on the socket peer.
 
-That only works with a reverse proxy (Caddy, Nginx, a platform edge)
-that appends the real peer to `X-Forwarded-For`. `next start` itself
-sets the header only when the request has none, so with Next.js exposed
-directly a client that sends `X-Forwarded-For: <anything>` chooses its
-own key and gets a fresh bucket per value. `TRUSTED_PROXY_HOPS=0` closes
-that, but then every anonymous caller shares one bucket.
-
-At boot (`instrumentation.ts` → `warnOnProxyConfig`) a production server
-outside a known platform (Vercel, Render, Fly, Railway, Cloud Run,
-Netlify) logs a warning when `TRUSTED_PROXY_HOPS` is unset or `0`.
-Setting it explicitly to the number of proxies confirms the setup and
-silences the warning. Signed-in limits (MCP proxy, `/api/embed`) key on
-the user id and don't depend on any of this.
+That only works with a reverse proxy in front of agent-py (Caddy, Nginx,
+a platform edge) that appends the real peer to `X-Forwarded-For`: with
+agent-py exposed directly, a client that sends `X-Forwarded-For:
+<anything>` chooses its own key. The same-origin setup
+(`docker compose up proxy agent-py`) has exactly one Caddy hop: the
+compose file pins `TRUSTED_PROXY_HOPS=1` and clears `CLIENT_IP_HEADER`.
+Set the hop count to the number of proxies that append to the header
+(e.g. `2` for a CDN in front of Caddy). Signed-in limits key on the user
+id and don't depend on any of this. See `services/agent-py/README.md`
+§ Behind the same-origin proxy.
 
 ## Reading reports
 
-Each violation is logged as one line through `console.warn`:
+agent-py logs each violation as one `csp_violation` structlog line
+(warning level) with these fields:
 
 ```json
-{"evt":"csp_violation","via":"report-uri","directive":"script-src-elem","blocked":"https://cdn.example.com/x.js","document":"https://app/dashboard","source":"https://app/_next/static/chunks/abc.js","line":1,"column":2345,"disposition":"report"}
+{"event":"csp_violation","via":"report-uri","directive":"script-src-elem","blocked":"https://cdn.example.com/x.js","document":"https://app/dashboard","source":"https://app/_next/static/chunks/abc.js","line":1,"column":2345,"disposition":"report"}
 ```
 
-To get them, grep the server logs for `"evt":"csp_violation"` and group
+To get them, grep agent-py's logs for `csp_violation` and group
 by `directive` + `blocked`. Logged URLs are cut to origin + path, and
 share tokens are redacted. The script sample and the original policy
 are never logged. The endpoint accepts `application/csp-report`
 (`report-uri`), `application/reports+json` (Reporting API) and
 `application/json`. It caps bodies at 16 KiB, allows 60 posts per
-minute per client IP, and always answers with an empty body. (agent-py's
-`/v1/csp-report` answers errors with the standard `{code, message}` body;
-browsers ignore report responses either way.)
+minute per client IP, and answers an empty `204`; errors carry the
+standard `{code, message}` body (browsers ignore report responses either
+way).
 
 The `via` field shows which delivery path the browser used. Chrome
 switches to `report-to` / `Reporting-Endpoints` whenever it is present

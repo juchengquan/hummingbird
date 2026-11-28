@@ -2031,7 +2031,7 @@ class SharedMessage(BaseModel):
 
 class SkillConfig(BaseModel):
     """
-    A skill enabled for a run, with optional per-skill settings (`ChatRequestSchema.shape.skills` in `lib/shared/api-schemas.ts`).
+    A skill enabled for a run, with optional per-skill settings.
     """
 
     id: Annotated[str, Field(max_length=40)]

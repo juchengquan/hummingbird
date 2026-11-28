@@ -1,5 +1,5 @@
 # Applies to every image built with the REPO ROOT as context
-# (services/agent-py/Dockerfile, services/agent-ts/Dockerfile,
+# (services/agent-py/Dockerfile,
 # docker/runcode-python.Dockerfile).
 
 # Secrets — never send env files or local credentials to the daemon.

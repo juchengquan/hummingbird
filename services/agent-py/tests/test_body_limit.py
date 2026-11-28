@@ -115,7 +115,7 @@ def test_per_path_limits() -> None:
     limit_for = body_limit_for(settings)
     assert limit_for("/v1/extract") == 5_000_000 + 64 * 1024
     assert limit_for("/v1/extract/") == 5_000_000 + 64 * 1024
-    assert limit_for("/v1/chat") == 2_000_000
+    assert limit_for("/v1/runs") == 2_000_000
     assert limit_for("/v1/summarize") == 2_000_000
     assert limit_for("/v1/extract-table") == 2 * 1024 * 1024
     assert limit_for("/v1/files/refresh-url") == 1_000

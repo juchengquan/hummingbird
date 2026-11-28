@@ -523,11 +523,8 @@ def test_interactive_start_streams_valid_agui(serve: Callable[..., Env]) -> None
         }
         closing = frames[-1][1]
         assert closing["type"] == "RUN_FINISHED" and closing["outcome"] == {"type": "success"}
-        # The run's text is every step's text, concatenated — exactly the
-        # final assistant message a /v1/chat user sees: the client appends
-        # every text delta of the turn to one message's content, with no
-        # separator between steps (`appendToMessage` in
-        # lib/client/hooks/use-chat-send.ts, `text-start` ignored).
+        # The run's text is every step's text, concatenated, with no
+        # separator between steps — one assistant message's content.
         assert closing["result"]["text"] == "Let me check.It is done."
         assert closing["result"].get("memoryTainted") is True  # `lookup` is untrusted
         assert closing["usage"]

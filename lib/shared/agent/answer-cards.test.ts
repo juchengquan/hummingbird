@@ -1,10 +1,7 @@
-/** The answer cards' model: the task strip's question, and the respond
- *  bodies it sends — pinned to what the strip sent before the cards were
- *  shared with chat. */
+/** The answer cards' model: the card form helpers and the answer
+ *  descriptions. */
 
 import { describe, expect, test } from "bun:test"
-
-import { respondBodyForUiAnswer } from "@/shared/generative-ui/schemas"
 
 import {
   canSubmitSelection,
@@ -12,52 +9,8 @@ import {
   describeCardAnswer,
   formatToolArgs,
   isAnswerReason,
-  questionFromPendingInput,
-  respondBodyForCardAnswer,
   toggleSelection,
 } from "./answer-cards"
-
-describe("questionFromPendingInput", () => {
-  test("kind defaults to approval; fields carried over", () => {
-    expect(
-      questionFromPendingInput({ requestId: "r1", tool: "send", args: { to: "bob" } } as never),
-    ).toMatchObject({ id: "r1", reason: "approval", tool: "send", args: { to: "bob" } })
-    expect(
-      questionFromPendingInput({
-        requestId: "r2",
-        kind: "choice",
-        prompt: "Which?",
-        options: [{ id: "a", label: "A" }],
-        multi: true,
-      }),
-    ).toMatchObject({ id: "r2", reason: "choice", prompt: "Which?", multi: true })
-  })
-})
-
-describe("respondBodyForCardAnswer (the task strip's respond body)", () => {
-  test("approval / choice / input: { requestId, ...answer }, as before", () => {
-    expect(respondBodyForCardAnswer("r", { approved: true })).toEqual({ requestId: "r", approved: true })
-    expect(respondBodyForCardAnswer("r", { approved: false })).toEqual({ requestId: "r", approved: false })
-    expect(respondBodyForCardAnswer("r", { selection: ["a", "b"] })).toEqual({
-      requestId: "r",
-      selection: ["a", "b"],
-    })
-    expect(respondBodyForCardAnswer("r", { value: " hi " })).toEqual({ requestId: "r", value: " hi " })
-  })
-
-  test("ui-part: respondBodyForUiAnswer, unchanged", () => {
-    const part = { kind: "confirm" as const, props: { prompt: "Sure?" } }
-    const uiAnswer = { kind: "confirm" as const, confirmed: true }
-    expect(respondBodyForCardAnswer("r", { uiAnswer, part })).toEqual(
-      respondBodyForUiAnswer("r", part, uiAnswer),
-    )
-    expect(respondBodyForCardAnswer("r", { uiAnswer, part })).toEqual({
-      requestId: "r",
-      uiAnswer,
-      value: "Yes",
-    })
-  })
-})
 
 describe("card form helpers", () => {
   test("toggleSelection: single replaces, multi toggles", () => {

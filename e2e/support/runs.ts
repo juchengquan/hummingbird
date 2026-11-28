@@ -1,25 +1,6 @@
 import type { Locator, Page, Request } from "@playwright/test"
 
-import { STORE_VERSION } from "../../lib/client/hooks/store/migrate"
-import { RUNS_CHAT_ENABLED } from "../../lib/client/runs/config"
-
 import { AGENT_PY_ORIGIN } from "./env"
-
-/** `STORE_STORAGE_KEY` (lib/client/hooks/use-store.ts — not imported: it pulls the whole store). */
-const STORE_STORAGE_KEY = "hummingbird-storage"
-
-/**
- * Whether the specs that need chat to send on `/v1/runs` (wave 4b-A) and
- * the answer cards (4b-B) run. Follows the app's own switch: 4b-A flips
- * `RUNS_CHAT_ENABLED` to `true` in the change that wires chat onto runs,
- * and these specs turn on with it. `E2E_RUNS_WIRED=1` / `=0` overrides.
- */
-export const RUNS_WIRED =
-  process.env.E2E_RUNS_WIRED === "1" ||
-  (process.env.E2E_RUNS_WIRED !== "0" && RUNS_CHAT_ENABLED)
-
-export const RUNS_WIRED_REASON =
-  "chat isn't on /v1/runs yet (RUNS_CHAT_ENABLED is false): needs wave 4b-A/B — set E2E_RUNS_WIRED=1 to force"
 
 /** The stub harness's steering knobs (`agent_py.runs.stub_harness`). */
 export interface StubSteering {
@@ -29,32 +10,6 @@ export interface StubSteering {
   /** A resume fails before applying its answers (they stay answerable);
    *  without it a resume steered to `fail` fails after applying them (Q63). */
   failBeforeApplying?: boolean
-}
-
-/**
- * Select "agent-py (runs)" before the app loads: merge
- * `chatBackend: "python-runs"` into the persisted store, keeping whatever
- * is there (this runs again on every reload, so it must not reset the
- * conversation a reload spec is about to rejoin).
- */
-export async function selectRunsBackend(page: Page): Promise<void> {
-  await page.addInitScript(
-    ({ key, version }) => {
-      let value: { state?: Record<string, unknown>; version?: number } = {}
-      try {
-        value = JSON.parse(window.localStorage.getItem(key) ?? "{}") ?? {}
-      } catch {
-        value = {}
-      }
-      const state = value.state ?? {}
-      if (state.chatBackend === "python-runs") return
-      window.localStorage.setItem(
-        key,
-        JSON.stringify({ ...value, state: { ...state, chatBackend: "python-runs" }, version: value.version ?? version }),
-      )
-    },
-    { key: STORE_STORAGE_KEY, version: STORE_VERSION },
-  )
 }
 
 export interface StartRunBody {
@@ -152,12 +107,11 @@ export async function sendMessage(page: Page, text: string): Promise<void> {
 }
 
 /**
- * Load the app with "agent-py (runs)" selected, start a new chat (a fresh
+ * Load the app, start a new chat (a fresh
  * conversation → a fresh run thread, so specs never share one) and wait
  * for the composer.
  */
 export async function openChat(page: Page): Promise<void> {
-  await selectRunsBackend(page)
   await page.goto("/")
   await page.getByRole("button", { name: "New chat" }).click()
   await composer(page).waitFor()

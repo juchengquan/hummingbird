@@ -3,28 +3,22 @@ import "client-only"
 
 /**
  * Q40 of docs/PLAN-frontend-backend-split.md: the chat model picker only
- * offers the models the backend that will actually serve the turn
- * accepts, and a selected model it doesn't accept is switched to its
- * default with a visible note — instead of every message failing with
- * 400 `unknown_model` (the agent services take only the `anthropic/*`
- * allowlist; see `@/shared/backend-models`).
+ * offers the models agent-py serves, and a selected model it doesn't
+ * accept is switched to its default with a visible note — instead of every
+ * message failing with 400 `unknown_model` (see `@/shared/backend-models`).
  *
- * Task mode passes `TASK_MODEL_BACKEND` (Q55): the task worker takes the
- * same models, whatever serves chat.
+ * Task mode passes `TASK_MODEL_BACKEND` (Q55): the task worker's models.
  */
 
 import { useEffect, useRef, useSyncExternalStore } from "react"
 import { toast } from "sonner"
 
-import { isAgentPyConfigured, isAgentTsConfigured } from "@/client/api-client"
-import { useAuth } from "@/client/hooks/use-auth"
 import { useStore } from "@/client/hooks/use-store"
 import {
+  CHAT_MODEL_BACKEND,
   modelSwitchFor,
-  resolveModelBackend,
   sendRefusedNoProvider,
   TASK_MODEL_BACKEND,
-  usesAgentPyList,
   type ModelBackend,
 } from "@/shared/backend-models"
 import { getChatModel, isAutoModel } from "@/shared/models"
@@ -33,23 +27,18 @@ import { noModelProvider, servedModelsSettled, subscribeServedModels } from "@/s
 import { useServedModels } from "./use-served-models"
 
 export function useModelBackend(): ModelBackend {
-  const chatBackend = useStore((s) => s.chatBackend)
-  const { status } = useAuth()
   // Loads agent-py's `/v1/models` and re-renders the picker when it arrives.
   useServedModels()
-  return resolveModelBackend(chatBackend, status === "signed-in", {
-    agentPy: isAgentPyConfigured(),
-    agentTs: isAgentTsConfigured(),
-  })
+  return CHAT_MODEL_BACKEND
 }
 
-/** Q131: agent-py serves `backend` and has no model provider at all (its
- *  list settled empty): the picker and the chat say so, and sends are
- *  refused (`sendRefusedNoProvider`). Re-renders when the list arrives. */
-export function useNoModelProvider(backend: ModelBackend): boolean {
+/** Q131: agent-py has no model provider at all (its list settled empty):
+ *  the picker and the chat say so, and sends are refused
+ *  (`sendRefusedNoProvider`). Re-renders when the list arrives. */
+export function useNoModelProvider(): boolean {
   useServedModels()
   useSyncExternalStore(subscribeServedModels, noModelProvider, () => false)
-  return sendRefusedNoProvider(backend.kind, isAgentPyConfigured())
+  return sendRefusedNoProvider()
 }
 
 function labelFor(id: string): string {
@@ -60,7 +49,7 @@ function labelFor(id: string): string {
 /** The note that says `from` was switched to `to` for `backend`. */
 export function modelSwitchNote(backend: ModelBackend, from: string, to: string): string {
   const where =
-    backend.name === TASK_MODEL_BACKEND.name ? "in tasks" : `on ${backend.name ?? "this backend"}`
+    backend.name === TASK_MODEL_BACKEND.name ? "in tasks" : `on ${backend.name}`
   return `${labelFor(from)} isn't available ${where}. Switched to ${labelFor(to)}.`
 }
 
@@ -95,7 +84,7 @@ export function useModelBackendGuard(backend: ModelBackend, hydrated: boolean): 
   // answers, a model the built-in list lacks may be served — keep it.
   const served = useServedModels()
   const settled = useSyncExternalStore(subscribeServedModels, servedModelsSettled, () => false)
-  const waitsForList = usesAgentPyList(kind) && isAgentPyConfigured() && !settled
+  const waitsForList = !settled
   useEffect(() => {
     if (!hydrated || waitsForFocus || waitsForList) return
     const next = modelSwitchFor({ kind, name }, chatModel)

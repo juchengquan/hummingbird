@@ -1,9 +1,9 @@
 # `lib/client/runs/` — chat on agent-py's runs API
 
 Phase 3 of [`docs/PLAN-frontend-backend-split.md`](../../../docs/PLAN-frontend-backend-split.md)
-(Q32–Q39): chat turns as AG-UI runs on agent-py's `/v1/runs`, behind the
-**"agent-py (runs)"** backend option (`chatBackend: "python-runs"`, store
-v35). Wave 4a built this folder; wave 4b wires it in. Wire rules:
+(Q32–Q39): chat turns as AG-UI runs on agent-py's `/v1/runs` — the only
+chat path since wave 13 (Q121; the backend setting is gone, store v37).
+Wave 4a built this folder; wave 4b wired it in. Wire rules:
 [`packages/contract/RUN_EVENTS.md`](../../../packages/contract/RUN_EVENTS.md)
 and the `runs` operations of `packages/contract/openapi.yaml`.
 
@@ -363,11 +363,7 @@ run (a rejoin after a reload) restores the paused run's output first
   agent-py` with `NEXT_PUBLIC_AGENT_PY_URL=/`, or agent-py on :8000 with
   `CORS_ALLOWED_ORIGINS=http://localhost:3000`). Signed out is enough
   (anonymous runs); no `SUPABASE_*` needed for that.
-- Enable the option: after 4b-A, `RUNS_CHAT_ENABLED` is `true` and the
-  toggle shows ("agent-py (runs)" for signed-out users). Or seed it before
-  load: `localStorage["hummingbird-storage"] = JSON.stringify({ state: {
-  …, chatBackend: "python-runs" }, version: 35 })` (merge into an
-  existing value).
+- Nothing to enable: every chat turn is a run (wave 13).
 - Steer the stub per run by rewriting the request with `page.route("**/v1/runs",
   …)`: add `forwardedProps.conformance = { outcome: "succeed" | "fail" |
   "interrupt", interrupt?: "approval" | "ui-part", steps: 1..20,

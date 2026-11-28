@@ -1,10 +1,10 @@
-"""Q65: a few real Anthropic calls through the real worker and agent-py chat; with
+"""Q65: a few real Anthropic calls through the real worker and agent-py's runs (tasks start,
+answer and resume on `/v1/runs` since wave 13, Q147); with
 LIVE_MINIMAX_KEY / LIVE_MINIMAX_URL, MiniMax M3.1 Flash too (wave 10, Q112); and
 the Explain popover's ephemeral runs, signed in and out (wave 12, Q135/Q136/Q139).
 No output of a key."""
 
 import asyncio
-import base64
 import json
 import os
 import sys
@@ -13,7 +13,7 @@ import uuid
 import asyncpg
 import httpx
 
-NEXT, PYAPI, SUPA = "http://127.0.0.1:3171", "http://127.0.0.1:8171", "http://127.0.0.1:54871"
+PYAPI, SUPA = "http://127.0.0.1:8171", "http://127.0.0.1:54871"
 FAKE = "http://127.0.0.1:8172"
 HAIKU = "anthropic/claude-haiku-4.5"
 MINIMAX = "minimax/minimax-m3.1-flash"
@@ -30,11 +30,7 @@ async def main():
         )
     ).json()
     uid, token = s["user"]["id"], s["access_token"]
-    raw = "base64-" + base64.urlsafe_b64encode(json.dumps(s).encode()).decode().rstrip("=")
-    web, api = (
-        {"cookie": f"sb-127-auth-token={raw}", "origin": NEXT},
-        {"authorization": f"Bearer {token}"},
-    )
+    api = {"authorization": f"Bearer {token}"}
     ws, conv = uuid.uuid4(), uuid.uuid4()
     await db.execute(
         "insert into public.workspaces(id,user_id,name) values($1,$2,'smoke')", ws, uuid.UUID(uid)
@@ -75,20 +71,25 @@ async def main():
         )
 
     async def task(prompt):
+        """A background task on Haiku: `POST /v1/runs`, `mode: background`."""
+        rid = str(uuid.uuid4())
         r = await http.post(
-            f"{NEXT}/api/tasks",
-            headers=web,
+            f"{PYAPI}/v1/runs",
+            headers=api,
             json={
-                "conversationId": str(conv),
-                "workspaceId": str(ws),
-                "skills": [],
-                "model": HAIKU,
-                "messages": [{"role": "user", "content": prompt}],
-                "maxSteps": 4,
+                "threadId": str(conv),
+                "runId": rid,
+                "messages": [{"id": "m1", "role": "user", "content": prompt}],
+                "forwardedProps": {
+                    "mode": "background",
+                    "model": HAIKU,
+                    "workspaceId": str(ws),
+                    "maxSteps": 4,
+                },
             },
         )
         assert r.status_code == 202, r.text
-        return r.json()["runId"]
+        return rid
 
     async def settle(rid, want=("done", "failed", "cancelled", "paused")):
         for _ in range(300):
@@ -124,11 +125,21 @@ async def main():
     print("2 tool task paused for approval:", row["status"], bool(q))
     ok &= bool(q)
     if q:
+        # The answer is a background resume of the paused run (RUN_EVENTS.md § 4.2).
+        t2 = str(uuid.uuid4())
         r = await http.post(
-            f"{NEXT}/api/tasks/{t}/respond", headers=web, json={"requestId": q, "approved": True}
+            f"{PYAPI}/v1/runs",
+            headers=api,
+            json={
+                "threadId": str(conv),
+                "runId": t2,
+                "messages": [{"id": "m1", "role": "user", "content": "go"}],
+                "resume": [{"interruptId": q, "status": "resolved", "payload": {"approved": True}}],
+                "forwardedProps": {"mode": "background", "previousRunId": t},
+            },
         )
-        row = await settle(t, ("done", "failed"))
-        res = await result(t)
+        row = await settle(t2, ("done", "failed")) if r.status_code == 202 else {"status": r.text}
+        res = await result(t2) if r.status_code == 202 else None
         print("3 approved, second model call:", r.status_code, row["status"], (res or "")[:200])
         ok &= row["status"] == "done"
 

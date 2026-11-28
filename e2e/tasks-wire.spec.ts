@@ -47,7 +47,7 @@ const test = base.extend({
   },
 })
 
-/** Signed in (a GoTrue session cookie for the fake origin), on agent-py (runs). */
+/** Signed in (a GoTrue session cookie for the fake origin). */
 async function signedIn(page: Page, state: Record<string, unknown> = {}, board = false) {
   await signIn(page.context())
   const workspace = crypto.randomUUID()
@@ -72,7 +72,6 @@ async function signedIn(page: Page, state: Record<string, unknown> = {}, board =
     },
     {
       seed: {
-        chatBackend: "python-runs",
         chatModel: HAIKU,
         workspaces: [{ id: workspace, name: "Wire", createdAt: now, updatedAt: now, ...(board ? { isProject: true } : {}) }],
         activeWorkspaceId: workspace,
@@ -121,8 +120,8 @@ test("the Task toggle starts a background run: images in the message, no attachm
   await expect(panel(page)).toContainText("Write the report")
 })
 
-// Q55 / B21 on runs: a task is launched only with a model the worker runs,
-// whatever the chat had picked (as tasks-models.spec.ts checks off runs).
+// Q55 / B21: a task is launched only with a model the worker runs, whatever
+// the chat had picked.
 for (const chatModel of ["deepseek/deepseek-v4-flash", "auto"]) {
   test(`the Task toggle with ${chatModel} launches a task-runnable model`, async ({ page }) => {
     await signedIn(page, { chatModel })
@@ -130,7 +129,7 @@ for (const chatModel of ["deepseek/deepseek-v4-flash", "auto"]) {
     await sendText(page, "Write the report")
     await expect.poll(async () => (await sent("start")).length).toBe(1)
     const model = ((await sent("start"))[0].body as { forwardedProps: { model: string } }).forwardedProps.model
-    expect(backendAcceptsModel("agent-service", model), `${model} can't run as a task`).toBe(true)
+    expect(backendAcceptsModel("agent-tasks", model), `${model} can't run as a task`).toBe(true)
   })
 }
 
@@ -139,7 +138,7 @@ test("/research with a model tasks can't run launches a task-runnable one", asyn
   await sendText(page, "/research Write the report")
   await expect.poll(async () => (await sent("start")).length).toBe(1)
   const model = ((await sent("start"))[0].body as { forwardedProps: { model: string } }).forwardedProps.model
-  expect(backendAcceptsModel("agent-service", model), `${model} can't run as a task`).toBe(true)
+  expect(backendAcceptsModel("agent-tasks", model), `${model} can't run as a task`).toBe(true)
 })
 
 test("/research starts a research run (Q71)", async ({ page }) => {
@@ -308,4 +307,167 @@ test("a pointer to an old-path task that finished while away is dropped, read on
   // Time for a stray old-path watch to show itself.
   await page.waitForTimeout(1_000)
   expect(old).toEqual([])
+})
+
+// --- launch models (Q55 / B21), moved from the old path's tasks-models spec
+
+const NOTE = /isn't available in tasks\. Switched to/
+const toast = (page: Page) => page.locator("[data-sonner-toast]")
+
+const PHONE = { width: 390, height: 844 }
+const DESKTOP = { width: 1280, height: 800 }
+
+async function launchedModel(): Promise<string> {
+  await expect.poll(async () => (await sent("start")).length).toBe(1)
+  const model = ((await sent("start"))[0].body as { forwardedProps: { model: string } }).forwardedProps.model
+  expect(backendAcceptsModel("agent-tasks", model), `${model} can't run as a task`).toBe(true)
+  return model
+}
+
+for (const [size, viewport] of Object.entries({ desktop: DESKTOP, phone: PHONE })) {
+  test(`${size}: /research switches with a note in view, and chat keeps its model`, async ({ page }) => {
+    await signedIn(page, { chatModel: "auto" })
+    await page.setViewportSize(viewport)
+    await sendText(page, "/research Write the report")
+    await launchedModel()
+    await expect(toast(page).filter({ hasText: NOTE })).toBeInViewport()
+    await expect
+      .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("hummingbird-storage")!).state.chatModel))
+      .toBe("auto")
+  })
+
+  test(`${size}: a start refused 400 says why`, async ({ page }) => {
+    await signedIn(page)
+    await page.setViewportSize(viewport)
+    await control("fault", { op: "start", status: 400, body: { code: "unknown_model", message: "Tasks can't run that model." } })
+    await toggle(page).click()
+    await sendText(page, "Write the report")
+    await expect(toast(page).filter({ hasText: "Tasks can't run that model." })).toBeVisible()
+  })
+}
+
+test("the board launches with a task model, saying so when it switches one", async ({ page }) => {
+  await signedIn(page, { chatModel: "auto" }, true)
+  await page.evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem("hummingbird-storage")!)
+    saved.state.workspaces[0].defaultModel = "auto"
+    localStorage.setItem("hummingbird-storage", JSON.stringify(saved))
+  })
+  await page.reload()
+  await page.getByRole("button", { name: "Run as task", exact: true }).click()
+  await launchedModel()
+  await expect(toast(page).filter({ hasText: NOTE }).first()).toBeVisible()
+})
+
+test("the board with no workspace model still names a model", async ({ page }) => {
+  await signedIn(page, {}, true)
+  await page.getByRole("button", { name: "Run as task", exact: true }).click()
+  await launchedModel()
+})
+
+test("a board start refused 400 puts the card back and says why", async ({ page }) => {
+  await signedIn(page, {}, true)
+  await control("fault", { op: "start", status: 400, body: { code: "unknown_model", message: "Tasks can't run that model." } })
+  await page.getByRole("button", { name: "Run as task", exact: true }).click()
+  await expect(toast(page).filter({ hasText: "Tasks can't run that model." })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Run as task", exact: true })).toBeVisible()
+})
+
+// --- schedules on agent-py (Q73, Q80), moved from the old path's spec -------
+
+const SONNET = "anthropic/claude-sonnet-4.6"
+
+async function openSchedules(page: Page, viewport: { width: number; height: number }) {
+  await signedIn(page)
+  const workspaceId = await page.evaluate(
+    () => JSON.parse(localStorage.getItem("hummingbird-storage")!).state.activeWorkspaceId as string,
+  )
+  const now = new Date().toISOString()
+  const schedule = {
+    workspaceId,
+    prompt: "Summarise",
+    cron: "0 8 * * *",
+    timezone: "UTC",
+    systemPrompt: null,
+    maxSteps: null,
+    lastRunAt: null,
+    lastRunTaskId: null,
+    nextRunAt: now,
+    createdAt: now,
+    updatedAt: now,
+  }
+  await control("schedules", {
+    schedules: [
+      { ...schedule, id: "s1", name: "Morning briefing", model: null, enabled: false },
+      { ...schedule, id: "s2", name: "Evening briefing", model: HAIKU, enabled: true },
+    ],
+  })
+  // The schedules load when the workspace's settings open. No reload: the
+  // fake PostgREST forgets writes, so a sync pull would empty the store.
+  await page.getByText("Workspaces", { exact: true }).first().click()
+  await page.getByRole("button", { name: "Open workspace settings" }).first().click({ force: true })
+  await page.setViewportSize(viewport)
+  const sheet = page.getByRole("dialog")
+  await page.waitForTimeout(600) // the sheet's slide-in
+  return sheet
+}
+
+const scheduleWrites = async () => (await sent("schedules")).filter((s) => s.method !== "GET")
+
+for (const [size, viewport] of Object.entries({ desktop: DESKTOP, phone: PHONE })) {
+  test(`${size}: a schedule paused for having no model says so, and resuming gives it Haiku (Q73, Q80)`, async ({
+    page,
+  }) => {
+    const sheet = await openSchedules(page, viewport)
+    const notice = sheet.getByText(/Paused because it had no model/)
+    await expect(notice).toHaveCount(1)
+    await notice.scrollIntoViewIfNeeded()
+    await expect(notice).toBeInViewport()
+    const box = (await notice.boundingBox())!
+    expect(box.x).toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width).toBeLessThanOrEqual(viewport.width)
+    await expect(notice).toContainText("Resume it to run it on Claude Haiku 4.5")
+    await expect(sheet.getByText("Claude Haiku 4.5", { exact: true })).toHaveCount(1) // the evening one
+
+    await sheet.getByRole("button", { name: "Resume schedule" }).click()
+    await expect(page.getByText("Resumed. It runs on Claude Haiku 4.5.")).toBeVisible()
+    const [patch] = await scheduleWrites()
+    expect(patch.path).toBe("/v1/tasks/schedules/s1")
+    expect(patch.body).toEqual({ enabled: true })
+    await expect(sheet.getByText(/Paused because it had no model/)).toHaveCount(0)
+    await expect(sheet.getByText("Claude Haiku 4.5", { exact: true })).toHaveCount(2)
+  })
+}
+
+test("the schedule editor shows Haiku by default and offers only task models; the choice is saved (Q73)", async ({
+  page,
+}) => {
+  const sheet = await openSchedules(page, DESKTOP)
+  await sheet.getByRole("button", { name: "Add", exact: true }).last().click()
+  const model = sheet.getByLabel("Model", { exact: true })
+  await expect(model).toHaveValue(HAIKU)
+  const options = await model.locator("option").allInnerTexts()
+  expect(options.length).toBeGreaterThan(1)
+  expect(options.every((o) => o.startsWith("Claude"))).toBe(true)
+  expect(options.some((o) => /auto/i.test(o))).toBe(false)
+  await model.selectOption(SONNET)
+  await sheet.getByPlaceholder("Morning briefing").fill("Weekly digest")
+  await sheet.getByPlaceholder(/Summarise yesterday/).fill("Digest the week")
+  await sheet.getByRole("button", { name: "Create", exact: true }).click()
+  await expect(page.getByText("Schedule created.")).toBeVisible()
+  const created = (await scheduleWrites()).find((s) => s.body?.name === "Weekly digest")!
+  expect(created.method).toBe("POST")
+  expect(created.body!.model).toBe(SONNET)
+  await expect(sheet.getByText("Claude Sonnet 4.6", { exact: true })).toBeVisible()
+})
+
+test("editing a model-less schedule shows the model it will get (Q80)", async ({ page }) => {
+  const sheet = await openSchedules(page, DESKTOP)
+  await sheet.getByRole("button", { name: "Edit schedule" }).first().click()
+  await expect(sheet.getByLabel("Model", { exact: true })).toHaveValue(HAIKU)
+  await expect(sheet.getByText(/This schedule had no model and is paused/)).toBeVisible()
+  await sheet.getByRole("button", { name: "Save", exact: true }).click()
+  await expect
+    .poll(async () => (await scheduleWrites()).find((s) => s.body?.name === "Morning briefing")?.body?.model)
+    .toBe(HAIKU)
 })

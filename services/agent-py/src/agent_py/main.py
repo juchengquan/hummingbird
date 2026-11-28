@@ -30,7 +30,6 @@ from .body_limit import BodySizeLimitMiddleware, body_limit_for
 from .error_envelope import install_error_handlers
 from .model_allowlist import get_model_allowlist
 from .routers import (
-    chat,
     csp_report,
     editor_ai,
     embed,
@@ -54,7 +53,6 @@ from .routers import models as models_router
 # directly from `agent_py.main`. The endpoints + their models now
 # live in the per-domain routers, but the indirection here avoids
 # touching test imports.
-from .routers.chat import ChatRequest, _collect_skill_configs
 from .routers.health import HealthResponse, ReadinessChecks, ReadinessResponse
 from .routers.mcp import _decode_mcp_credential_header
 from .runs import reconcile as runs_reconcile
@@ -88,7 +86,7 @@ def install_shutdown_signal_hook(begin_shutdown: Callable[[], None]) -> Callable
 
     Without this the stop waits for the lifespan's shutdown half, which
     uvicorn only runs after every open connection closed — a long-lived
-    SSE stream (/v1/chat) holds it past the container's stop timeout, so
+    SSE stream (a run's `/v1/runs` stream) holds it past the container's stop timeout, so
     the in-flight job was never handed back and its attempt burned on a
     lapsed lease. The hook chains the handlers installed before it (the
     server's), runs `begin_shutdown` on the event loop, and returns a
@@ -280,7 +278,6 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
     app.include_router(health.router)
     app.include_router(whoami.router)
     app.include_router(extract.router)
-    app.include_router(chat.router)
     app.include_router(url.router)
     app.include_router(images.router)
     app.include_router(files.router)
@@ -347,12 +344,10 @@ app = create_app()
 # Re-exports for typed Depends() in callers (mostly tests today; route handlers
 # in Phase 2+).
 __all__ = [
-    "ChatRequest",
     "HealthResponse",
     "ReadinessChecks",
     "ReadinessResponse",
     "Settings",
-    "_collect_skill_configs",
     "_decode_mcp_credential_header",
     "app",
     "create_app",

@@ -21,7 +21,7 @@ const sent = async (): Promise<Request[]> => JSON.parse((await (await fetch(`${F
 
 async function open(page: Page, chatModel: string) {
   const id = crypto.randomUUID(), now = new Date().toISOString()
-  const seed = { chatBackend: "python-runs", chatModel, workspaces: [{ id, name: "Models", createdAt: now, updatedAt: now }], activeWorkspaceId: id, conversations: [] }
+  const seed = { chatModel, workspaces: [{ id, name: "Models", createdAt: now, updatedAt: now }], activeWorkspaceId: id, conversations: [] }
   await page.addInitScript(({ seed, version }) => {
     if (localStorage.getItem("e2e-seeded")) return
     localStorage.setItem("hummingbird-storage", JSON.stringify({ state: seed, version }))

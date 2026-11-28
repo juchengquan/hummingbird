@@ -20,12 +20,10 @@ import { InputGroup, InputGroupTextarea, InputGroupButton } from "@/components/u
 import { cn } from "@/shared/utils"
 import { ResourcesSidebar } from "@/components/sidebars/resources"
 import { TasksSidebar } from "@/components/sidebars/tasks"
-import { useTaskRunContext } from "@/client/agent/task-run-context"
 import { ensureTaskNotificationPermission } from "@/client/agent/notify"
 import { useTasks } from "@/client/runs/tasks/context"
-import { useAuth } from "@/client/hooks/use-auth"
 import { useTaskFocus } from "@/components/agent/tasks/focus"
-import { launchesOnRuns, preLaunchRefusal } from "@/components/agent/tasks/launch"
+import { preLaunchRefusal } from "@/components/agent/tasks/launch"
 import { isActivePhase, pointerLabel, taskGate } from "@/components/agent/tasks/phase"
 import { latestTaskTurn, resendAs } from "@/shared/agent/task-turn"
 import { ContextPicker } from "@/components/chat/context-picker"
@@ -34,8 +32,7 @@ import { SlashHelpDialog } from "@/components/panels/slash-help-dialog"
 import { AgentsDialog } from "@/components/panels/agents-dialog"
 import { SkillsDialog } from "@/components/panels/skills-dialog"
 import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
-import { SKILLS } from "@/shared/skills/registry"
-import { resolveSkill, type SkillId } from "@/shared/skills/types"
+import type { SkillId } from "@/shared/skills/types"
 import { resolveSlash } from "@/shared/slash-resolver"
 import { useSlashCommands } from "@/client/hooks/use-slash-commands"
 import { TASK_MODES, type TaskModeId } from "@/shared/task-modes/registry"
@@ -64,7 +61,6 @@ import { useRestoreInterruptedTurns } from "@/client/runs/use-restore-interrupte
 import { useModelBackend, useModelBackendGuard, useNoModelProvider } from "@/client/hooks/use-model-backend"
 import { NO_MODEL_PROVIDER_HINT, NO_MODEL_PROVIDER_MESSAGE } from "@/shared/served-models"
 import { TASK_MODEL_BACKEND } from "@/shared/backend-models"
-import { taskProgress } from "@/client/agent/task-progress"
 
 export function ChatPanel() {
   const addMessage = useStore((state) => state.addMessage)
@@ -114,34 +110,23 @@ export function ChatPanel() {
   const hydrated = useHydrated()
   // Chat on runs: rebuild paused turns' answer cards after a reload (Q35).
   useRestoreInterruptedTurns(hydrated)
-  // Long-running task mode. The provider owns the active run; this
-  // panel reads `runAsTask` / `isRunning` for the header toggle. The
-  // send hook holds its own ref for `startTask` (see useChatSend).
-  const taskRun = useTaskRunContext()
-  // On "agent-py (runs)" the tasks interface launches and lists tasks
-  // (wave 6); otherwise the old path above does (Q61). Background runs
-  // need sign-in: signed out, the Task toggle is hidden (bug 20).
+  // Long-running tasks: the tasks interface launches and lists them
+  // (wave 6). Background runs need sign-in: signed out, the Task toggle is
+  // hidden (bug 20). While the session is read (`loading`), nothing is
+  // offered and nothing refused.
   const tasks = useTasks()
-  const onRuns = launchesOnRuns(tasks)
-  // The old path needs sign-in too (its routes are 401 without it): the
-  // same rule, read from the session (Q61 doesn't change it, bug 20).
-  // While the session is read (`loading`), nothing is offered and nothing
-  // refused.
-  const gate = taskGate(tasks.availability, useAuth().status)
+  const gate = taskGate(tasks.availability)
   const tasksOffered = gate === "ready"
-  const runAsTask = onRuns
-    ? tasks.runAsTask && gate === "ready"
-    : taskRun.runAsTask && gate === "ready"
+  const runAsTask = tasks.runAsTask && gate === "ready"
   const setTasksRunAsTask = tasks.setRunAsTask
-  const setRunAsTask = useCallback(
+  const onRunAsTaskChange = useCallback(
     (v: boolean) => {
       setTasksRunAsTask(v)
-      // Asked on the gesture that opts in (Q74), as the old path does.
+      // Asked on the gesture that opts in (Q74).
       if (v) void ensureTaskNotificationPermission()
     },
     [setTasksRunAsTask]
   )
-  const onRunAsTaskChange = onRuns ? setRunAsTask : taskRun.setRunAsTask
   // Only offer / keep models the serving backend accepts (Q40) — in Task
   // mode, those the task worker runs (Q55), on every chat backend.
   const modelBackend = useModelBackend()
@@ -150,7 +135,7 @@ export function ChatPanel() {
   // Q131: agent-py serves this turn and has no model provider at all — say
   // so (header + above the input) and refuse to send, instead of a 503
   // bubble per message. A list that couldn't be read never blocks.
-  const noProvider = useNoModelProvider(pickerBackend)
+  const noProvider = useNoModelProvider()
   const refuseNoProvider = useCallback((): boolean => {
     if (!noProvider) return false
     toast.error(NO_MODEL_PROVIDER_MESSAGE, { id: "no-model-provider", description: NO_MODEL_PROVIDER_HINT })
@@ -329,20 +314,10 @@ export function ChatPanel() {
     [messages]
   )
 
-  // Skills payload for selection-driven explanations. Uses the same
-  // workspace+conversation cascade as the chat input — minus the
-  // per-send mute (which is an input-bar concern, not relevant to
-  // ad-hoc explain queries).
   const activeWorkspace = useMemo(
     () => workspaces.find((w) => w.id === activeWorkspaceId),
     [workspaces, activeWorkspaceId]
   )
-  const selectionSkillsPayload = useMemo(() => {
-    return SKILLS.filter((s) =>
-      resolveSkill(s, activeWorkspace?.skillPrefs, activeConversation?.skillPrefs)
-    ).map((s) => ({ id: s.id }))
-  }, [activeWorkspace, activeConversation])
-
   // "Quote in reply": stuff the selection into the input as a
   // markdown blockquote and focus the textarea so the user can type
   // their follow-up. Each line of the selection gets its own `>` so
@@ -568,14 +543,9 @@ export function ChatPanel() {
         toast.error("Sign in to run tasks.")
         return
       }
-      if (onRuns) {
-        const refused = preLaunchRefusal(tasks)
-        if (refused) {
-          toast.error(refused.text)
-          return
-        }
-      } else if (taskRun.isRunning) {
-        toast.error("A task is already running. Cancel it first.")
+      const refused = preLaunchRefusal(tasks)
+      if (refused) {
+        toast.error(refused.text)
         return
       }
       if (taskModeForCall) void ensureTaskNotificationPermission()
@@ -879,8 +849,6 @@ export function ChatPanel() {
     )
   }
 
-  const taskState = taskProgress(taskRun.view, taskRun.childRuns)
-
   return (
     <div className="flex h-full">
       {/* Messages column */}
@@ -904,7 +872,7 @@ export function ChatPanel() {
           onRunAsTaskChange={onRunAsTaskChange}
           showTaskToggle={tasksOffered}
           tasksButton={
-            onRuns && tasksOffered
+            tasksOffered
               ? {
                   needsAnswer: (tasks.tasks ?? []).filter((t) => t.phase === "needs_answer")
                     .length,
@@ -1038,8 +1006,7 @@ export function ChatPanel() {
               the worker is being picked up; "Running · step N/M" once
               the loop is actually advancing; it says so when the task
               waits on the user or on its sub-agents. */}
-          {onRuns
-            ? (tasks.tasks ?? [])
+          {(tasks.tasks ?? [])
                 .filter(
                   (t) => t.conversationId === activeConversationId && isActivePhase(t.phase)
                 )
@@ -1063,27 +1030,7 @@ export function ChatPanel() {
                       View <ChevronRight size={12} />
                     </span>
                   </button>
-                ))
-            : null}
-          {!onRuns &&
-            taskRun.isRunning &&
-            taskRun.runConversationId === activeConversationId && (
-              <button
-                type="button"
-                onClick={() => setTasksPanelOpen(true)}
-                className="max-w-3xl mx-auto mb-2 w-full pointer-events-auto flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs text-[var(--muted-foreground)] hover:bg-[var(--secondary)] transition-colors"
-              >
-                {taskState.paused ? (
-                  <Pause size={12} className="shrink-0 text-[var(--primary)]" />
-                ) : (
-                  <Loader2 size={12} className="shrink-0 animate-spin text-[var(--primary)]" />
-                )}
-                <span className="min-w-0 truncate">{taskState.pointer}</span>
-                <span className="ml-auto flex shrink-0 items-center gap-0.5 text-[var(--foreground)]">
-                  View <ChevronRight size={12} />
-                </span>
-              </button>
-            )}
+                ))}
           <div
             className={cn(
               "relative max-w-3xl mx-auto pointer-events-auto bg-[var(--background)] rounded-3xl border border-[var(--border)] p-2 shadow-sm transition-colors",
@@ -1267,7 +1214,6 @@ export function ChatPanel() {
         resolveContext={resolveSelectionContext}
         chatModel={chatModel}
         workspaceSystemPrompt={activeWorkspace?.systemPrompt}
-        skills={selectionSkillsPayload}
         onQuote={handleQuoteSelection}
         onPin={(input) => {
           if (!activeConversationId) return

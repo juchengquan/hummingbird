@@ -4,7 +4,3 @@ export function getSupabaseEnv() {
   if (!url || !anonKey) return null
   return { url, anonKey }
 }
-
-export function isSupabaseConfigured(): boolean {
-  return getSupabaseEnv() !== null
-}

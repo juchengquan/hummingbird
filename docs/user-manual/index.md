@@ -1,6 +1,6 @@
 # Hummingbird - User Manual
 
-> Generated TOC. Last inventory: 2026-11-26. Run `bun run docs:user-manual:build` to refresh.
+> Generated TOC. Last inventory: 2026-11-27. Run `bun run docs:user-manual:build` to refresh.
 
 ## Part 1 - Using Hummingbird
 
@@ -103,15 +103,12 @@
 | `AI_GATEWAY_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `ANTHROPIC_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `ANTHROPIC_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
-| `BRAVE_SEARCH_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
-| `CODE_SANDBOX_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `CODE_SANDBOX_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `CODE_SANDBOX_ENABLED` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `CSP_MODE` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `EMBEDDINGS_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `EMBEDDINGS_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `EMBEDDINGS_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
-| `EXA_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `GOOGLE_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MCP_ALLOW_PRIVATE_HOSTS` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `MCP_ENCRYPTION_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
@@ -121,7 +118,6 @@
 | `MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE` | no | [21-environment-variables.md](21-environment-variables.md) |
 | `MODELS_CONFIG_PATH` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `NEXT_PUBLIC_AGENT_PY_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
-| `NEXT_PUBLIC_AGENT_TS_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `NEXT_PUBLIC_API_BASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `NEXT_PUBLIC_SUPABASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
@@ -132,6 +128,7 @@
 | `SUPABASE_DB_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `SUPABASE_JWT_SECRET` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
+| `SUPABASE_URL` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `TASK_NO_WORKER_TIMEOUT_MINUTES` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `TAVILY_API_KEY` | yes | [21-environment-variables.md](21-environment-variables.md) |
 | `VERIFY_MODEL` | yes | [21-environment-variables.md](21-environment-variables.md) |
@@ -145,7 +142,6 @@
 |---|---|---|
 | Theme | system / dark / light | [12-settings-and-theme.md](12-settings-and-theme.md) |
 | Color scheme | default / anthropic | [12-settings-and-theme.md](12-settings-and-theme.md) |
-| Chat backend | ts / python / ts-service / python-runs | [12-settings-and-theme.md](12-settings-and-theme.md) |
 | Local-only mode | - | [12-settings-and-theme.md](12-settings-and-theme.md) |
 | Local files only | - | [12-settings-and-theme.md](12-settings-and-theme.md) |
 | AI review changes (editor) | - | [12-settings-and-theme.md](12-settings-and-theme.md) |

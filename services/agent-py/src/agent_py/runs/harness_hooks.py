@@ -137,7 +137,7 @@ async def cloud_mcp_tools(
 ) -> None:
     """The workspace's cloud MCP tools (signed-in runs with a
     `workspaceId`); servers marked for approval gate their tools.
-    Discovery failures are logged and skipped, as on `/v1/chat`.
+    Discovery failures are logged and skipped.
     `allowedMcpServerIds` (Q48) keeps only the servers it names when set
     (`[]` → no cloud MCP tools; absent → every enabled server)."""
     context = ctx.tool_context

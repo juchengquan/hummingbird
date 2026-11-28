@@ -73,15 +73,6 @@ export function estimateTokensWith(text: string, tokenizer: TokenizerId): number
 }
 
 /**
- * Estimate token count for a string. Pass the active `modelId` to pick the
- * model's tokenizer; omit it (or pass an untagged model) for the chars/4
- * heuristic.
- */
-export function estimateTokens(text: string, modelId?: string): number {
-  return estimateTokensWith(text, tokenizerForModelId(modelId))
-}
-
-/**
  * Estimate the total token count for a conversation. Sums every message's
  * content plus reasoning (if persisted) — reasoning still counts against
  * the context window when replayed.

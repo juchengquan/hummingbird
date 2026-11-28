@@ -1,5 +1,6 @@
 """Tests for the in-process sliding-window rate limiter that backs
-the `/v1/chat` per-IP gate. Pure logic — no HTTP, no FastAPI."""
+the per-IP gates (`/v1/runs` starts and the rest). Pure logic — no HTTP,
+no FastAPI."""
 
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ def _request(headers: dict[str, str], peer: str | None = "203.0.113.9") -> Reque
     scope = {
         "type": "http",
         "method": "POST",
-        "path": "/v1/chat",
+        "path": "/v1/runs",
         "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
         "client": (peer, 1234) if peer else None,
     }
@@ -190,7 +191,7 @@ def _request_raw(header_lines: list[tuple[str, str]], peer: str = "203.0.113.9")
     scope = {
         "type": "http",
         "method": "POST",
-        "path": "/v1/chat",
+        "path": "/v1/runs",
         "headers": [(k.lower().encode(), v.encode()) for k, v in header_lines],
         "client": (peer, 1234),
     }

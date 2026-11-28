@@ -123,46 +123,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/chat": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Chat
-         * @description Streaming chat endpoint. Mirrors `app/api/chat/route.ts`
-         *     on the TS side. Accepts a narrow request (messages + model +
-         *     optional system prompt + optional max_tokens) and streams
-         *     Anthropic deltas back as SSE frames in the AI SDK v5 UI
-         *     message stream protocol (what `@ai-sdk/react`'s `useChat()`
-         *     consumes natively). Adds the `x-vercel-ai-ui-message-stream:
-         *     v1` header so the SDK can advertise its protocol version.
-         *
-         *     The legacy custom wire format was retired in B.3 of
-         *     PLAN-useChat-adoption.md; the `?format=` query param is
-         *     silently ignored.
-         *
-         *     Returns 503 when `ANTHROPIC_API_KEY` is unset — fast-fail
-         *     signal to monitoring that the deploy is misconfigured rather
-         *     than a silent stub response.
-         *
-         *     Returns 429 when the caller's IP has burned its per-minute turn
-         *     budget on this worker. The bucket is in-process and not shared
-         *     across workers — same caveat as the Next.js inline route — but
-         *     suffices to cap a misbehaving script before it lights serious
-         *     tokens on fire.
-         */
-        post: operations["chat_v1_chat_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/url/fetch": {
         parameters: {
             query?: never;
@@ -285,7 +245,7 @@ export interface paths {
          *     Everything else matches: structured output first when the catalog
          *     flags the model `supportsStructuredOutput`, then the lenient JSON
          *     text path; unparseable / off-schema output → 502 `provider`; a
-         *     provider error → `categorize_error` (port of `categorizeError`).
+         *     provider error → `categorize_error`.
          *     Signed in or anonymous (wave 12, Q123/Q134): an anonymous caller is
          *     refused under `REQUIRE_AUTH_FOR_AI` (`401 auth_required`) and otherwise
          *     gets the Next route's budget — no rate limit.
@@ -894,84 +854,6 @@ export interface components {
         Capabilities: {
             /** Tools */
             tools?: components["schemas"]["LocalMcpTool"][] | null;
-        };
-        /**
-         * ChatMessageRequest
-         * @description One message in the chat history. Tight: role is restricted to
-         *     `user` / `assistant`, content is a flat string. The TS chat schema
-         *     supports multimodal content parts; the Python endpoint accepts a
-         *     narrower shape for now and grows it when tool support lands
-         *     (Phase 4-2).
-         */
-        ChatMessageRequest: {
-            /** Role */
-            role: string;
-            /** Content */
-            content: string;
-        };
-        /**
-         * ChatRequest
-         * @description Wire shape for POST /v1/chat. Mirrors the subset of
-         *     `ChatRequestSchema` (TS) we honour today — messages + model +
-         *     workspaceSystemPrompt + maxSteps proxied as `max_tokens`. Skills /
-         *     attachments / MCP / referenceImage deferred.
-         *
-         *     Phase 4-3 adds `enable_tools` (opt-in): when true, the route
-         *     registers the built-in tool set (`webFetch`, plus the
-         *     `TAVILY_API_KEY`/`MINIMAX_CN_API_KEY`-gated tools) and loops
-         *     `messages.stream` + tool execution. Default false keeps the
-         *     text-only Phase 4-1 behaviour.
-         *
-         *     Phase 4-3 follow-up: `workspace_id` opts the registry into the
-         *     context-bound tools (`searchFiles` + cloud-mode MCP). `skills[]`
-         *     threads per-skill config (caps, provider toggles) — same shape
-         *     the TS side has used since the Phase 4-2 selector landed.
-         */
-        ChatRequest: {
-            /** Messages */
-            messages: components["schemas"]["ChatMessageRequest"][];
-            /** Model */
-            model: string;
-            /** System */
-            system?: string | null;
-            /** Max Tokens */
-            max_tokens?: number | null;
-            /**
-             * Enable Tools
-             * @default false
-             */
-            enable_tools: boolean;
-            /** Max Steps */
-            max_steps?: number | null;
-            /** Workspace Id */
-            workspace_id?: string | null;
-            /** Skills */
-            skills?: components["schemas"]["ChatSkillEntry"][] | null;
-        };
-        /**
-         * ChatSkillEntry
-         * @description One entry on `ChatRequest.skills` — the per-skill config the
-         *     client included with this request. Mirrors the TS schema; only
-         *     `id` is required, every config sub-object is optional + permissive
-         *     (extra keys ignored).
-         */
-        ChatSkillEntry: {
-            /** Id */
-            id: string;
-            /** Websearchconfig */
-            webSearchConfig?: {
-                [key: string]: unknown;
-            } | null;
-            /** Webfetchconfig */
-            webFetchConfig?: {
-                [key: string]: unknown;
-            } | null;
-            /** Imagegenconfig */
-            imageGenConfig?: {
-                [key: string]: unknown;
-            } | null;
-        } & {
-            [key: string]: unknown;
         };
         /** CitationTableCell */
         CitationTableCell: {
@@ -2126,7 +2008,7 @@ export interface components {
         };
         /**
          * SkillConfig
-         * @description A skill enabled for a run, with optional per-skill settings (`ChatRequestSchema.shape.skills` in `lib/shared/api-schemas.ts`).
+         * @description A skill enabled for a run, with optional per-skill settings.
          */
         SkillConfig: {
             /** Id */
@@ -2503,41 +2385,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExtractionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    chat_v1_chat_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ChatRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

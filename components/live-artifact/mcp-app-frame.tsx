@@ -26,7 +26,7 @@ import { SandboxedFrame } from "./sandboxed-frame"
  *
  * Phase 2 adds the **tool-call bridge**: the panel can post a
  * `{ ns: "mcp-app", type: "tool-call", ... }` message; this component
- * forwards it to the producing MCP server via the `/api/mcp/:id/call`
+ * forwards it to the producing MCP server via agent-py's `/v1/mcp/:id/call`
  * proxy and posts the result back. Hard guards: same-server only (the
  * panel can only call tools on the server that produced it), the
  * server's `enabled` switch and `requiresApproval` policy

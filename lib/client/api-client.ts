@@ -3,20 +3,20 @@ import "client-only"
  * Single typed entry point for every frontend → backend call.
  *
  * Every component / hook in the codebase must go through `apiClient`
- * rather than calling `fetch('/api/...')` directly. The Plate-driven
- * AI routes are configured by URL string and consume those strings
- * from `apiClient.urls.*` so they pick up the same base URL.
+ * rather than calling `fetch` directly. Every call goes to agent-py
+ * (`NEXT_PUBLIC_AGENT_PY_URL`, wave 13, Q142): there is no Next.js API
+ * any more, and a deploy without agent-py shows the no-backend screen
+ * (`components/no-backend-gate.tsx`) instead of the app.
  *
- * Why this exists: see docs/PLAN-backend-extraction.md. The body of
- * each method is a thin fetch wrapper today; when the backend moves to
- * Python, the only thing that has to change is `API_BASE_URL` (or, if
- * the same-origin reverse-proxy path is taken, nothing changes at all).
+ * A call carries the signed-in session's bearer when there is one, and
+ * goes tokenless otherwise: agent-py serves some calls anonymously (URL
+ * fetch, summarize, extract, extract-table, the MCP proxy, embed — Q123)
+ * and answers the account-bound ones `401 auth_required`, which surfaces
+ * as "Sign in required" (`notifyAuthRequired`). Nothing is refused here.
  *
  * Response validation: where a Zod response schema exists in
- * lib/api-schemas.ts, we parse with it so a server returning a wrong
- * shape fails loudly here instead of silently breaking the UI. The
- * streaming chat response isn't validated — its frame protocol is
- * pinned in docs/API.md and parsed inline by the chat panel.
+ * lib/shared/api-schemas.ts, we parse with it so a server returning a
+ * wrong shape fails loudly here instead of silently breaking the UI.
  */
 
 import {
@@ -32,11 +32,6 @@ import {
   RefreshFileUrlResponseSchema,
   RevokeShareResponseSchema,
   ResolvedShareResponseSchema,
-  TaskChildrenResponseSchema,
-  type ChatRequestInput,
-  type TaskRequestInput,
-  type RespondRequestInput,
-  type TaskChildrenResponse,
   ScheduleListResponseSchema,
   ScheduleResponseSchema,
   type ScheduleCreateInput,
@@ -59,11 +54,9 @@ import {
 } from "@/shared/api-schemas"
 
 import { CitationTableSchema, type CitationTable } from "@/shared/artifacts/citation-table"
-import { isAuthRequiredError } from "@/shared/api-errors"
+import { AUTH_REQUIRED_CODE, isAuthRequiredError } from "@/shared/api-errors"
 import { resolveBackendBaseUrl } from "@/shared/backend-base-url"
-import { servedSignedOut } from "@/shared/signed-out-calls"
 
-import { narrowToRemoteBody } from "@/client/api/chat-marshalling"
 import {
   cancelRun,
   getRun,
@@ -78,49 +71,37 @@ import {
   resumeBackgroundRun,
   startBackgroundRun,
 } from "@/client/runs/background"
-import type { ChatBackend } from "@/client/hooks/store/slices/ui"
 import { notifyAuthRequired } from "@/client/auth/auth-required"
 
-/** Optional remote-backend dispatch context — used by non-chat
- *  endpoints that mirror `/v1/...` on agent-py / agent-ts. When
- *  set on a call's options, the method posts to the remote service
- *  with a Bearer JWT instead of the in-Next route. Resolved by the
- *  default-auto branch via `resolveRemoteBackend()` (separate file
- *  so api-client.ts can stay Zustand-free in unit tests). */
-export interface RemoteDispatch {
-  backend: Exclude<ChatBackendOption, "ts">
+/** Where a call goes: agent-py's base URL, with the session's bearer or
+ *  tokenless (`null` — no `Authorization` header is sent). */
+export interface AgentPyTarget {
+  /** `""` when agent-py is served on the page's own origin. */
   baseUrl: string
-  /** `null`: an anonymous call — signed out on `python-runs`, to one of
-   *  the endpoints agent-py serves signed out (wave 12, Q123/Q134). No
-   *  `Authorization` header is sent. */
   authToken: string | null
 }
 
-
-
-/** Whether a backend choice is served by agent-py: `'python'` and
- *  `'python-runs'` ("agent-py (runs)", Q33) differ only in how a chat
- *  turn is sent — every other call dispatches identically. */
-export function isAgentPyBackend(
-  backend: ChatBackendOption | null | undefined,
-): backend is "python" | "python-runs" {
-  return backend === "python" || backend === "python-runs"
+/** Per-call options every agent-py method takes. `target` skips the
+ *  session lookup (`resolveAgentPyTarget`) — tests pass one. */
+export interface CallOptions {
+  target?: AgentPyTarget
 }
 
-/** Per-call dispatch options for non-chat endpoints. Three states:
- *  - undefined / { dispatch: 'auto' } (default) — read backend from
- *    the chat-backend store; resolve the JWT lazily; fall through
- *    to the in-Next route on any prerequisite miss.
- *  - { dispatch: 'in-next' } — force the in-Next route regardless
- *    of the user's backend choice (used for cases where the remote
- *    service hasn't shipped the endpoint yet, or for endpoints that
- *    are explicitly in-Next-only).
- *  - { dispatch: 'remote', remote } — explicit remote dispatch with
- *    a pre-resolved context. Skips the resolver. */
-export type DispatchOption =
-  | { dispatch?: "auto" }
-  | { dispatch: "in-next" }
-  | { dispatch: "remote"; remote: RemoteDispatch }
+/** The target for one call: the given one, else agent-py with the
+ *  session's token, if any. The resolver is imported lazily so the
+ *  Zustand store + Supabase client stay off callgraphs that don't need
+ *  them. */
+async function targetFor(options: CallOptions | undefined): Promise<AgentPyTarget> {
+  if (options?.target) return options.target
+  const { resolveAgentPyTarget } = await import("@/client/api/backend-resolver")
+  return resolveAgentPyTarget()
+}
+
+function requestHeaders(target: AgentPyTarget, json: boolean): Record<string, string> {
+  const headers: Record<string, string> = json ? { "Content-Type": "application/json" } : {}
+  if (target.authToken) headers.Authorization = `Bearer ${target.authToken}`
+  return headers
+}
 
 /** Result shape returned by `dispatchedFetch`. Mirrors the existing
  *  tagged-result convention used by `mcpProxyCall`, `mcpUpsertCloudServer`,
@@ -129,18 +110,13 @@ export type DispatchedFetchResult<T> =
   | { ok: true; status: number; data: T }
   | { ok: false; status: number; error: { code?: string; message?: string } }
 
-/** Options for `dispatchedFetch`. The caller passes BOTH the remote
- *  path (e.g. `/v1/summarize`) and the local URL string — keeps the
- *  helper free of the `apiUrls` namespace import and keeps it testable
- *  with literal URL strings. */
-export interface DispatchedFetchOptions<LocalBody, RemoteBody, T> {
+/** Options for `dispatchedFetch`. */
+export interface DispatchedFetchOptions<Body, T> extends CallOptions {
+  /** The agent-py path, e.g. `/v1/summarize`. */
   path: string
-  localUrl: string
-  /** Defaults to POST. A DELETE sends no body and no Content-Type
-   *  (`bodyForLocal` is ignored). */
+  /** Defaults to POST. A DELETE sends no body and no Content-Type. */
   method?: "POST" | "DELETE"
-  bodyForLocal: LocalBody
-  bodyForRemote?: (local: LocalBody) => RemoteBody
+  body: Body
   schema?: {
     safeParse: (
       raw: unknown,
@@ -150,71 +126,42 @@ export interface DispatchedFetchOptions<LocalBody, RemoteBody, T> {
   signal?: AbortSignal
   inflight?: Map<string, Promise<DispatchedFetchResult<T>>>
   dedupeKey?: string
-  dispatch?: DispatchOption
+  /** A `401 auth_required` raises the "Sign in" toast (`notifyAuthRequired`);
+   *  `true` for calls the user didn't trigger (rate-limited). */
+  background?: boolean
 }
 
-/** Internal: turn a `DispatchOption` (or undefined) into a concrete
- *  `RemoteDispatch | null`. Importing the resolver lazily keeps the
- *  Zustand store + Supabase client off any callgraph that doesn't
- *  actually need them. */
-async function resolveDispatch(
-  option: DispatchOption | undefined,
-  remotePath: string,
-): Promise<RemoteDispatch | null> {
-  if (option?.dispatch === "in-next") return null
-  if (option?.dispatch === "remote") return option.remote
-  const { resolveRemoteBackend } = await import("@/client/api/backend-resolver")
-  // The endpoints agent-py serves signed out (wave 12, Q123/Q134) still
-  // resolve without a session on `python-runs`; the account-bound ones
-  // don't (`servedSignedOut`, `remoteTargetFor`).
-  return resolveRemoteBackend({ anonymous: servedSignedOut(remotePath) })
+/**
+ * A failed response's error, read for the caller. A call sent without a
+ * token that agent-py refused `401` reads as `auth_required` whatever its
+ * code: the caller must sign in (Q142) — it is surfaced as "Sign in
+ * required", never as a generic failure. Either way the toast is raised.
+ */
+function failureOf(
+  status: number,
+  body: ErrorBody,
+  target: AgentPyTarget,
+  background: boolean | undefined,
+): { code?: string; message?: string } {
+  const error = errorOf(body)
+  const authRequired =
+    isAuthRequiredError(error) || (status === 401 && target.authToken === null)
+  if (!authRequired) return error
+  notifyAuthRequired({ background: background === true })
+  return { ...error, code: AUTH_REQUIRED_CODE }
 }
 
-/** For endpoints only agent-py implements (`/v1/extract-table`,
- *  `/v1/files/refresh-url`, `/v1/share`, `/v1/tasks/schedules`, `/v1/embed`,
- *  `/v1/memory/extract`): resolve the dispatch as usual, then keep
- *  it remote only when it resolved to agent-py. agent-ts is frozen
- *  (docs/PLAN-frontend-backend-split.md, Q11) and will not get these
- *  routes, so a `ts-service` account stays on the in-Next route. */
-async function agentPyOnlyDispatch(
-  option: DispatchOption | undefined,
-  remotePath: string,
-): Promise<DispatchOption> {
-  const remote = await resolveDispatch(option, remotePath)
-  return isAgentPyBackend(remote?.backend)
-    ? { dispatch: "remote", remote }
-    : { dispatch: "in-next" }
-}
-
-/** Resolve the `DispatchOption` and return a stable cache key that
- *  includes the backend URL so a backend switch mid-session doesn't
- *  return a stale signed URL from the wrong service. The in-Next
- *  fast path returns just the suffix. Used by
- *  `refreshGeneratedImageUrl`'s in-flight dedupe. */
-async function backendCacheKey(
-  option: DispatchOption | undefined,
-  suffix: string,
-): Promise<string> {
-  if (option?.dispatch === "in-next") return suffix
-  if (option?.dispatch === "remote") return `${option.remote.baseUrl}::${suffix}`
-  // Default 'auto' — resolve lazily.
-  const { resolveRemoteBackend } = await import("@/client/api/backend-resolver")
-  const remote = await resolveRemoteBackend()
-  return remote ? `${remote.baseUrl}::${suffix}` : suffix
-}
-
-/** Internal: one POST + optional Zod-parse for any dispatched
- *  (auto / in-next / remote) non-chat endpoint. The exported
- *  `apiClient.*` methods share dispatch + error handling; they
- *  differ only in path, body, and (optionally) response schema +
- *  wire-shape variant. This is the seam that absorbs all six.
+/** Internal: one request + optional Zod-parse for any agent-py endpoint.
+ *  The exported `apiClient.*` methods share target resolution and error
+ *  handling; they differ only in path, body, and (optionally) response
+ *  schema.
  *
  *  Errors swallowed into the `{ ok: false, ... }` envelope:
  *  network error, non-OK response, JSON parse error, schema
  *  rejection. Callers convert back to their own contract (most
  *  return `null`; the MCP + URL-fetch ones surface the envelope). */
-async function dispatchedFetch<LocalBody, RemoteBody, T>(
-  options: DispatchedFetchOptions<LocalBody, RemoteBody, T>,
+async function dispatchedFetch<Body, T>(
+  options: DispatchedFetchOptions<Body, T>,
 ): Promise<DispatchedFetchResult<T>> {
   const inflight = options.inflight
   const dedupeKey = options.dedupeKey
@@ -225,31 +172,25 @@ async function dispatchedFetch<LocalBody, RemoteBody, T>(
 
   const promise = (async (): Promise<DispatchedFetchResult<T>> => {
     try {
-      const remote = await resolveDispatch(options.dispatch, options.path)
-      const target = remote
-        ? `${remote.baseUrl}${options.path}`
-        : options.localUrl
+      const target = await targetFor(options)
       const method = options.method ?? "POST"
       const hasBody = method !== "DELETE"
-      const headers: Record<string, string> = hasBody
-        ? { "Content-Type": "application/json" }
-        : {}
-      if (remote?.authToken) headers.Authorization = `Bearer ${remote.authToken}`
+      const headers = requestHeaders(target, hasBody)
       if (options.extraHeaders) {
         Object.assign(headers, options.extraHeaders)
       }
-      const body =
-        remote && options.bodyForRemote
-          ? options.bodyForRemote(options.bodyForLocal)
-          : options.bodyForLocal
-      const res = await fetch(target, {
+      const res = await fetch(`${target.baseUrl}${options.path}`, {
         method,
         headers,
-        body: hasBody ? JSON.stringify(body) : undefined,
+        body: hasBody ? JSON.stringify(options.body) : undefined,
         signal: options.signal,
       })
       if (!res.ok) {
-        return { ok: false, status: res.status, error: errorOf(await readErrorBody(res)) }
+        return {
+          ok: false,
+          status: res.status,
+          error: failureOf(res.status, await readErrorBody(res), target, options.background),
+        }
       }
       const raw: unknown = await res.json()
       if (options.schema) {
@@ -287,107 +228,35 @@ async function dispatchedFetch<LocalBody, RemoteBody, T>(
   return promise
 }
 
-// Empty default = same origin (Next.js routes serving from /api/*).
-// When the Python backend is ready, set NEXT_PUBLIC_API_BASE_URL to its
-// origin (e.g. "https://api.example.com"); the same-origin reverse-proxy
-// option from the plan would leave this empty and add a Vercel rewrite.
-const API_BASE_URL = (
-  typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_BASE_URL
-    ? process.env.NEXT_PUBLIC_API_BASE_URL
-    : ""
-).replace(/\/+$/, "")
-
 /**
- * Base URL for the Python agent service (`services/agent-py/`). Set
- * to its origin (e.g. `http://localhost:8000` in dev) to enable the
- * "Chat backend → Python" toggle in the account menu, or to `/` when a
- * reverse proxy serves agent-py on the frontend's own origin
- * (`PLAN-frontend-backend-split.md` Q21) — requests then go to
- * `/v1/...` on the current origin and the prefix is `""`. See
- * `resolveBackendBaseUrl` (`@/shared/backend-base-url`). Empty / unset →
- * the apiClient ignores the `backend: 'python'` option and falls
- * through to the TS route, so a misconfigured deploy degrades safely.
- *
- * Phase 4-2 of `PLAN-agent-api.md`. Per user policy, both stacks
- * stay live indefinitely — this is the selector wire, not a cutover.
+ * Base URL for the Python agent service (`services/agent-py/`): its
+ * origin (e.g. `http://localhost:8000` in dev), or `/` when a reverse
+ * proxy serves agent-py on the frontend's own origin
+ * (`PLAN-frontend-backend-split.md` Q21) — requests then go to `/v1/...`
+ * on the current origin and the prefix is `""`. See
+ * `resolveBackendBaseUrl` (`@/shared/backend-base-url`). Unset → the
+ * deploy has no backend (Q137): the app shows the no-backend screen.
  */
 const AGENT_PY = resolveBackendBaseUrl(
   typeof process !== "undefined" ? process.env.NEXT_PUBLIC_AGENT_PY_URL : undefined
 )
 export const AGENT_PY_BASE_URL = AGENT_PY.baseUrl
 
-/** Whether the Python agent endpoint is reachable as a backend
- *  option. The UI toggle hides itself when this is false so users
- *  don't see a switch that does nothing. Not `AGENT_PY_BASE_URL !== ""`:
- *  the same-origin value `/` resolves to an empty prefix. */
-export function isAgentPyConfigured(): boolean {
-  return AGENT_PY.configured
-}
-
 /**
- * Base URL for the TypeScript agent service (`services/agent-ts/`).
- * Set to its origin (e.g. `http://localhost:8001` in dev) to enable
- * the "TypeScript agent service" option in the account-menu chat-
- * backend selector. Empty / unset → the apiClient ignores the
- * `backend: 'ts-service'` option and falls through to the in-Next
- * TS route, same defensive degradation as `agent-py`.
- *
- * Phase 5 of `PLAN-agent-ts.md`. Per project policy, all three
- * stacks coexist — this is the third option on the selector wire,
- * not a replacement for either existing backend.
- */
-const AGENT_TS = resolveBackendBaseUrl(
-  typeof process !== "undefined" ? process.env.NEXT_PUBLIC_AGENT_TS_URL : undefined
-)
-export const AGENT_TS_BASE_URL = AGENT_TS.baseUrl
-
-/** Whether the TS agent service endpoint is reachable. Mirrors
- *  `isAgentPyConfigured` — same UI gating semantics. */
-export function isAgentTsConfigured(): boolean {
-  return AGENT_TS.configured
-}
-
-function url(path: string): string {
-  return `${API_BASE_URL}${path}`
-}
-
-/**
- * Path strings exposed for callers that can't go through a method
- * (e.g. Plate's `useChat` config takes a `api` URL string and handles
- * the fetch internally). Always read from here so the base URL switch
- * propagates everywhere.
+ * URL strings for callers that can't go through a method (Plate's editor
+ * AI takes an `api` URL and handles the fetch itself): agent-py's editor
+ * AI routes (wave 9).
  */
 export const apiUrls = {
-  chat: () => url("/api/chat"),
-  tasks: () => url("/api/tasks"),
-  taskSweep: () => url("/api/tasks/sweep"),
-  taskSchedules: () => url("/api/tasks/schedules"),
-  taskScheduleById: (id: string) =>
-    url(`/api/tasks/schedules/${encodeURIComponent(id)}`),
-  taskCancel: (id: string) =>
-    url(`/api/tasks/${encodeURIComponent(id)}/cancel`),
-  taskChildren: (id: string) =>
-    url(`/api/tasks/${encodeURIComponent(id)}/children`),
-  taskRespond: (id: string) =>
-    url(`/api/tasks/${encodeURIComponent(id)}/respond`),
-  taskStream: (id: string) =>
-    url(`/api/tasks/${encodeURIComponent(id)}/stream`),
-  aiCommand: () => url("/api/ai/command"),
-  aiComplete: () => url("/api/ai/complete"),
-  extract: () => url("/api/extract"),
-  embed: () => url("/api/embed"),
-  summarize: () => url("/api/summarize"),
-  share: () => url("/api/share"),
-  shareToken: (token: string) =>
-    url(`/api/share/${encodeURIComponent(token)}`),
-  memoryExtract: () => url("/api/memory/extract"),
-  mcp: (serverId: string, action: "discover" | "call" | "read") =>
-    url(`/api/mcp/${encodeURIComponent(serverId)}/${action}`),
-  mcpServer: () => url("/api/mcp/server"),
-  urlFetch: () => url("/api/url/fetch"),
-  imagesRefreshUrl: () => url("/api/images/refresh-url"),
-  filesRefreshUrl: () => url("/api/files/refresh-url"),
-  extractTable: () => url("/api/extract-table"),
+  aiCommand: () => `${AGENT_PY_BASE_URL}/v1/ai/command`,
+  aiComplete: () => `${AGENT_PY_BASE_URL}/v1/ai/complete`,
+}
+
+/** Whether this deploy names a backend (`NEXT_PUBLIC_AGENT_PY_URL`). Not
+ *  `AGENT_PY_BASE_URL !== ""`: the same-origin value `/` resolves to an
+ *  empty prefix. */
+export function isAgentPyConfigured(): boolean {
+  return AGENT_PY.configured
 }
 
 /**
@@ -416,332 +285,45 @@ function errorOf(body: ErrorBody): { code?: string; message?: string } {
   return { code: body.code, message: body.message ?? body.error }
 }
 
-// --- /api/chat (streaming) --------------------------------------------------
-
-export interface ChatStreamResult {
-  ok: boolean
-  status: number
-  body: ReadableStream<Uint8Array> | null
-  /** Populated on non-OK; same shape callers built inline before. */
-  error?: { code?: string; message?: string }
-}
-
-/** The persisted backend choice (`chatBackend` on the UI slice). */
-export type ChatBackendOption = ChatBackend
-
-export interface ChatStreamOptions {
-  signal?: AbortSignal
-  /** Which backend to call. Defaults to `'ts'` — the Next.js route.
-   *  `'python'` calls the agent-py service's `/v1/chat`; requires a
-   *  reachable `NEXT_PUBLIC_AGENT_PY_URL` AND an `authToken`.
-   *  `'ts-service'` calls the agent-ts service's `/v1/chat`;
-   *  requires `NEXT_PUBLIC_AGENT_TS_URL` AND an `authToken`. Any
-   *  prerequisite missing → silently falls through to the TS route.
-   *  `'python-runs'` is sent exactly as `'python'` here: chat on runs
-   *  goes through `apiClient.runs.*` instead (wave 4b-A), never this. */
-  backend?: ChatBackendOption
-  /** Supabase session JWT, required when `backend === 'python'` or
-   *  `backend === 'ts-service'`. Caller resolves via
-   *  `supabase.auth.getSession()`. */
-  authToken?: string | null
-}
-
-/**
- * Initiates a chat request. Returns the raw stream so the caller can
- * parse the SSE frames itself — the protocol is documented in
- * `docs/API.md`. The chat panel currently does this inline because the
- * frame handling is tightly coupled to its placeholder + tool-call
- * state machine.
- *
- * Phase 4-2: agent-py backend dispatch. Phase 5 of PLAN-agent-ts:
- * agent-ts backend dispatch. `options.backend === 'python'` routes
- * to agent-py's `/v1/chat`; `'ts-service'` routes to agent-ts's
- * `/v1/chat`. Either falls back to the in-Next TS route on any
- * prerequisite failure (URL unset / token missing). The SSE wire
- * shape matches across all three producers (text / error / done
- * frames + optional tool_call / tool_result / tool_image) so the
- * consumer (`use-chat-send.ts`) doesn't branch on backend.
- */
-async function chatStream(
-  body: ChatRequestInput,
-  options?: ChatStreamOptions
-): Promise<ChatStreamResult> {
-  const token = options?.authToken ?? null
-  const hasToken = typeof token === "string" && token.length > 0
-
-  if (
-    isAgentPyBackend(options?.backend) &&
-    isAgentPyConfigured() &&
-    hasToken
-  ) {
-    return chatStreamRemote(body, AGENT_PY_BASE_URL, token, options.signal)
-  }
-  if (
-    options?.backend === "ts-service" &&
-    isAgentTsConfigured() &&
-    hasToken
-  ) {
-    return chatStreamRemote(body, AGENT_TS_BASE_URL, token, options.signal)
-  }
-  return chatStreamTs(body, options)
-}
-
-async function chatStreamTs(
-  body: ChatRequestInput,
-  options?: ChatStreamOptions
-): Promise<ChatStreamResult> {
-  const res = await fetch(apiUrls.chat(), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: options?.signal,
-  })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
-    return {
-      ok: false,
-      status: res.status,
-      body: null,
-      error: errorOf(errBody),
-    }
-  }
-  return { ok: true, status: res.status, body: res.body }
-}
-
-/** Single remote-backend dispatch — used for both agent-py and
- *  agent-ts. Same wire shape, same JWT-bearer auth, same SSE
- *  response. Empty `model` short-circuits to the TS route since
- *  both services treat it as required and would 422. */
-async function chatStreamRemote(
-  body: ChatRequestInput,
-  baseUrl: string,
-  authToken: string,
-  signal: AbortSignal | undefined,
-): Promise<ChatStreamResult> {
-  const narrowed = narrowToRemoteBody(body)
-  if (!narrowed.model) {
-    return chatStreamTs(body, { signal })
-  }
-  const res = await fetch(`${baseUrl}/v1/chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${authToken}`,
-    },
-    body: JSON.stringify(narrowed),
-    signal,
-  })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
-    return {
-      ok: false,
-      status: res.status,
-      body: null,
-      error: errorOf(errBody),
-    }
-  }
-  return { ok: true, status: res.status, body: res.body }
-}
-
-// --- /api/tasks (long-running agent — enqueue + stream) -------------------
-
-/** Result of `tasksStart` / `tasksRespond`. The POST is a thin enqueue
- *  (returns 202); the caller opens `tasksResume` to watch events as the
- *  worker emits them. */
-export interface TaskEnqueueResult {
-  ok: boolean
-  status: number
-  runId?: string
-  error?: { code?: string; message?: string }
-}
-
-/**
- * Start a long-running task. After Phase 6 steps 3+4 of
- * `PLAN-agent-task-queue.md` this is a JSON POST that enqueues a `start`
- * job and returns `202 { runId }`. The caller then opens
- * `tasksResume(runId, 0)` to watch events as the background worker
- * produces them.
- */
-async function tasksStart(
-  body: TaskRequestInput,
-  options?: { signal?: AbortSignal }
-): Promise<TaskEnqueueResult> {
-  const res = await fetch(apiUrls.tasks(), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: options?.signal,
-  })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
-    return {
-      ok: false,
-      status: res.status,
-      error: errorOf(errBody),
-    }
-  }
-  try {
-    const data = (await res.json()) as { runId?: string }
-    if (typeof data.runId !== "string" || !data.runId) {
-      return {
-        ok: false,
-        status: res.status,
-        error: { code: "invalid_response", message: "Server did not return a runId." },
-      }
-    }
-    return { ok: true, status: res.status, runId: data.runId }
-  } catch {
-    return {
-      ok: false,
-      status: res.status,
-      error: { code: "invalid_response", message: "Server response was not JSON." },
-    }
-  }
-}
-
-/**
- * Reconnect to a run's event log. Replays from `cursor` (the last
- * `seq` already folded) via the native `Last-Event-ID` SSE header, then
- * tails until the run settles. Same stream envelope as `tasksStart`.
- */
-async function tasksResume(
-  id: string,
-  options?: { cursor?: number; signal?: AbortSignal }
-): Promise<ChatStreamResult> {
-  const headers: Record<string, string> = {}
-  if (options?.cursor && options.cursor > 0) {
-    headers["Last-Event-ID"] = String(options.cursor)
-  }
-  const res = await fetch(apiUrls.taskStream(id), {
-    headers,
-    signal: options?.signal,
-  })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
-    return {
-      ok: false,
-      status: res.status,
-      body: null,
-      error: errorOf(errBody),
-    }
-  }
-  return { ok: true, status: res.status, body: res.body }
-}
-
-/**
- * Request cancellation of a running task. The server flips the run's
- * status to `cancelled`; the runner settles on its next between-step
- * poll. Idempotent — cancelling an already-settled run is a no-op.
- */
-async function tasksCancel(
-  id: string
-): Promise<{ ok: boolean; status: number; error?: { code?: string; message?: string } }> {
-  const res = await fetch(apiUrls.taskCancel(id), { method: "POST" })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
-    return {
-      ok: false,
-      status: res.status,
-      error: errorOf(errBody),
-    }
-  }
-  return { ok: true, status: res.status }
-}
-
-/**
- * Resolve a HITL pending input on a paused run — approve/reject a
- * gated tool, choose option(s), or submit a value. After Phase 6
- * steps 3+4, this is a thin JSON POST that enqueues a `respond` job
- * and returns 202. The caller relies on its existing resume-stream
- * subscription to see the continuation.
- */
-async function tasksRespond(
-  id: string,
-  body: RespondRequestInput,
-  options?: { signal?: AbortSignal }
-): Promise<{ ok: boolean; status: number; error?: { code?: string; message?: string } }> {
-  const res = await fetch(apiUrls.taskRespond(id), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: options?.signal,
-  })
-  if (!res.ok) {
-    const errBody = await readErrorBody(res)
-    return {
-      ok: false,
-      status: res.status,
-      error: errorOf(errBody),
-    }
-  }
-  return { ok: true, status: res.status }
-}
-
-/**
- * Reconcile the caller's orphaned runs (best-effort). Called on
- * dashboard mount so runs whose function died mid-stream get flipped to
- * `failed` server-side. Returns the count reconciled; swallows failures.
- */
-async function tasksSweep(): Promise<number> {
-  try {
-    const res = await fetch(apiUrls.taskSweep(), { method: "POST" })
-    if (!res.ok) return 0
-    const data = (await res.json()) as { failed?: number }
-    return typeof data.failed === "number" ? data.failed : 0
-  } catch {
-    return 0
-  }
-}
-
-// --- /api/tasks/schedules (recurring task runs) ----------------------------
-// agent-py serves these at `/v1/tasks/schedules[/{id}]` (same shapes);
-// `python` accounts go there, everyone else (agent-ts is frozen, and the
-// in-Next fallback) keeps the Next routes.
-
-/** URL + headers for one schedules call, after `agentPyOnlyDispatch`. */
-async function scheduleRequest(
-  remotePath: string,
-  localUrl: string,
-  options: DispatchOption | undefined,
-  hasBody: boolean,
-): Promise<{ url: string; headers: Record<string, string> }> {
-  const dispatch = await agentPyOnlyDispatch(options, remotePath)
-  const headers: Record<string, string> = hasBody
-    ? { "Content-Type": "application/json" }
-    : {}
-  if (dispatch.dispatch === "remote") {
-    if (dispatch.remote.authToken) {
-      headers.Authorization = `Bearer ${dispatch.remote.authToken}`
-    }
-    return { url: `${dispatch.remote.baseUrl}${remotePath}`, headers }
-  }
-  return { url: localUrl, headers }
-}
+// --- /v1/tasks/schedules (recurring task runs) -----------------------------
 
 const SCHEDULES_PATH = "/v1/tasks/schedules"
 const scheduleByIdPath = (id: string) =>
   `${SCHEDULES_PATH}/${encodeURIComponent(id)}`
 
-async function scheduleErrorResult(res: Response) {
-  const errBody = await readErrorBody(res)
+type ScheduleFailure = {
+  ok: false
+  status: number
+  error: { code?: string; message?: string }
+}
+
+/** One schedules request: agent-py, bearer when signed in (account-bound:
+ *  tokenless, agent-py answers `401 auth_required`). */
+async function scheduleFetch(
+  path: string,
+  init: { method: "GET" | "POST" | "PATCH" | "DELETE"; body?: unknown; background?: boolean },
+  options: CallOptions | undefined,
+): Promise<{ ok: true; res: Response } | ScheduleFailure> {
+  const target = await targetFor(options)
+  const hasBody = init.body !== undefined
+  const res = await fetch(`${target.baseUrl}${path}`, {
+    method: init.method,
+    headers: requestHeaders(target, hasBody),
+    body: hasBody ? JSON.stringify(init.body) : undefined,
+  })
+  if (res.ok) return { ok: true, res }
   return {
-    ok: false as const,
+    ok: false,
     status: res.status,
-    error: errorOf(errBody),
+    error: failureOf(res.status, await readErrorBody(res), target, init.background),
   }
 }
 
-async function schedulesList(options?: DispatchOption): Promise<ScheduleResponse[]> {
+async function schedulesList(options?: CallOptions): Promise<ScheduleResponse[]> {
   try {
-    const { url, headers } = await scheduleRequest(
-      SCHEDULES_PATH,
-      apiUrls.taskSchedules(),
-      options,
-      false,
-    )
-    const res = await fetch(url, { headers })
-    if (!res.ok) return []
-    const data = ScheduleListResponseSchema.parse(await res.json())
+    const out = await scheduleFetch(SCHEDULES_PATH, { method: "GET", background: true }, options)
+    if (!out.ok) return []
+    const data = ScheduleListResponseSchema.parse(await out.res.json())
     return data.schedules
   } catch {
     return []
@@ -750,99 +332,66 @@ async function schedulesList(options?: DispatchOption): Promise<ScheduleResponse
 
 async function schedulesCreate(
   body: ScheduleCreateInput,
-  options?: DispatchOption,
+  options?: CallOptions,
 ): Promise<
   | { ok: true; status: number; schedule: ScheduleResponse }
-  | { ok: false; status: number; error: { code?: string; message?: string } }
+  | ScheduleFailure
 > {
-  const { url, headers } = await scheduleRequest(
-    SCHEDULES_PATH,
-    apiUrls.taskSchedules(),
-    options,
-    true,
-  )
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) return scheduleErrorResult(res)
+  const out = await scheduleFetch(SCHEDULES_PATH, { method: "POST", body }, options)
+  if (!out.ok) return out
   return {
     ok: true,
-    status: res.status,
-    schedule: ScheduleResponseSchema.parse(await res.json()),
+    status: out.res.status,
+    schedule: ScheduleResponseSchema.parse(await out.res.json()),
   }
 }
 
 async function schedulesUpdate(
   id: string,
   patch: ScheduleUpdateInput,
-  options?: DispatchOption,
+  options?: CallOptions,
 ): Promise<
   | { ok: true; status: number; schedule: ScheduleResponse }
-  | { ok: false; status: number; error: { code?: string; message?: string } }
+  | ScheduleFailure
 > {
-  const { url, headers } = await scheduleRequest(
-    scheduleByIdPath(id),
-    apiUrls.taskScheduleById(id),
-    options,
-    true,
-  )
-  const res = await fetch(url, {
-    method: "PATCH",
-    headers,
-    body: JSON.stringify(patch),
-  })
-  if (!res.ok) return scheduleErrorResult(res)
+  const out = await scheduleFetch(scheduleByIdPath(id), { method: "PATCH", body: patch }, options)
+  if (!out.ok) return out
   return {
     ok: true,
-    status: res.status,
-    schedule: ScheduleResponseSchema.parse(await res.json()),
+    status: out.res.status,
+    schedule: ScheduleResponseSchema.parse(await out.res.json()),
   }
 }
 
 async function schedulesDelete(
   id: string,
-  options?: DispatchOption,
+  options?: CallOptions,
 ): Promise<{ ok: boolean; status: number; error?: { code?: string; message?: string } }> {
-  const { url, headers } = await scheduleRequest(
-    scheduleByIdPath(id),
-    apiUrls.taskScheduleById(id),
-    options,
-    false,
-  )
-  const res = await fetch(url, { method: "DELETE", headers })
-  if (!res.ok) return scheduleErrorResult(res)
-  return { ok: true, status: res.status }
+  const out = await scheduleFetch(scheduleByIdPath(id), { method: "DELETE" }, options)
+  if (!out.ok) return out
+  return { ok: true, status: out.res.status }
 }
 
-// --- /api/extract -----------------------------------------------------------
+// --- /v1/extract -------------------------------------------------------------
 
 /**
- * Posts a file for text extraction. Resolves to `null` on any failure —
- * callers (`runExtraction` in lib/extract.ts) treat that as a
- * pipeline failure and mark the file `failed`. We don't surface error
- * detail today because the file row's status badge carries that info.
- *
- * Goes to agent-py's `/v1/extract` on the agent-py backends — signed in,
- * and signed out on `python-runs` (wave 12, Q123/Q134); agent-ts
- * (frozen) and the in-Next backend keep `/api/extract`. Same multipart
- * body and response on both.
+ * Posts a file for text extraction (`/v1/extract`, multipart). Resolves
+ * to `null` on any failure — callers (`runExtraction` in lib/extract.ts)
+ * treat that as a pipeline failure and mark the file `failed`. We don't
+ * surface error detail today because the file row's status badge carries
+ * that info. agent-py serves it signed out too (Q123).
  */
 async function extract(
   file: File,
-  options?: { signal?: AbortSignal } & DispatchOption,
+  options?: { signal?: AbortSignal } & CallOptions,
 ): Promise<ExtractionResponse | null> {
   const form = new FormData()
   form.append("file", file)
   try {
-    const dispatch = await agentPyOnlyDispatch(options, "/v1/extract")
-    const remote = dispatch.dispatch === "remote" ? dispatch.remote : null
-    const headers: Record<string, string> = {}
-    if (remote?.authToken) headers.Authorization = `Bearer ${remote.authToken}`
-    const res = await fetch(remote ? `${remote.baseUrl}/v1/extract` : apiUrls.extract(), {
+    const target = await targetFor(options)
+    const res = await fetch(`${target.baseUrl}/v1/extract`, {
       method: "POST",
-      headers,
+      headers: requestHeaders(target, false),
       body: form,
       signal: options?.signal,
     })
@@ -853,36 +402,26 @@ async function extract(
   }
 }
 
-// --- /api/embed -------------------------------------------------------------
+// --- /v1/embed -------------------------------------------------------------
 
 /**
  * Chunk + embed a file's extracted text into the `file_sections` vector
- * table (PLAN-local-rag.md PR 2). Goes to agent-py's `/v1/embed` when
- * the account's backend is agent-py, else the in-Next route. Best-effort:
- * resolves to the parsed status on success, or `null` on any failure
- * (anonymous on Next → 401, network error, malformed response; anonymous
- * on agent-py is a `skipped / not_signed_in` result) — callers treat
- * indexing as background decoration that quietly no-ops when it can't
- * run.
+ * table (PLAN-local-rag.md PR 2). Best-effort: resolves to the parsed
+ * status on success (signed out it is a `skipped / not_signed_in`
+ * result), or `null` on any failure — callers treat indexing as
+ * background decoration that quietly no-ops when it can't run.
  */
 async function embedFile(
   body: EmbedRequestInput,
-  options?: { signal?: AbortSignal } & DispatchOption,
+  options?: { signal?: AbortSignal } & CallOptions,
 ): Promise<EmbedResponse | null> {
-  const result = await dispatchedFetch<
-    EmbedRequestInput,
-    EmbedRequestInput,
-    EmbedResponse
-  >({
+  const result = await dispatchedFetch<EmbedRequestInput, EmbedResponse>({
     path: "/v1/embed",
-    localUrl: apiUrls.embed(),
-    bodyForLocal: body,
+    body,
     schema: EmbedResponseSchema,
     signal: options?.signal,
-    // agent-py implements `/v1/embed`; agent-ts (frozen) does not, so a
-    // `ts-service` account stays on the in-Next route instead of a 404.
-    // Signed out it is a no-op skip on agent-py (Q134).
-    dispatch: await agentPyOnlyDispatch(options, "/v1/embed"),
+    target: options?.target,
+    background: true,
   })
   return result.ok ? result.data : null
 }
@@ -905,22 +444,17 @@ export function isAuthRequiredResult(value: unknown): value is AuthRequiredResul
   return value === AUTH_REQUIRED_RESULT
 }
 
-/** Map a failed dispatch to `AUTH_REQUIRED_RESULT` (and raise the
- *  sign-in toast) or `null`. `background` = not user-initiated. */
+/** Map a failed call to `AUTH_REQUIRED_RESULT` (its toast was raised by
+ *  `dispatchedFetch`) or `null`. */
 function failureResult(
   result: Extract<DispatchedFetchResult<unknown>, { ok: false }>,
-  background = false,
 ): AuthRequiredResult | null {
-  if (isAuthRequiredError(result.error)) {
-    notifyAuthRequired({ background })
-    return AUTH_REQUIRED_RESULT
-  }
-  return null
+  return isAuthRequiredError(result.error) ? AUTH_REQUIRED_RESULT : null
 }
 
-// --- /api/summarize ---------------------------------------------------------
+// --- /v1/summarize ---------------------------------------------------------
 
-type SummarizeOptions = { signal?: AbortSignal } & DispatchOption
+type SummarizeOptions = { signal?: AbortSignal } & CallOptions
 
 /** Internal: one POST + Zod-parse for any summarize mode. The four
  *  exported methods (file / conversation / compress / projectBreakdown)
@@ -936,21 +470,17 @@ async function summarizePost<T>(
   },
   options?: SummarizeOptions,
 ): Promise<T | AuthRequiredResult | null> {
-  const result = await dispatchedFetch<
-    SummarizeRequestInput,
-    SummarizeRequestInput,
-    T
-  >({
+  const result = await dispatchedFetch<SummarizeRequestInput, T>({
     path: "/v1/summarize",
-    localUrl: apiUrls.summarize(),
-    bodyForLocal: body,
+    body,
     schema,
     signal: options?.signal,
-    dispatch: options,
+    target: options?.target,
+    // File summaries run in the background on upload; the rest are
+    // user-initiated actions.
+    background: body.mode === "file",
   })
-  // File summaries run in the background on upload; the rest are
-  // user-initiated actions.
-  return result.ok ? result.data : failureResult(result, body.mode === "file")
+  return result.ok ? result.data : failureResult(result)
 }
 
 /** Summarises a single file's extracted text. Returns null on failure —
@@ -994,7 +524,7 @@ function summarizeProjectBreakdown(
   return summarizePost(body, ProjectBreakdownResponseSchema, options)
 }
 
-// --- /api/share -------------------------------------------------------------
+// --- /v1/share -------------------------------------------------------------
 
 export interface ShareCreateResult {
   ok: boolean
@@ -1003,23 +533,16 @@ export interface ShareCreateResult {
   error?: string
 }
 
-/** Mint a share token. agent-py accounts post to `/v1/share`; agent-ts
- *  (frozen, Q11) and in-Next accounts keep the Next route. Same body
- *  and response on both. */
+/** Mint a share token (`POST /v1/share`, account-bound). */
 async function createShare(
   body: CreateShareRequestInput,
-  options?: DispatchOption,
+  options?: CallOptions,
 ): Promise<ShareCreateResult> {
-  const result = await dispatchedFetch<
-    CreateShareRequestInput,
-    CreateShareRequestInput,
-    CreateShareResponse
-  >({
+  const result = await dispatchedFetch<CreateShareRequestInput, CreateShareResponse>({
     path: "/v1/share",
-    localUrl: apiUrls.share(),
-    bodyForLocal: body,
+    body,
     schema: CreateShareResponseSchema,
-    dispatch: await agentPyOnlyDispatch(options, "/v1/share"),
+    target: options?.target,
   })
   return result.ok
     ? { ok: true, status: result.status, data: result.data }
@@ -1041,9 +564,8 @@ export type ShareResolveResult =
  * Public read of a share for the read-only share pages:
  * `GET /v1/share/{token}` on agent-py. Anonymous by design — no
  * Authorization header, no cookies — so it works for viewers without an
- * account. Only used when a backend is configured
- * (`NEXT_PUBLIC_AGENT_PY_URL`); otherwise the share pages resolve the
- * share server-side as before and this returns `{ ok: false, status: 0 }`.
+ * account. Without a configured backend it returns `{ ok: false,
+ * status: 0 }` (the no-backend screen covers that deploy anyway).
  *
  * `options.baseUrl` overrides the configured prefix (tests).
  */
@@ -1072,63 +594,69 @@ async function resolveShareFromBackend(
   }
 }
 
-// --- /api/memory/extract ----------------------------------------------------
+/** Revoke a share (`DELETE /v1/share/{token}`, account-bound). */
+async function revokeShare(
+  token: string,
+  options?: CallOptions,
+): Promise<{ ok: boolean; status: number; error?: string }> {
+  const result = await dispatchedFetch<undefined, { ok: true }>({
+    method: "DELETE",
+    path: `/v1/share/${encodeURIComponent(token)}`,
+    body: undefined,
+    schema: RevokeShareResponseSchema,
+    target: options?.target,
+  })
+  return result.ok
+    ? { ok: true, status: result.status }
+    : { ok: false, status: result.status, error: result.error.message }
+}
+
+// --- /v1/memory/extract ----------------------------------------------------
 
 /**
  * Trigger best-effort cross-conversation memory extraction for one
- * finished turn. Resolves `true` when the backend accepted the body,
- * `false` on any failure (non-OK status, malformed response, network
- * error) — never rejects, so callers can fire-and-forget.
- *
- * Goes to agent-py's `/v1/memory/extract` when the account's backend is
- * agent-py; the in-Next backend and agent-ts (frozen, no such route)
- * keep the in-Next route. Same body on both.
+ * finished turn (`/v1/memory/extract`, account-bound). Resolves `true`
+ * when the backend accepted the body, `false` on any failure (non-OK
+ * status, malformed response, network error) — never rejects, so callers
+ * can fire-and-forget.
  */
 async function memoryExtract(
   body: MemoryExtractRequestInput,
-  options?: DispatchOption,
+  options?: CallOptions,
 ): Promise<boolean> {
-  const result = await dispatchedFetch<
-    MemoryExtractRequestInput,
-    MemoryExtractRequestInput,
-    MemoryExtractResponse
-  >({
+  const result = await dispatchedFetch<MemoryExtractRequestInput, MemoryExtractResponse>({
     path: "/v1/memory/extract",
-    localUrl: apiUrls.memoryExtract(),
-    bodyForLocal: body,
+    body,
     schema: MemoryExtractResponseSchema,
-    dispatch: await agentPyOnlyDispatch(options, "/v1/memory/extract"),
+    target: options?.target,
+    background: true,
   })
   return result.ok
 }
 
-/** In-flight dedupe cache for `refreshGeneratedImageUrl`. Keys on
- *  `storagePath` (in-Next) or `${remote.baseUrl}::${storagePath}`
- *  (remote) so a backend switch mid-session forces a fresh request.
- *  Module-scoped because the dedupe contract is "same logical URL
- *  re-sign in flight, share the promise." */
+/** In-flight dedupe cache for `refreshGeneratedImageUrl`, keyed on
+ *  `${baseUrl}::${storagePath}`. Module-scoped because the dedupe
+ *  contract is "same logical URL re-sign in flight, share the promise." */
 const refreshUrlInflight = new Map<
   string,
   Promise<DispatchedFetchResult<{ url: string }>>
 >()
 
+/** Re-sign a generated image's Storage URL (`/v1/images/refresh-url`,
+ *  snake_case body). */
 async function refreshGeneratedImageUrl(
   storagePath: string,
-  options?: DispatchOption,
+  options?: CallOptions,
 ): Promise<string | null> {
-  const result = await dispatchedFetch<
-    { storagePath: string },
-    { storage_path: string },
-    { url: string }
-  >({
+  const target = await targetFor(options)
+  const result = await dispatchedFetch<{ storage_path: string }, { url: string }>({
     path: "/v1/images/refresh-url",
-    localUrl: apiUrls.imagesRefreshUrl(),
-    bodyForLocal: { storagePath },
-    bodyForRemote: (b) => ({ storage_path: b.storagePath }),
+    body: { storage_path: storagePath },
     schema: RefreshImageUrlResponseSchema,
-    dispatch: options,
+    target,
+    background: true,
     inflight: refreshUrlInflight,
-    dedupeKey: await backendCacheKey(options, storagePath),
+    dedupeKey: `${target.baseUrl}::${storagePath}`,
   })
   if (!result.ok) return null
   return result.data.url
@@ -1141,51 +669,27 @@ const refreshFileUrlInflight = new Map<
   Promise<DispatchedFetchResult<{ url: string }>>
 >()
 
+/** Re-sign a generated file's Storage URL (`/v1/files/refresh-url`,
+ *  camelCase body, unlike the image one). */
 async function refreshGeneratedFileUrl(
   storagePath: string,
-  options?: DispatchOption,
+  options?: CallOptions,
 ): Promise<string | null> {
-  // agent-py only; agent-ts accounts use the in-Next route. Same
-  // camelCase body on both (agent-py mirrors the Zod schema here,
-  // unlike its snake_case `/v1/images/refresh-url`).
-  const dispatch = await agentPyOnlyDispatch(options, "/v1/files/refresh-url")
-  const result = await dispatchedFetch<
-    { storagePath: string },
-    { storagePath: string },
-    { url: string }
-  >({
+  const target = await targetFor(options)
+  const result = await dispatchedFetch<{ storagePath: string }, { url: string }>({
     path: "/v1/files/refresh-url",
-    localUrl: apiUrls.filesRefreshUrl(),
-    bodyForLocal: { storagePath },
+    body: { storagePath },
     schema: RefreshFileUrlResponseSchema,
-    dispatch,
+    target,
+    background: true,
     inflight: refreshFileUrlInflight,
-    dedupeKey: await backendCacheKey(dispatch, storagePath),
+    dedupeKey: `${target.baseUrl}::${storagePath}`,
   })
   if (!result.ok) return null
   return result.data.url
 }
 
-/** Revoke a share. Same dispatch as `createShare`: agent-py accounts
- *  call `DELETE /v1/share/{token}`, everyone else the Next route. */
-async function revokeShare(
-  token: string,
-  options?: DispatchOption,
-): Promise<{ ok: boolean; status: number; error?: string }> {
-  const result = await dispatchedFetch<undefined, undefined, { ok: true }>({
-    method: "DELETE",
-    path: `/v1/share/${encodeURIComponent(token)}`,
-    localUrl: apiUrls.shareToken(token),
-    bodyForLocal: undefined,
-    schema: RevokeShareResponseSchema,
-    dispatch: await agentPyOnlyDispatch(options, `/v1/share/${encodeURIComponent(token)}`),
-  })
-  return result.ok
-    ? { ok: true, status: result.status }
-    : { ok: false, status: result.status, error: result.error.message }
-}
-
-// --- /api/mcp (proxy) -------------------------------------------------------
+// --- /v1/mcp (proxy) -------------------------------------------------------
 
 /**
  * Posts an MCP proxy call. Returns the parsed JSON body on success; on
@@ -1196,7 +700,7 @@ async function revokeShare(
 type McpProxyOptions = {
   credentialHeader?: string
   signal?: AbortSignal
-} & DispatchOption
+} & CallOptions
 
 async function mcpProxyCall(
   action: "discover" | "call" | "read",
@@ -1218,19 +722,14 @@ async function mcpProxyCall(
   if (options?.credentialHeader) {
     extraHeaders["X-MCP-Credentials"] = options.credentialHeader
   }
-  const result = await dispatchedFetch<
-    Record<string, unknown>,
-    Record<string, unknown>,
-    Record<string, unknown>
-  >({
+  const result = await dispatchedFetch<Record<string, unknown>, Record<string, unknown>>({
     path: `/v1/mcp/${encodeURIComponent(serverId)}/${action}`,
-    localUrl: apiUrls.mcp(serverId, action),
-    bodyForLocal: body,
+    body,
     extraHeaders,
     signal: options?.signal,
     // Signed out: local-mode servers only (agent-py never looks up a
     // cloud-mode server for an anonymous caller).
-    dispatch: options,
+    target: options?.target,
   })
   if (!result.ok) {
     return {
@@ -1243,12 +742,13 @@ async function mcpProxyCall(
 }
 
 /**
- * Persists a cloud-mode MCP server config + credential. The browser
- * can't write to `credentials_encrypted` directly (no encryption key
- * client-side), so this route wraps the SECURITY DEFINER RPC.
+ * Persists a cloud-mode MCP server config + credential
+ * (`/v1/mcp/server`, account-bound). The browser can't write to
+ * `credentials_encrypted` directly (no encryption key client-side), so
+ * this route wraps the SECURITY DEFINER RPC.
  *
  * Returns `ok: true` on success. The credential never round-trips:
- * the route stores the encrypted ciphertext in Supabase and the client
+ * the backend stores the encrypted ciphertext in Supabase and the client
  * forgets it.
  */
 async function mcpUpsertCloudServer(
@@ -1262,20 +762,15 @@ async function mcpUpsertCloudServer(
     enabled?: boolean
     requires_approval?: boolean
   },
-  options?: DispatchOption,
+  options?: CallOptions,
 ): Promise<
   | { ok: true; status: number }
   | { ok: false; status: number; error: { code?: string; message?: string } }
 > {
-  const result = await dispatchedFetch<
-    typeof body,
-    typeof body,
-    Record<string, never>
-  >({
+  const result = await dispatchedFetch<typeof body, Record<string, never>>({
     path: "/v1/mcp/server",
-    localUrl: apiUrls.mcpServer(),
-    bodyForLocal: body,
-    dispatch: options,
+    body,
+    target: options?.target,
   })
   if (!result.ok) {
     return {
@@ -1287,7 +782,7 @@ async function mcpUpsertCloudServer(
   return { ok: true, status: result.status }
 }
 
-// --- /api/url/fetch ---------------------------------------------------------
+// --- /v1/url/fetch ---------------------------------------------------------
 
 export interface UrlFetchSnapshot {
   url: string
@@ -1306,20 +801,18 @@ export interface UrlFetchSnapshot {
  */
 async function urlFetchBookmark(
   url: string,
-  options?: DispatchOption,
+  options?: CallOptions,
 ): Promise<
   | { ok: true; status: number; bookmark: UrlFetchSnapshot }
   | { ok: false; status: number; error: { code?: string; message?: string } }
 > {
   const result = await dispatchedFetch<
     { url: string },
-    { url: string },
     { ok: boolean; bookmark: UrlFetchSnapshot }
   >({
     path: "/v1/url/fetch",
-    localUrl: apiUrls.urlFetch(),
-    bodyForLocal: { url },
-    dispatch: options,
+    body: { url },
+    target: options?.target,
   })
   if (!result.ok) {
     return {
@@ -1331,52 +824,24 @@ async function urlFetchBookmark(
   return { ok: true, status: result.status, bookmark: result.data.bookmark }
 }
 
-// --- /api/tasks/[id]/children -----------------------------------------------
-
-/**
- * Fetch the child subagent tasks for a parent run. Returns the children
- * array (id, status, goal, and a paused child's open question) on success;
- * `null` on any failure, so a failed poll keeps the questions shown
- * rather than reading as "no children".
- */
-async function taskChildren(
-  id: string
-): Promise<TaskChildrenResponse["children"] | null> {
-  try {
-    const res = await fetch(apiUrls.taskChildren(id))
-    if (!res.ok) return null
-    return TaskChildrenResponseSchema.parse(await res.json()).children
-  } catch {
-    return null
-  }
-}
-
-// --- /api/extract-table -----------------------------------------------------
+// --- /v1/extract-table -----------------------------------------------------
 
 /**
  * Extract a structured citation table from a research report and its
- * source list. Goes to agent-py's `/v1/extract-table` when the account's
- * backend is agent-py (and its prerequisites resolve) — signed out too on
- * `python-runs` (wave 12); everything else — the in-Next backend, agent-ts
- * (frozen, no such route), a missing session on `python` — uses the
- * in-Next route. Returns `null` on any failure —
- * callers treat a missing table as a degraded-but-safe outcome.
+ * source list (`/v1/extract-table`; agent-py serves it signed out too).
+ * Returns `null` on any failure — callers treat a missing table as a
+ * degraded-but-safe outcome.
  */
 async function extractTable(
   body: ExtractTableRequestInput,
-  options?: { signal?: AbortSignal } & DispatchOption,
+  options?: { signal?: AbortSignal } & CallOptions,
 ): Promise<CitationTable | AuthRequiredResult | null> {
-  const result = await dispatchedFetch<
-    ExtractTableRequestInput,
-    ExtractTableRequestInput,
-    CitationTable
-  >({
+  const result = await dispatchedFetch<ExtractTableRequestInput, CitationTable>({
     path: "/v1/extract-table",
-    localUrl: apiUrls.extractTable(),
-    bodyForLocal: body,
+    body,
     schema: CitationTableSchema,
     signal: options?.signal,
-    dispatch: await agentPyOnlyDispatch(options, "/v1/extract-table"),
+    target: options?.target,
   })
   return result.ok ? result.data : failureResult(result)
 }
@@ -1385,12 +850,11 @@ async function extractTable(
 
 export const apiClient = {
   urls: apiUrls,
-  chat: { stream: chatStream },
-  /** agent-py's runs API (`/v1/runs`) — chat on runs, "agent-py (runs)"
-   *  (Q33). Transport in `lib/client/runs/transport.ts`; sessions that
-   *  drive it through `@ag-ui/client` into the store are in
-   *  `lib/client/runs/session.ts` (see `lib/client/runs/README.md`).
-   *  Unlike the rest of `apiClient`, these throw `RunsError`. */
+  /** agent-py's runs API (`/v1/runs`) — chat on runs (Q33). Transport in
+   *  `lib/client/runs/transport.ts`; sessions that drive it through
+   *  `@ag-ui/client` into the store are in `lib/client/runs/session.ts`
+   *  (see `lib/client/runs/README.md`). Unlike the rest of `apiClient`,
+   *  these throw `RunsError`. */
   runs: {
     start: startRun,
     rejoin: rejoinRun,
@@ -1405,12 +869,6 @@ export const apiClient = {
     markDelivered: markRunDelivered,
   },
   tasks: {
-    start: tasksStart,
-    resume: tasksResume,
-    cancel: tasksCancel,
-    respond: tasksRespond,
-    sweep: tasksSweep,
-    listTaskChildren: taskChildren,
     schedules: {
       list: schedulesList,
       create: schedulesCreate,

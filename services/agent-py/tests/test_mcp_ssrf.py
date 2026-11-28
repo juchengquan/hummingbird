@@ -7,7 +7,7 @@ body, a `mcp_servers` row (user-editable under RLS) or an upsert. Pins:
     connect-time IP pinning through `_SsrfGuardBackend`, no redirects,
     `trust_env=False`;
   - `_open_session` re-validates the URL before any network I/O, whichever
-    caller (proxy, `/v1/chat`, executor) opened it, and hands the SDK the
+    caller (proxy, a run, executor) opened it, and hands the SDK the
     guarded factory + sanitised credential headers;
   - `POST /v1/mcp/server` refuses a private / loopback / metadata URL
     before the upsert RPC, with a detail-free message.

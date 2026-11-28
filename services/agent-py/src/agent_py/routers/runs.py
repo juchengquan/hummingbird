@@ -371,7 +371,7 @@ async def start_run(
     resume = body.resume or []
     if resume and fp.previousRunId is None:
         _raise(400, "invalid_request", "resume[] needs forwardedProps.previousRunId.")
-    # Before anything is created, as `/v1/chat` does: an unknown model is
+    # Before anything is created: an unknown model is
     # `400 unknown_model` with no row (the harness re-checks).
     try:
         validate_run_options(fp.model_dump(mode="json", exclude_none=True))

@@ -303,14 +303,12 @@ class ToolOutputEvent(TaskEventBase):
     only `webSearch`-shaped outputs populate this. None for tools
     whose output is plain text (`webFetch` summary)."""
     is_error: bool = False
-    """The tool failed; `summary` is the error text (chat's
-    `tool-output-available.errorText`). Serialised only when true."""
+    """The tool failed; `summary` is the error text. Serialised only
+    when true."""
     output: str | None = None
     """The tool's full result as the model received it (the
-    `tool_result.content` text) — `/v1/chat`'s
-    `tool-output-available.output`. **Transient**: carried in memory for
-    the AI SDK translator (`chat.AiSdkFrameTranslator`) and never written
-    to the log (`event_to_row_payload` leaves it out), since it can be
+    `tool_result.content` text). **Transient**: carried in memory only
+    and never written to the log (`event_to_row_payload` leaves it out), since it can be
     a whole fetched page; the run stream's `TOOL_CALL_RESULT` is built
     from `summary` / `results`. None when the producer did not set it."""
 
@@ -612,9 +610,8 @@ TaskEvent = (
 
 def event_to_row_payload(event: TaskEvent) -> dict[str, object]:
     """Serialise an event's kind-specific fields into the jsonb
-    `payload` column of `task_events`. Matches the keys the TS side
-    writes via `taskEventToRow` in `lib/shared/agent/persistence.ts`
-    so the projection reducer accepts rows from either producer.
+    `payload` column of `task_events` (the keys Next's task routes also
+    wrote before wave 13, so older rows read the same).
     """
     if isinstance(event, StatusEvent):
         status_payload: dict[str, object] = {"status": event.status}

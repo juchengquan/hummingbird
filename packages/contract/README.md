@@ -88,9 +88,8 @@ ride on the root `tsc` / `eslint` in the `ci` job.
 - Error responses reference `components/schemas/ErrorResponse` through
   the shared `components/responses/*`.
 - Field casing follows the wire as it already exists: the refresh-url
-  bodies use `storage_path` (agent-py's convention; the in-Next routes
-  take `storagePath`), extract-table uses camelCase (the client sends
-  the same body to both backends).
+  bodies use `storage_path` (agent-py's convention), extract-table uses
+  camelCase.
 
 ### Errors
 
@@ -110,9 +109,9 @@ exception handlers in `services/agent-py/src/agent_py/error_envelope.py`
 explicit code). Status codes are unchanged; agent-py's request
 validation still answers 422.
 
-**agent-ts** (`services/agent-ts`, frozen) still answers some errors in
-its older shapes and is **not claimed conformant** — only agent-py is
-run against the suite.
+agent-py is the only backend (wave 13: agent-ts and the in-Next routes
+were deleted, Q121/Q129) and the only one run against the suite; a
+future backend starts fresh against it.
 
 ### AG-UI and the runs operations (Phase 2)
 
@@ -180,9 +179,10 @@ marker **and** the entry, add its conformance cases, and run the suite.
 ### The Zod schemas
 
 `lib/shared/api-schemas.ts` (Zod) still validates responses in
-`lib/client/api-client.ts` and requests in the Next routes. Per Q19
-they are retired as endpoints move to the backend: as each Next route
-is removed (Phase 5) its Zod schemas go too, and the client parses with
+`lib/client/api-client.ts` (the Next routes that validated requests with
+it were deleted in wave 13). Per Q19 they are retired as endpoints move
+to the backend: a schema only a deleted Next route used goes, and the
+client parses with
 validators derived from this spec (e.g. Zod generated from
 `openapi.yaml`, or Ajv over the generated JSON Schema) instead of
 hand-written ones. Until then, a change to a `/v1` operation that

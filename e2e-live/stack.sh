@@ -64,8 +64,7 @@ wait_http http://127.0.0.1:8172/state
  "$PY" -B "$L/agent_live.py" ) > "$LOG/agent.log" 2>&1 & PIDS="$PIDS $!"
 wait_http http://127.0.0.1:8171/healthz
 NEXT_VARS=(NEXT_DIST_DIR=.next-e2e NEXT_TELEMETRY_DISABLED=1 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54871 NEXT_PUBLIC_SUPABASE_ANON_KEY="$ANON" \
- NEXT_PUBLIC_AGENT_PY_URL=http://127.0.0.1:8171 NEXT_PUBLIC_AGENT_TS_URL= NEXT_PUBLIC_API_BASE_URL= \
- SUPABASE_SERVICE_ROLE_KEY="$SVC" MCP_ENCRYPTION_KEY="$MCPKEY" MCP_ALLOW_PRIVATE_HOSTS=true AI_GATEWAY_API_KEY=fake-unused-key)
+ NEXT_PUBLIC_AGENT_PY_URL=http://127.0.0.1:8171 NEXT_PUBLIC_API_BASE_URL=)
 ( cd "$ROOT" && env "${NEXT_VARS[@]}" bun run build ) > "$LOG/build.log" 2>&1 || { echo "next build failed"; tail -20 "$LOG/build.log"; exit 1; }
 ( cd "$ROOT" && exec env "${NEXT_VARS[@]}" node node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3171 ) > "$LOG/next.log" 2>&1 & PIDS="$PIDS $!"
 wait_http http://127.0.0.1:3171

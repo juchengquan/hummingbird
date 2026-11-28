@@ -8,6 +8,6 @@
   "settings": [],
   "envVars": [],
   "shortcuts": [],
-  "mcpServers": { "sourceFile": "app/api/mcp" },
+  "mcpServers": { "sourceFile": "services/agent-py/src/agent_py/routers/mcp.py" },
   "agentTaskKinds": []
 }

@@ -157,9 +157,8 @@ async def mcp_server_upsert(
         )
 
     # Anti-SSRF: reject unsafe endpoints at save time so a blocked URL
-    # never lands in `mcp_servers` (same check as the Next.js / agent-ts
-    # upsert routes). Rows stay editable under RLS, so every use site —
-    # proxy, `/v1/chat`, the task executor — re-validates as well. MCP's
+    # never lands in `mcp_servers`. Rows stay editable under RLS, so every
+    # use site — the proxy, a run, the task executor — re-validates as well. MCP's
     # policy: private hosts only under `MCP_ALLOW_PRIVATE_HOSTS=true`.
     url_check = await validate_outbound_url(body.url, mcp_outbound_policy())
     if not isinstance(url_check, ValidationOk):

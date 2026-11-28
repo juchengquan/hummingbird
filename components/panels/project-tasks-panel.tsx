@@ -39,14 +39,11 @@ import {
   useStore,
   useWorkspaceProjectTasks,
 } from "@/client/hooks/use-store"
-import { useTaskRunContext } from "@/client/agent/task-run-context"
 import { ensureTaskNotificationPermission } from "@/client/agent/notify"
 import { useTasks } from "@/client/runs/tasks/context"
-import { useAuth } from "@/client/hooks/use-auth"
 import type { TaskSummary } from "@/client/runs/tasks/types"
-import { launchesOnRuns, launchTaskOnRuns, preLaunchRefusal } from "@/components/agent/tasks/launch"
+import { launchTaskOnRuns, preLaunchRefusal } from "@/components/agent/tasks/launch"
 import { isActivePhase, phaseLabel, taskGate } from "@/components/agent/tasks/phase"
-import { taskProgress } from "@/client/agent/task-progress"
 import { apiClient, isAuthRequiredResult } from "@/client/api-client"
 import { downloadAsFile, safeFilename } from "@/client/export"
 import {
@@ -65,33 +62,17 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/shared/utils"
 
 /**
- * Live state for the one card whose run is currently being observed.
- * Threaded down to the cards so the active card shows a spinner + step
- * counter (mirroring the chat-header task strip). Only one run is in
- * flight at a time — the substrate (`useTaskRun`) is single-run.
+ * The board's view of the tasks interface (wave 6): several cards run at
+ * once, each its own task. Threaded down to the cards so a running card
+ * shows its phase.
  */
 interface CardRunInfo {
-  /** The runId of the active run, matched against `task.taskId`. */
-  activeRunId: string | null
-  /** The card optimistically moved to In progress before its runId
-   *  arrived — matched against `task.id` so the spinner shows instantly. */
-  pendingCardId: string | null
-  running: boolean
-  /** It waits for the user: no spinner, say what it waits for. */
-  waitingForYou: string | null
-  step: number
-  maxSteps: number | null
-  /** Tasks need sign-in (bug 20), on both paths: no "Run as task". */
+  /** Tasks need sign-in (bug 20): no "Run as task". */
   signedOut: boolean
-  /** On runs (wave 6): several cards run at once, each its own task. */
-  runs?: {
-    /** The card's live task, matched by its root id (`taskId`), or null. */
-    taskOf: (card: ProjectTask) => TaskSummary | null
-    /** Cards whose launch is waiting for sync or the server. */
-    launching: ReadonlySet<string>
-    /** Launching is off (signed out). */
-    disabled: boolean
-  }
+  /** The card's live task, matched by its root id (`taskId`), or null. */
+  taskOf: (card: ProjectTask) => TaskSummary | null
+  /** Cards whose launch is waiting for sync or the server. */
+  launching: ReadonlySet<string>
 }
 
 const COLUMN_LABELS: Record<ProjectTaskStatus, string> = {
@@ -121,10 +102,8 @@ export function ProjectTasksPanel() {
   const setActiveView = useStore((s) => s.setActiveView)
   const artifacts = useStore((s) => s.artifacts)
 
-  const taskRun = useTaskRunContext()
   const runTasks = useTasks()
-  const onRuns = launchesOnRuns(runTasks)
-  const gate = taskGate(runTasks.availability, useAuth().status)
+  const gate = taskGate(runTasks.availability)
   const [launchingCards, setLaunchingCards] = useState<ReadonlySet<string>>(new Set())
 
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -139,30 +118,23 @@ export function ProjectTasksPanel() {
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   )
 
-  // The run id's stamp, a failed start's revert and the card's settle are
-  // the provider's (`startTask`, `settleTask`): this panel is often unmounted.
-  const runId = taskRun.runId
-  const pendingCardId = taskRun.launchingCardId
-
   // Launch a long-running task for a card: workspace system prompt +
   // skills cascade + the card title as the goal. The result lands as an
   // assistant message in the workspace's conversation (authored by the
   // task runner) and, on the board, as a linked markdown artifact.
   const runCard = (card: ProjectTask) => {
     if (!workspace) return
-    if (onRuns) {
-      // The cap (Q72) and sign-in gate a board launch like any other —
-      // not "one at a time" (bug 1).
-      const refused = preLaunchRefusal(runTasks)
-      if (refused) {
-        toast.error(refused.text)
-        return
-      }
-      if (launchingCards.has(card.id)) return
-      // Asked on the click itself (Q74): a task notifies when it needs
-      // an answer, fails or ends.
-      void ensureTaskNotificationPermission()
-    } else if (taskRun.isRunning || pendingCardId || gate !== "ready") return
+    // The cap (Q72) and sign-in gate a board launch like any other —
+    // not "one at a time" (bug 1).
+    const refused = preLaunchRefusal(runTasks)
+    if (refused) {
+      toast.error(refused.text)
+      return
+    }
+    if (launchingCards.has(card.id) || gate !== "ready") return
+    // Asked on the click itself (Q74): a task notifies when it needs
+    // an answer, fails or ends.
+    void ensureTaskNotificationPermission()
     const state = useStore.getState()
     const active = state.conversations.find(
       (c) => c.id === state.activeConversationId
@@ -211,11 +183,7 @@ export function ProjectTasksPanel() {
       ...(state.localFilesOnly ? { localFilesOnly: true } : {}),
     }
     moveProjectTask(card.id, "in_progress", 0)
-    if (!onRuns) {
-      taskRun.startTask(body, { title: card.title, projectTaskId: card.id })
-      return
-    }
-    // On runs: the conversation may have just been created, so the launch
+    // The conversation may have just been created, so the launch
     // waits for sync to push it (bug 5), then links the card to the
     // task's root, which names it for life (Q69).
     setLaunchingCards((ids) => new Set(ids).add(card.id))
@@ -248,31 +216,15 @@ export function ProjectTasksPanel() {
     toast.success("Sent result to editor")
   }
 
-  const taskState = taskProgress(taskRun.view, taskRun.childRuns)
   const run: CardRunInfo = {
-    activeRunId: runId,
-    pendingCardId,
-    running: taskRun.isRunning,
-    waitingForYou: taskState.paused ? taskState.label : null,
-    step: taskRun.view.step,
-    maxSteps: taskRun.view.maxSteps,
     signedOut: gate !== "ready",
-    ...(onRuns
-      ? {
-          runs: {
-            taskOf: (card: ProjectTask) =>
-              (runTasks.tasks ?? []).find(
-                (t) =>
-                  (!!card.taskId && t.rootRunId === card.taskId) ||
-                  t.projectTaskId === card.id
-              ) ?? null,
-            launching: launchingCards,
-            disabled:
-              runTasks.availability.ok === false &&
-              runTasks.availability.reason === "signed_out",
-          },
-        }
-      : {}),
+    taskOf: (card: ProjectTask) =>
+      (runTasks.tasks ?? []).find(
+        (t) =>
+          (!!card.taskId && t.rootRunId === card.taskId) ||
+          t.projectTaskId === card.id
+      ) ?? null,
+    launching: launchingCards,
   }
 
   // Cards grouped per column, memoised so drag re-renders stay cheap.
@@ -689,37 +641,23 @@ function CardShell({
   dragging?: boolean
 }) {
   const deleteProjectTask = useStore((s) => s.deleteProjectTask)
-  // This card is the one actively running iff its runId matches the
-  // active run, or it's the just-launched card whose runId hasn't
-  // arrived yet.
-  const runs = run?.runs
-  const live = runs?.taskOf(task) ?? null
-  const isRunning = runs
-    ? runs.launching.has(task.id) || (!!live && isActivePhase(live.phase))
-    : !!run?.running &&
-      ((!!task.taskId && task.taskId === run.activeRunId) ||
-        task.id === run.pendingCardId)
-  const waiting = runs
-    ? live && (live.phase === "needs_answer" || live.phase === "answer_sent")
+  // This card is running while its launch is in flight or its task is
+  // active.
+  const live = run?.taskOf(task) ?? null
+  const isRunning =
+    !!run && (run.launching.has(task.id) || (!!live && isActivePhase(live.phase)))
+  const waiting =
+    live && (live.phase === "needs_answer" || live.phase === "answer_sent")
       ? phaseLabel(live)
       : null
-    : run?.waitingForYou ?? null
-  const runningLabel = runs
-    ? live
-      ? phaseLabel(live)
-      : "Starting…"
-    : run && run.maxSteps
-      ? `Step ${run.step}/${run.maxSteps}`
-      : run && run.step > 0
-        ? `Step ${run.step}`
-        : "Working…"
+  const runningLabel = live ? phaseLabel(live) : "Starting…"
   const canRun =
     !dragging &&
     !!onRun &&
     task.status === "todo" &&
     !isRunning &&
-    !run?.signedOut &&
-    (runs ? !runs.disabled : !run?.running)
+    !!run &&
+    !run.signedOut
   const canViewResult = !dragging && !!onViewResult && !!task.artifactId
 
   return (

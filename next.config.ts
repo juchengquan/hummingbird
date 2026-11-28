@@ -32,32 +32,20 @@ const nextConfig: NextConfig = {
   // (components/agent/tasks/use-tasks-value.ts; scripts/audit-bundle.sh
   // checks). Next inlines only the NEXT_PUBLIC_* vars that are set.
   env: { NEXT_PUBLIC_E2E_TASKS_FAKE: process.env.NEXT_PUBLIC_E2E_TASKS_FAKE ?? "" },
-  // pdf-parse v2 wraps pdfjs-dist, which dynamically imports its worker
-  // (`pdf.worker.mjs`) relative to its own package location at runtime.
-  // Bundling those modules through Turbopack breaks the worker resolution
-  // ("Setting up fake worker failed: Cannot find module …pdf.worker.mjs").
-  // Marking them server-external makes Node resolve them from node_modules
-  // directly, which lets the worker discovery succeed.
-  //
-  // `mammoth` also reaches for its own files at runtime; same fix.
-  //
-  // `microsandbox` ships a native NAPI binding (native/index.cjs) that
-  // Turbopack can't place in an ESM chunk ("asset is not placeable in
-  // ESM chunks"). Server-external makes Node require it from node_modules
-  // at runtime. It's only reached behind the env-gated runCode skill.
-  //
-  // `pdf-to-img` renders PDF pages to PNG for the vision extraction path
-  // (`@/server/extraction/vision`). It depends on `@napi-rs/canvas`, a
-  // native NAPI binding Turbopack can't place in an ESM chunk — same
-  // class of issue as `microsandbox`. Server-external makes Node require
-  // it from node_modules at runtime. Only reached behind the
-  // vision-capable-model gate.
-  serverExternalPackages: ["pdf-parse", "pdfjs-dist", "mammoth", "microsandbox", "pdf-to-img"],
   // The app never renders `next/image` (plain `<img>` everywhere), so the
   // `/_next/image` optimizer endpoint is dead weight. Disabling it is
   // defense-in-depth against Image Optimization advisories (SSRF, AVIF/SVG
   // RCE) — there's no reason to expose that attack surface.
   images: { unoptimized: true },
+  // The browser never runs the Vercel AI Gateway provider, but `ai` (the
+  // editor's chat hook) imports it at its top level, and it names the
+  // gateway's key variable — which the bundle audit forbids (Q143). Browser
+  // builds get a stub with the same exports (lib/client/stubs/ai-sdk-gateway.ts).
+  turbopack: {
+    resolveAlias: {
+      "@ai-sdk/gateway": { browser: "./lib/client/stubs/ai-sdk-gateway.ts" },
+    },
+  },
   // Allow the dev server to be hit from LAN IPs (e.g. for testing on a
   // phone on the same Wi-Fi). Without this, Next.js 16+ warns about
   // cross-origin requests to `/_next/*` and will eventually block them.

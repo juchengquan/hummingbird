@@ -22,9 +22,6 @@ interface SelectionTriggerProps {
   chatModel: string
   /** Workspace-level system prompt for the request. */
   workspaceSystemPrompt?: string
-  /** Skills payload for the request — same shape as the chat panel
-   *  passes to /api/chat. */
-  skills?: Array<{ id: string }>
   /** Called when the user clicks "Quote in reply". The host (ChatPanel)
    *  decides what to do — typically: append a blockquote to the input,
    *  focus the textarea. */
@@ -60,7 +57,6 @@ export function SelectionTrigger({
   resolveContext,
   chatModel,
   workspaceSystemPrompt,
-  skills,
   onQuote,
   onPin,
 }: SelectionTriggerProps) {
@@ -169,7 +165,6 @@ export function SelectionTrigger({
             contextMessages={explainTarget.context}
             model={chatModel}
             workspaceSystemPrompt={workspaceSystemPrompt}
-            skills={skills}
             onPin={pinHandler}
             onClose={() => setExplainTarget(null)}
           />
@@ -180,7 +175,6 @@ export function SelectionTrigger({
             contextMessages={explainTarget.context}
             model={chatModel}
             workspaceSystemPrompt={workspaceSystemPrompt}
-            skills={skills}
             onPin={pinHandler}
             onClose={() => setExplainTarget(null)}
           />

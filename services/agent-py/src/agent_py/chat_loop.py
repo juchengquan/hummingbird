@@ -1,24 +1,18 @@
 """The interactive agent loop — one chat turn, emitted as internal events.
 
-Wave 3b-C of `docs/PLAN-frontend-backend-split.md`: the loop `/v1/chat`
-used to run inline while writing AI SDK frames now emits the run model's
-internal events (`events.py`) through a `RunEmitter`, and returns how
-the turn ended. Two consumers:
-
-  * `/v1/chat` (`chat.py`) drives it with a queue sink and translates
-    the events back into the AI SDK v5 UI-message-stream frames it has
-    always sent (`chat.AiSdkFrameTranslator`) — byte for byte, modulo
-    the random block ids;
-  * the native harness adapter (`runs/native_harness.py`) drives it with
-    the run driver's emitter, so a run's log gets exactly these events.
+Wave 3b-C of `docs/PLAN-frontend-backend-split.md`: the loop emits the
+run model's internal events (`events.py`) through a `RunEmitter`, and
+returns how the turn ended. The native harness adapter
+(`runs/native_harness.py`) drives it with the run driver's emitter, so a
+run's log gets exactly these events. (`/v1/chat`, which translated them
+into AI SDK frames, was removed in wave 13, Q121.)
 
 What it emits, per model call ("step"): `step_start`, `token`s (text /
 reasoning), then for each `tool_use` block `tool_input` and — unless the
 tool is gated — `step_error` (on failure) + `tool_output` (+ the
 `tool_image` / `tool_file` part of a tool that produced images / files,
 e.g. `generateImage`), then `step_end`. On a provider error or a cancel it returns with the step
-still open (no `step_end`), because `/v1/chat`'s wire has no
-`finish-step` there; a caller that wants a balanced log closes it
+still open (no `step_end`); a caller that wants a balanced log closes it
 (`LoopResult.step_open`). It never emits lifecycle events (`status`,
 `result`, `approval`) — the caller turns the returned outcome into those.
 
@@ -72,7 +66,6 @@ __all__ = [
     "AnswerHook",
     "CancelRequested",
     "CancelWatch",
-    "ChatConfig",
     "ChatMessage",
     "LoopCancelled",
     "LoopFailed",
@@ -132,24 +125,6 @@ class ChatMessage:
     content: str
 
 
-@dataclass(frozen=True)
-class ChatConfig:
-    """Per-request agent config.
-
-    Phase 4-3 adds `tools` + `max_steps` — when `tools` is non-empty,
-    the route uses `chat_stream_with_tools_ai_sdk` which loops
-    `messages.stream` + tool execution until the model produces a
-    text-only answer or `max_steps` is hit. Empty tools list falls
-    through to the Phase 4-1 text-only path."""
-
-    model: str
-    messages: list[ChatMessage]
-    system: str | None = None
-    max_tokens: int = DEFAULT_MAX_TOKENS
-    tools: tuple[ToolDescriptor, ...] = ()
-    max_steps: int = DEFAULT_MAX_STEPS
-
-
 # --- Provider errors ---------------------------------------------------------
 
 #: Regex matching Anthropic's "prompt is too long" / OpenAI-flavoured
@@ -171,9 +146,7 @@ _CONTEXT_WINDOW_RE = re.compile(
 
 def categorize_provider_error(exc: BaseException) -> ProviderErrorCode:
     """Bucket an Anthropic SDK exception into one of the four wire
-    codes. Mirrors `categorizeProviderError` in
-    `services/agent-ts/src/chat.ts` and the shared `categorizeError`
-    in `lib/shared/api-errors.ts`.
+    codes (the buckets Next's `categorizeError` used, before wave 13).
 
     Order matters — rate-limit-with-a-context-window-message would
     still be a rate limit, not a context bust. We check the Anthropic
@@ -412,9 +385,6 @@ class LoopFailed:
     code: str
     """The run's `ApiError` code: a `ProviderErrorCode` or `max_steps`."""
     message: str
-    wire_code: ProviderErrorCode
-    """What `/v1/chat`'s `error` frame carries (`max_steps` is `upstream`
-    there, as it always was)."""
 
 
 @dataclass(frozen=True)
@@ -442,8 +412,8 @@ class LoopResult:
 
 AnswerHook = Callable[[str], Awaitable[None]]
 """Awaited on the answering step, after its tokens and before its
-`step_end`, with the turn's whole text — where `/v1/chat` and the
-harness put the follow-up suggestions."""
+`step_end`, with the turn's whole text — where the harness puts the
+follow-up suggestions."""
 
 
 # --- Tools -----------------------------------------------------------------------
@@ -587,7 +557,7 @@ async def run_turn_loop(
     turn and its `tool_result` turn.
 
     Without tools no `tools` kwarg is sent and the final message is not
-    fetched (the text-only `/v1/chat` path); with tools each step reads
+    fetched (a run without tools); with tools each step reads
     `stream.get_final_message()` for its `tool_use` blocks.
 
     `thinking` (Anthropic's extended-thinking parameter, e.g.
@@ -663,9 +633,7 @@ async def run_turn_loop(
                 step_usage.flush(meter, model, None)
                 code = categorize_provider_error(exc)
                 return done(
-                    LoopFailed(
-                        code=code, message=str(exc) or "Chat stream failed.", wire_code=code
-                    ),
+                    LoopFailed(code=code, message=str(exc) or "Chat stream failed."),
                     step_open=True,
                 )
             step_usage.flush(meter, model, final_message)
@@ -722,7 +690,6 @@ async def run_turn_loop(
                     f"Chat exceeded {max_steps} tool-use iterations "
                     "without producing a final answer."
                 ),
-                wire_code="upstream",
             )
         )
     finally:

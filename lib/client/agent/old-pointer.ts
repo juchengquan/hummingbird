@@ -1,16 +1,15 @@
 import "client-only"
 
 /**
- * What `TaskRunProvider` does with the saved pointer to a task started the
- * old way (`humm.activeTask.<userId>`, `./active-task.ts`).
+ * What `OldTaskPointerHandOff` does with the saved pointer to a task
+ * started the old way (`humm.activeTask.<userId>`, `./active-task.ts`,
+ * written by the `/api/tasks` path before wave 13).
  *
- * Off runs (`ts`, `python`, `ts-service` until wave 13) the old path
- * watches it through `/api/tasks/:id/stream`, as before. On "agent-py
- * (runs)" it is followed through `/v1/runs` instead (Q126): it is the same
- * `tasks` row (a background run) the runs list already shows, watches,
- * answers, cancels and delivers, so the provider only opens the panel on
- * it and drops the pointer once the list shows the task ended. Nothing is
- * migrated, and nothing on runs reads an `/api/tasks` route.
+ * It is followed through `/v1/runs` (Q126): it is the same `tasks` row (a
+ * background run) the runs list already shows, watches, answers, cancels
+ * and delivers, so the hand-off only opens the panel on it and drops the
+ * pointer once the list shows the task ended. Nothing is migrated, and
+ * nothing reads an `/api/tasks` route.
  */
 
 import { isTerminalStatus } from "@/shared/agent/events"
@@ -19,24 +18,16 @@ import type { TaskError, TaskSummary, TasksAvailability } from "@/client/runs/ta
 
 /**
  * - `none` — nothing to follow here (no pointer, or signed out);
- * - `wait` — the session isn't read yet, so the backend isn't known;
+ * - `wait` — the session isn't read yet;
  * - `clear` — this browser already saw it end;
- * - `old_path` — watch it through `/api/tasks` (off runs);
  * - `runs` — the runs list has it (`runsHandOff`).
  */
-export type PointerPlan = "none" | "wait" | "clear" | "old_path" | "runs"
+export type PointerPlan = "none" | "wait" | "clear" | "runs"
 
-/** Which path follows a live pointer here, whatever the pointer. */
-export function pathOf(availability: TasksAvailability): Exclude<PointerPlan, "clear"> {
+/** What follows a live pointer here, whatever the pointer. */
+function pathOf(availability: TasksAvailability): Exclude<PointerPlan, "clear"> {
   if (availability.ok) return "runs"
-  switch (availability.reason) {
-    case "loading":
-      return "wait"
-    case "signed_out":
-      return "none"
-    case "not_runs":
-      return "old_path"
-  }
+  return availability.reason === "loading" ? "wait" : "none"
 }
 
 export function pointerPlan(
@@ -51,11 +42,11 @@ export function pointerPlan(
 const ENDED: ReadonlySet<string> = new Set(["succeeded", "failed", "cancelled"])
 
 /**
- * On runs, the pointer's task as the runs list has it: `wait` until a list
- * read succeeded; `focus` (open the panel on it) while it is live; `clear`
- * once it ended — the list delivers its result under the task's derived
- * ids (Q70), a no-op if the old path already wrote it — or when it isn't
- * listed (deleted, or another account's).
+ * The pointer's task as the runs list has it: `wait` until a list read
+ * succeeded; `focus` (open the panel on it) while it is live; `clear` once
+ * it ended — the list delivers its result under the task's derived ids
+ * (Q70), a no-op if the old path already wrote it — or when it isn't listed
+ * (deleted, or another account's).
  */
 export function runsHandOff(
   pointer: Pick<ActiveTaskRecord, "runId">,

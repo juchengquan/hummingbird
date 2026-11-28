@@ -98,7 +98,6 @@ const PAGE_MAP: PageMap = {
   // these entries become live then)
   "setting:theme": "12-settings-and-theme.md",
   "setting:colorScheme": "12-settings-and-theme.md",
-  "setting:chatBackend": "12-settings-and-theme.md",
   "setting:localOnlyMode": "12-settings-and-theme.md",
   "setting:localFilesOnly": "12-settings-and-theme.md",
   "setting:editorPrefs.aiReviewChanges": "12-settings-and-theme.md",

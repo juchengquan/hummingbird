@@ -228,11 +228,10 @@ describe("launch", () => {
     expect(t.pointers.launching()).toEqual([])
   })
 
-  test("signed out or not on runs: refused before anything is kept", async () => {
+  test("signed out: refused before anything is kept", async () => {
     const server = new FakeRunsServer()
     for (const [availability, code] of [
       [{ ok: false, reason: "signed_out" }, "auth_required"],
-      [{ ok: false, reason: "not_runs" }, "not_runs"],
     ] as const) {
       const t = tab({ server, overrides: { availability: () => availability } })
       const res = await t.controller.launch(INPUT)
@@ -395,11 +394,11 @@ describe("watching and answering a chain", () => {
   })
 })
 
-describe("only on runs (Q61)", () => {
-  test("not on agent-py (runs): no list read, no delivery, no notification", async () => {
+describe("only signed in", () => {
+  test("signed out: no list read, no delivery, no notification", async () => {
     const server = new FakeRunsServer()
     server.add(makeRun({ id: "00000000-0000-4000-8000-0000000000e1", status: "succeeded", result: { text: "x" } }))
-    const t = tab({ server, overrides: { availability: () => ({ ok: false, reason: "not_runs" }) } })
+    const t = tab({ server, overrides: { availability: () => ({ ok: false, reason: "signed_out" }) } })
     t.store.addConversation("4738a0ca-220f-43ff-b1c6-a75aa9265be1")
     t.controller.start()
     await t.controller.refreshNow()
@@ -410,7 +409,7 @@ describe("only on runs (Q61)", () => {
     expect(t.shown).toEqual([])
   })
 
-  test("on runs: every task is listed, old-path and scheduled ones included (Q76)", async () => {
+  test("signed in: every task is listed, old-path and scheduled ones included (Q76)", async () => {
     const server = new FakeRunsServer()
     server.add(makeRun({ id: "00000000-0000-4000-8000-0000000000e2", status: "running", goal: "old path" }))
     server.add(makeRun({ id: "00000000-0000-4000-8000-0000000000e3", status: "queued", goal: "scheduled" }))
