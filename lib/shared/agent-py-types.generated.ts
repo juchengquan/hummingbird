@@ -245,7 +245,7 @@ export interface paths {
          *     Everything else matches: structured output first when the catalog
          *     flags the model `supportsStructuredOutput`, then the lenient JSON
          *     text path; unparseable / off-schema output → 502 `provider`; a
-         *     provider error → `categorize_error` (port of `categorizeError`).
+         *     provider error → `categorize_error`.
          *     Signed in or anonymous (wave 12, Q123/Q134): an anonymous caller is
          *     refused under `REQUIRE_AUTH_FOR_AI` (`401 auth_required`) and otherwise
          *     gets the Next route's budget — no rate limit.
@@ -2008,7 +2008,7 @@ export interface components {
         };
         /**
          * SkillConfig
-         * @description A skill enabled for a run, with optional per-skill settings (`ChatRequestSchema.shape.skills` in `lib/shared/api-schemas.ts`).
+         * @description A skill enabled for a run, with optional per-skill settings.
          */
         SkillConfig: {
             /** Id */
