@@ -13,14 +13,14 @@
 #   scripts/codegen-agent-types.sh          # regenerate
 #   scripts/codegen-agent-types.sh --check  # CI mode: fail if drifted
 #
-# The generated file (`lib/shared/agent-py-types.generated.ts`) is checked
+# The generated file (`apps/web/lib/shared/agent-py-types.generated.ts`) is checked
 # into git so neither CI nor a fresh checkout needs to run the Python
 # service to typecheck. The check mode below ensures it's actually
 # current.
 
 set -euo pipefail
 
-GENERATED="lib/shared/agent-py-types.generated.ts"
+GENERATED="apps/web/lib/shared/agent-py-types.generated.ts"
 OPENAPI_URL="${AGENT_PY_OPENAPI_URL:-http://localhost:8000/openapi.json}"
 
 MODE="${1:-write}"

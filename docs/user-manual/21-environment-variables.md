@@ -1,20 +1,27 @@
 <!-- pages-for: env:* -->
-<!-- related: .env.example, config/providers.json, config/models.json -->
+<!-- related: apps/web/.env.example, services/agent-py/.env.example, config/providers.json, config/models.json -->
 
 # Environment variables
 
 ## What it is
-The full set of env vars Hummingbird reads. The canonical list with
-descriptions is in [`.env.example`](../../.env.example) - this page
-groups them by purpose and explains when each is needed.
+The full set of env vars Hummingbird reads. The canonical lists with
+descriptions are [`apps/web/.env.example`](../../apps/web/.env.example)
+and [`services/agent-py/.env.example`](../../services/agent-py/.env.example) -
+this page groups them by purpose and explains when each is needed.
 
 There are two readers. The **frontend** (the Next.js app) reads only
 the `NEXT_PUBLIC_*` variables and `CSP_MODE`; it holds no secrets and
 serves no API. **Everything else is read by the agent service**
 (agent-py, `services/agent-py/`), which serves chat, tasks, schedules,
 files, MCP and every other API surface - see its README's
-Configuration section for the full table. Both still read one shared
-`.env` at the repo root; a later release splits it per app.
+Configuration section for the full table. Each reads its own file:
+the frontend `apps/web/.env` (copy `apps/web/.env.example`), agent-py
+`services/agent-py/.env` (copy `services/agent-py/.env.example`). A
+value both need is set in each (`NEXT_PUBLIC_SUPABASE_URL` for the
+frontend, `SUPABASE_URL` for agent-py). The Frontend table below goes
+in `apps/web/.env`; every Agent service table in
+`services/agent-py/.env`. A root `.env` is not read;
+`bun run env:split` moves one into the two files.
 
 ## Frontend (Next.js)
 

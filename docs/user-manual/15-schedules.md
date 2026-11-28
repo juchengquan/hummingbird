@@ -1,5 +1,5 @@
 <!-- pages-for: panel:schedule-section -->
-<!-- related: components/panels/schedule-section.tsx, services/agent-py/src/agent_py/routers/schedules.py, services/agent-py/src/agent_py/scheduler.py -->
+<!-- related: apps/web/components/panels/schedule-section.tsx, services/agent-py/src/agent_py/routers/schedules.py, services/agent-py/src/agent_py/scheduler.py -->
 
 # Schedules
 

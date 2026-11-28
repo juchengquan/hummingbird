@@ -1,6 +1,6 @@
 # Hummingbird - User Manual
 
-> Generated TOC. Last inventory: 2026-11-27. Run `bun run docs:user-manual:build` to refresh.
+> Generated TOC. Last inventory: 2026-11-28. Run `bun run docs:user-manual:build` to refresh.
 
 ## Part 1 - Using Hummingbird
 
@@ -21,67 +21,67 @@
 
 | Panel | Source | Page |
 |---|---|---|
-| Agents Dialog | `components/panels/agents-dialog.tsx` | _unmapped_ |
-| Artifact Diff View | `components/panels/artifact-diff-view.tsx` | _unmapped_ |
-| Artifact History Panel | `components/panels/artifact-history-panel.tsx` | _unmapped_ |
-| Artifacts Tab | `components/panels/artifacts-tab.tsx` | [11-notes-and-bookmarks.md](11-notes-and-bookmarks.md) |
-| Canvas Panel | `components/panels/canvas.tsx` | [09-canvas.md](09-canvas.md) |
-| Chat Panel | `components/panels/chat.tsx` | [02-chat.md](02-chat.md) |
-| Chat Header | `components/panels/chat-header.tsx` | _unmapped_ |
-| Chat Message | `components/panels/chat-message.tsx` | _unmapped_ |
-| Chat Resources Panel | `components/panels/chat-resources-panel.tsx` | _unmapped_ |
-| Citation Cell Editor | `components/panels/citation-cell-editor.tsx` | _unmapped_ |
-| Citation Table View | `components/panels/citation-table.tsx` | _unmapped_ |
-| Citation Table Header | `components/panels/citation-table-header.tsx` | _unmapped_ |
-| Citation Table Row | `components/panels/citation-table-row.tsx` | _unmapped_ |
-| Code Result | `components/panels/code-result.tsx` | _unmapped_ |
-| Context Meter | `components/panels/context-meter.tsx` | _unmapped_ |
-| Conversation Files Section | `components/panels/conversation-files-section.tsx` | _unmapped_ |
-| Conversation Find Bar | `components/panels/conversation-find-bar.tsx` | [13-keyboard-shortcuts.md](13-keyboard-shortcuts.md) |
-| Editor Panel | `components/panels/editor.tsx` | [03-editor.md](03-editor.md) |
-| Empty Chat Welcome | `components/panels/empty-chat-welcome.tsx` | _unmapped_ |
-| Error Bubble | `components/panels/error-bubble.tsx` | _unmapped_ |
-| Extract Table Popover | `components/panels/extract-table-popover.tsx` | _unmapped_ |
-| Extraction Status Badge | `components/panels/extraction-status-badge.tsx` | _unmapped_ |
-| File Availability Badge | `components/panels/file-availability-badge.tsx` | _unmapped_ |
-| File Row Meta | `components/panels/file-row-meta.tsx` | _unmapped_ |
-| Files Tab Body | `components/panels/files-tab-body.tsx` | _unmapped_ |
-| Library Panel | `components/panels/library.tsx` | [14-library.md](14-library.md) |
-| Mcp Tab | `components/panels/mcp-tab.tsx` | _unmapped_ |
-| Message Attachments | `components/panels/message-attachments.tsx` | _unmapped_ |
-| Message Verification | `components/panels/message-verification.tsx` | _unmapped_ |
-| Notes Tab | `components/panels/notes-tab.tsx` | [11-notes-and-bookmarks.md](11-notes-and-bookmarks.md) |
-| Pins Tab | `components/panels/pins-tab.tsx` | [11-notes-and-bookmarks.md](11-notes-and-bookmarks.md) |
-| Project Tasks Panel | `components/panels/project-tasks-panel.tsx` | _unmapped_ |
-| Prompt Dialog | `components/panels/prompt-dialog.tsx` | [10-prompt-library.md](10-prompt-library.md) |
-| Prompt Variable Fill | `components/panels/prompt-variable-fill.tsx` | _unmapped_ |
-| Reasoning Block | `components/panels/reasoning-block.tsx` | _unmapped_ |
-| Save Artifact Dialog | `components/panels/save-artifact-dialog.tsx` | _unmapped_ |
-| Schedule Section | `components/panels/schedule-section.tsx` | [15-schedules.md](15-schedules.md) |
-| Skills Dialog | `components/panels/skills-dialog.tsx` | _unmapped_ |
-| Skills Tab | `components/panels/skills-tab.tsx` | _unmapped_ |
-| Slash Autocomplete | `components/panels/slash-autocomplete.tsx` | _unmapped_ |
-| Slash Help Dialog | `components/panels/slash-help-dialog.tsx` | _unmapped_ |
-| Resource Panel | `components/panels/sources.tsx` | [04-files-and-attachments.md](04-files-and-attachments.md) |
-| Sources Strip | `components/panels/sources-strip.tsx` | _unmapped_ |
-| Tab Empty State | `components/panels/tab-empty-state.tsx` | _unmapped_ |
-| Url Bookmarks Tab | `components/panels/url-bookmarks-tab.tsx` | [11-notes-and-bookmarks.md](11-notes-and-bookmarks.md) |
-| Workspace Detail Sheet | `components/panels/workspace-detail-sheet.tsx` | _unmapped_ |
-| Workspace Mcp Section | `components/panels/workspace-mcp-section.tsx` | _unmapped_ |
-| Workspace Row | `components/panels/workspace-row.tsx` | _unmapped_ |
-| Workspaces Panel | `components/panels/workspaces.tsx` | [01-getting-started.md](01-getting-started.md) |
+| Agents Dialog | `apps/web/components/panels/agents-dialog.tsx` | _unmapped_ |
+| Artifact Diff View | `apps/web/components/panels/artifact-diff-view.tsx` | _unmapped_ |
+| Artifact History Panel | `apps/web/components/panels/artifact-history-panel.tsx` | _unmapped_ |
+| Artifacts Tab | `apps/web/components/panels/artifacts-tab.tsx` | [11-notes-and-bookmarks.md](11-notes-and-bookmarks.md) |
+| Canvas Panel | `apps/web/components/panels/canvas.tsx` | [09-canvas.md](09-canvas.md) |
+| Chat Panel | `apps/web/components/panels/chat.tsx` | [02-chat.md](02-chat.md) |
+| Chat Header | `apps/web/components/panels/chat-header.tsx` | _unmapped_ |
+| Chat Message | `apps/web/components/panels/chat-message.tsx` | _unmapped_ |
+| Chat Resources Panel | `apps/web/components/panels/chat-resources-panel.tsx` | _unmapped_ |
+| Citation Cell Editor | `apps/web/components/panels/citation-cell-editor.tsx` | _unmapped_ |
+| Citation Table View | `apps/web/components/panels/citation-table.tsx` | _unmapped_ |
+| Citation Table Header | `apps/web/components/panels/citation-table-header.tsx` | _unmapped_ |
+| Citation Table Row | `apps/web/components/panels/citation-table-row.tsx` | _unmapped_ |
+| Code Result | `apps/web/components/panels/code-result.tsx` | _unmapped_ |
+| Context Meter | `apps/web/components/panels/context-meter.tsx` | _unmapped_ |
+| Conversation Files Section | `apps/web/components/panels/conversation-files-section.tsx` | _unmapped_ |
+| Conversation Find Bar | `apps/web/components/panels/conversation-find-bar.tsx` | [13-keyboard-shortcuts.md](13-keyboard-shortcuts.md) |
+| Editor Panel | `apps/web/components/panels/editor.tsx` | [03-editor.md](03-editor.md) |
+| Empty Chat Welcome | `apps/web/components/panels/empty-chat-welcome.tsx` | _unmapped_ |
+| Error Bubble | `apps/web/components/panels/error-bubble.tsx` | _unmapped_ |
+| Extract Table Popover | `apps/web/components/panels/extract-table-popover.tsx` | _unmapped_ |
+| Extraction Status Badge | `apps/web/components/panels/extraction-status-badge.tsx` | _unmapped_ |
+| File Availability Badge | `apps/web/components/panels/file-availability-badge.tsx` | _unmapped_ |
+| File Row Meta | `apps/web/components/panels/file-row-meta.tsx` | _unmapped_ |
+| Files Tab Body | `apps/web/components/panels/files-tab-body.tsx` | _unmapped_ |
+| Library Panel | `apps/web/components/panels/library.tsx` | [14-library.md](14-library.md) |
+| Mcp Tab | `apps/web/components/panels/mcp-tab.tsx` | _unmapped_ |
+| Message Attachments | `apps/web/components/panels/message-attachments.tsx` | _unmapped_ |
+| Message Verification | `apps/web/components/panels/message-verification.tsx` | _unmapped_ |
+| Notes Tab | `apps/web/components/panels/notes-tab.tsx` | [11-notes-and-bookmarks.md](11-notes-and-bookmarks.md) |
+| Pins Tab | `apps/web/components/panels/pins-tab.tsx` | [11-notes-and-bookmarks.md](11-notes-and-bookmarks.md) |
+| Project Tasks Panel | `apps/web/components/panels/project-tasks-panel.tsx` | _unmapped_ |
+| Prompt Dialog | `apps/web/components/panels/prompt-dialog.tsx` | [10-prompt-library.md](10-prompt-library.md) |
+| Prompt Variable Fill | `apps/web/components/panels/prompt-variable-fill.tsx` | _unmapped_ |
+| Reasoning Block | `apps/web/components/panels/reasoning-block.tsx` | _unmapped_ |
+| Save Artifact Dialog | `apps/web/components/panels/save-artifact-dialog.tsx` | _unmapped_ |
+| Schedule Section | `apps/web/components/panels/schedule-section.tsx` | [15-schedules.md](15-schedules.md) |
+| Skills Dialog | `apps/web/components/panels/skills-dialog.tsx` | _unmapped_ |
+| Skills Tab | `apps/web/components/panels/skills-tab.tsx` | _unmapped_ |
+| Slash Autocomplete | `apps/web/components/panels/slash-autocomplete.tsx` | _unmapped_ |
+| Slash Help Dialog | `apps/web/components/panels/slash-help-dialog.tsx` | _unmapped_ |
+| Resource Panel | `apps/web/components/panels/sources.tsx` | [04-files-and-attachments.md](04-files-and-attachments.md) |
+| Sources Strip | `apps/web/components/panels/sources-strip.tsx` | _unmapped_ |
+| Tab Empty State | `apps/web/components/panels/tab-empty-state.tsx` | _unmapped_ |
+| Url Bookmarks Tab | `apps/web/components/panels/url-bookmarks-tab.tsx` | [11-notes-and-bookmarks.md](11-notes-and-bookmarks.md) |
+| Workspace Detail Sheet | `apps/web/components/panels/workspace-detail-sheet.tsx` | _unmapped_ |
+| Workspace Mcp Section | `apps/web/components/panels/workspace-mcp-section.tsx` | _unmapped_ |
+| Workspace Row | `apps/web/components/panels/workspace-row.tsx` | _unmapped_ |
+| Workspaces Panel | `apps/web/components/panels/workspaces.tsx` | [01-getting-started.md](01-getting-started.md) |
 
 ### Sidebars
 
 | Sidebar | Source | Page |
 |---|---|---|
-| App Sidebar | `components/sidebars/application.tsx` | [01-getting-started.md](01-getting-started.md) |
-| Conversation Item | `components/sidebars/conversation-item.tsx` | [05-conversations-and-workspaces.md](05-conversations-and-workspaces.md) |
-| Document Item | `components/sidebars/document-item.tsx` | [05-conversations-and-workspaces.md](05-conversations-and-workspaces.md) |
-| Prompt Item | `components/sidebars/prompt-item.tsx` | [05-conversations-and-workspaces.md](05-conversations-and-workspaces.md) |
-| Resources Sidebar | `components/sidebars/resources.tsx` | [01-getting-started.md](01-getting-started.md) |
-| Resources Mobile Drawer | `components/sidebars/resources-mobile-drawer.tsx` | _unmapped_ |
-| Tasks Sidebar | `components/sidebars/tasks.tsx` | _unmapped_ |
+| App Sidebar | `apps/web/components/sidebars/application.tsx` | [01-getting-started.md](01-getting-started.md) |
+| Conversation Item | `apps/web/components/sidebars/conversation-item.tsx` | [05-conversations-and-workspaces.md](05-conversations-and-workspaces.md) |
+| Document Item | `apps/web/components/sidebars/document-item.tsx` | [05-conversations-and-workspaces.md](05-conversations-and-workspaces.md) |
+| Prompt Item | `apps/web/components/sidebars/prompt-item.tsx` | [05-conversations-and-workspaces.md](05-conversations-and-workspaces.md) |
+| Resources Sidebar | `apps/web/components/sidebars/resources.tsx` | [01-getting-started.md](01-getting-started.md) |
+| Resources Mobile Drawer | `apps/web/components/sidebars/resources-mobile-drawer.tsx` | _unmapped_ |
+| Tasks Sidebar | `apps/web/components/sidebars/tasks.tsx` | _unmapped_ |
 
 ### Slash commands
 
@@ -188,43 +188,43 @@
 
 > These inventory entries don't have a PAGE_MAP entry yet. Add a page that documents them and wire it up.
 
-- `panel:agents-dialog` (`components/panels/agents-dialog.tsx`) - Agents Dialog
-- `panel:artifact-diff-view` (`components/panels/artifact-diff-view.tsx`) - Artifact Diff View
-- `panel:artifact-history-panel` (`components/panels/artifact-history-panel.tsx`) - Artifact History Panel
-- `panel:chat-header` (`components/panels/chat-header.tsx`) - Chat Header
-- `panel:chat-message` (`components/panels/chat-message.tsx`) - Chat Message
-- `panel:chat-resources-panel` (`components/panels/chat-resources-panel.tsx`) - Chat Resources Panel
-- `panel:citation-cell-editor` (`components/panels/citation-cell-editor.tsx`) - Citation Cell Editor
-- `panel:citation-table-header` (`components/panels/citation-table-header.tsx`) - Citation Table Header
-- `panel:citation-table-row` (`components/panels/citation-table-row.tsx`) - Citation Table Row
-- `panel:citation-table` (`components/panels/citation-table.tsx`) - Citation Table View
-- `panel:code-result` (`components/panels/code-result.tsx`) - Code Result
-- `panel:context-meter` (`components/panels/context-meter.tsx`) - Context Meter
-- `panel:conversation-files-section` (`components/panels/conversation-files-section.tsx`) - Conversation Files Section
-- `panel:empty-chat-welcome` (`components/panels/empty-chat-welcome.tsx`) - Empty Chat Welcome
-- `panel:error-bubble` (`components/panels/error-bubble.tsx`) - Error Bubble
-- `panel:extract-table-popover` (`components/panels/extract-table-popover.tsx`) - Extract Table Popover
-- `panel:extraction-status-badge` (`components/panels/extraction-status-badge.tsx`) - Extraction Status Badge
-- `panel:file-availability-badge` (`components/panels/file-availability-badge.tsx`) - File Availability Badge
-- `panel:file-row-meta` (`components/panels/file-row-meta.tsx`) - File Row Meta
-- `panel:files-tab-body` (`components/panels/files-tab-body.tsx`) - Files Tab Body
-- `panel:mcp-tab` (`components/panels/mcp-tab.tsx`) - Mcp Tab
-- `panel:message-attachments` (`components/panels/message-attachments.tsx`) - Message Attachments
-- `panel:message-verification` (`components/panels/message-verification.tsx`) - Message Verification
-- `panel:project-tasks-panel` (`components/panels/project-tasks-panel.tsx`) - Project Tasks Panel
-- `panel:prompt-variable-fill` (`components/panels/prompt-variable-fill.tsx`) - Prompt Variable Fill
-- `panel:reasoning-block` (`components/panels/reasoning-block.tsx`) - Reasoning Block
-- `panel:save-artifact-dialog` (`components/panels/save-artifact-dialog.tsx`) - Save Artifact Dialog
-- `panel:skills-dialog` (`components/panels/skills-dialog.tsx`) - Skills Dialog
-- `panel:skills-tab` (`components/panels/skills-tab.tsx`) - Skills Tab
-- `panel:slash-autocomplete` (`components/panels/slash-autocomplete.tsx`) - Slash Autocomplete
-- `panel:slash-help-dialog` (`components/panels/slash-help-dialog.tsx`) - Slash Help Dialog
-- `panel:sources-strip` (`components/panels/sources-strip.tsx`) - Sources Strip
-- `panel:tab-empty-state` (`components/panels/tab-empty-state.tsx`) - Tab Empty State
-- `panel:workspace-detail-sheet` (`components/panels/workspace-detail-sheet.tsx`) - Workspace Detail Sheet
-- `panel:workspace-mcp-section` (`components/panels/workspace-mcp-section.tsx`) - Workspace Mcp Section
-- `panel:workspace-row` (`components/panels/workspace-row.tsx`) - Workspace Row
-- `sidebar:resources-mobile-drawer` (`components/sidebars/resources-mobile-drawer.tsx`) - Resources Mobile Drawer
-- `sidebar:tasks` (`components/sidebars/tasks.tsx`) - Tasks Sidebar
-- `skill:codeInterpreter` (`lib/shared/skills/registry.ts`) - Code interpreter
-- `slash:skills` (`lib/shared/commands/registry.ts`) - `/skills` Manage skills
+- `panel:agents-dialog` (`apps/web/components/panels/agents-dialog.tsx`) - Agents Dialog
+- `panel:artifact-diff-view` (`apps/web/components/panels/artifact-diff-view.tsx`) - Artifact Diff View
+- `panel:artifact-history-panel` (`apps/web/components/panels/artifact-history-panel.tsx`) - Artifact History Panel
+- `panel:chat-header` (`apps/web/components/panels/chat-header.tsx`) - Chat Header
+- `panel:chat-message` (`apps/web/components/panels/chat-message.tsx`) - Chat Message
+- `panel:chat-resources-panel` (`apps/web/components/panels/chat-resources-panel.tsx`) - Chat Resources Panel
+- `panel:citation-cell-editor` (`apps/web/components/panels/citation-cell-editor.tsx`) - Citation Cell Editor
+- `panel:citation-table-header` (`apps/web/components/panels/citation-table-header.tsx`) - Citation Table Header
+- `panel:citation-table-row` (`apps/web/components/panels/citation-table-row.tsx`) - Citation Table Row
+- `panel:citation-table` (`apps/web/components/panels/citation-table.tsx`) - Citation Table View
+- `panel:code-result` (`apps/web/components/panels/code-result.tsx`) - Code Result
+- `panel:context-meter` (`apps/web/components/panels/context-meter.tsx`) - Context Meter
+- `panel:conversation-files-section` (`apps/web/components/panels/conversation-files-section.tsx`) - Conversation Files Section
+- `panel:empty-chat-welcome` (`apps/web/components/panels/empty-chat-welcome.tsx`) - Empty Chat Welcome
+- `panel:error-bubble` (`apps/web/components/panels/error-bubble.tsx`) - Error Bubble
+- `panel:extract-table-popover` (`apps/web/components/panels/extract-table-popover.tsx`) - Extract Table Popover
+- `panel:extraction-status-badge` (`apps/web/components/panels/extraction-status-badge.tsx`) - Extraction Status Badge
+- `panel:file-availability-badge` (`apps/web/components/panels/file-availability-badge.tsx`) - File Availability Badge
+- `panel:file-row-meta` (`apps/web/components/panels/file-row-meta.tsx`) - File Row Meta
+- `panel:files-tab-body` (`apps/web/components/panels/files-tab-body.tsx`) - Files Tab Body
+- `panel:mcp-tab` (`apps/web/components/panels/mcp-tab.tsx`) - Mcp Tab
+- `panel:message-attachments` (`apps/web/components/panels/message-attachments.tsx`) - Message Attachments
+- `panel:message-verification` (`apps/web/components/panels/message-verification.tsx`) - Message Verification
+- `panel:project-tasks-panel` (`apps/web/components/panels/project-tasks-panel.tsx`) - Project Tasks Panel
+- `panel:prompt-variable-fill` (`apps/web/components/panels/prompt-variable-fill.tsx`) - Prompt Variable Fill
+- `panel:reasoning-block` (`apps/web/components/panels/reasoning-block.tsx`) - Reasoning Block
+- `panel:save-artifact-dialog` (`apps/web/components/panels/save-artifact-dialog.tsx`) - Save Artifact Dialog
+- `panel:skills-dialog` (`apps/web/components/panels/skills-dialog.tsx`) - Skills Dialog
+- `panel:skills-tab` (`apps/web/components/panels/skills-tab.tsx`) - Skills Tab
+- `panel:slash-autocomplete` (`apps/web/components/panels/slash-autocomplete.tsx`) - Slash Autocomplete
+- `panel:slash-help-dialog` (`apps/web/components/panels/slash-help-dialog.tsx`) - Slash Help Dialog
+- `panel:sources-strip` (`apps/web/components/panels/sources-strip.tsx`) - Sources Strip
+- `panel:tab-empty-state` (`apps/web/components/panels/tab-empty-state.tsx`) - Tab Empty State
+- `panel:workspace-detail-sheet` (`apps/web/components/panels/workspace-detail-sheet.tsx`) - Workspace Detail Sheet
+- `panel:workspace-mcp-section` (`apps/web/components/panels/workspace-mcp-section.tsx`) - Workspace Mcp Section
+- `panel:workspace-row` (`apps/web/components/panels/workspace-row.tsx`) - Workspace Row
+- `sidebar:resources-mobile-drawer` (`apps/web/components/sidebars/resources-mobile-drawer.tsx`) - Resources Mobile Drawer
+- `sidebar:tasks` (`apps/web/components/sidebars/tasks.tsx`) - Tasks Sidebar
+- `skill:codeInterpreter` (`apps/web/lib/shared/skills/registry.ts`) - Code interpreter
+- `slash:skills` (`apps/web/lib/shared/commands/registry.ts`) - `/skills` Manage skills

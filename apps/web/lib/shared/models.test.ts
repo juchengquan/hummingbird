@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { existsSync, readFileSync } from "node:fs"
+import { join } from "node:path"
+
+import bundledCatalog from "@config/models.json"
 
 import {
   ANTHROPIC_SERVICE_MODELS,
@@ -81,5 +85,26 @@ describe("agent-service allowlist (anthropic/* entries)", () => {
     for (const m of entries) {
       expect(m.anthropicModelId).toMatch(/^claude-[a-z0-9-]+$/)
     }
+  })
+})
+
+// Q153: one catalog for both halves. The web app bundles the repo root's
+// config/models.json through `@config/*`; agent-py reads the same file
+// (services/agent-py/tests/test_model_allowlist.py pins its side).
+describe("the catalog is the repo root's config/models.json", () => {
+  const repoRoot = join(import.meta.dir, "..", "..", "..", "..")
+
+  test("@config/models.json is that file, not a copy", () => {
+    const onDisk = JSON.parse(readFileSync(join(repoRoot, "config", "models.json"), "utf8"))
+    expect(bundledCatalog).toEqual(onDisk)
+  })
+
+  test("apps/web keeps no catalog of its own", () => {
+    expect(existsSync(join(repoRoot, "apps", "web", "config"))).toBe(false)
+  })
+
+  test("the alias points at the root's config/", () => {
+    const tsconfig = readFileSync(join(repoRoot, "apps", "web", "tsconfig.json"), "utf8")
+    expect(tsconfig).toContain('"@config/*": ["../../config/*"]')
   })
 })

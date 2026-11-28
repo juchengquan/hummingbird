@@ -57,7 +57,7 @@ from .routers.health import HealthResponse, ReadinessChecks, ReadinessResponse
 from .routers.mcp import _decode_mcp_credential_header
 from .runs import reconcile as runs_reconcile
 from .runs import wiring as runs_wiring
-from .settings import Settings, get_settings
+from .settings import Settings, get_settings, refuse_stale_root_env
 
 logger = structlog.get_logger(__name__)
 
@@ -132,6 +132,7 @@ def create_app(*, enable_poller: bool = True) -> FastAPI:
     `enable_poller` exists for tests that don't want the background
     task interfering with assertions; production callers leave it on.
     """
+    refuse_stale_root_env()
     settings = get_settings()
 
     # Fail fast: load `config/models.json` + check `AGENT_DEFAULT_MODEL`

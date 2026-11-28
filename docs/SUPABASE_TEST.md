@@ -125,12 +125,12 @@ indexed extra =          924 KB      (1024 - 100)
 
 If the badge reads anything other than `+924 KB indexed` for a
 1148 KB fixture, one of the caps changed — re-check
-`app/api/extract/route.ts` and the math above.
+`services/agent-py/src/agent_py/extraction.py` and the math above.
 
 ### Boundary probe
 
 Upload a small file (under 100 KB) and confirm the badge is **absent**.
-The conditional in `components/panels/extraction-status-badge.tsx`
+The conditional in `apps/web/components/panels/extraction-status-badge.tsx`
 gates the `+N KB indexed` suffix on `extractedFullText > extractedText`
 — a file that fits inline shouldn't trip it.
 
@@ -171,15 +171,19 @@ What this adds beyond the Quick check:
 bun run supabase:start
 bun run supabase:reset       # applies 0001-0009 fresh
 
-# 2. Set Supabase env (these come from `supabase status`)
-export NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
-export NEXT_PUBLIC_SUPABASE_ANON_KEY=<from supabase status>
+# 2. The web app's env, in apps/web/.env (Supabase values from `supabase status`)
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<from supabase status>
+NEXT_PUBLIC_AGENT_PY_URL=http://localhost:8000
 
-# 3. Set a working model provider key — any of these works
-export AI_GATEWAY_API_KEY=<your gateway key>
+# 3. agent-py's env, in services/agent-py/.env — a working model provider
+#    key (any of these works) and the web app's origin
+AI_GATEWAY_API_KEY=<your gateway key>
 # or MINIMAX_CN_API_KEY=… with MINIMAX_CN_BASE_URL=…
+CORS_ALLOWED_ORIGINS=http://localhost:3000
 
-# 4. Boot the app
+# 4. Boot agent-py and the app
+docker compose up -d agent-py
 bun dev
 ```
 

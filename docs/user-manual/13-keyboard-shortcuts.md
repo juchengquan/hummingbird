@@ -1,5 +1,5 @@
 <!-- pages-for: shortcut:*, panel:conversation-find-bar -->
-<!-- related: components/help-popover.tsx, components/command-palette.tsx, components/panels/conversation-find-bar.tsx -->
+<!-- related: apps/web/components/help-popover.tsx, apps/web/components/command-palette.tsx, apps/web/components/panels/conversation-find-bar.tsx -->
 
 # Keyboard shortcuts
 

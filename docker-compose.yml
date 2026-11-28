@@ -14,13 +14,13 @@
 # front of both halves, the way a deployment serves them:
 #   bun dev                               # Next on the host, port 3000
 #   docker compose up proxy agent-py      # Caddy on :8080 + agent-py
-#   # with NEXT_PUBLIC_AGENT_PY_URL=/ in .env.local, open http://localhost:8080
+#   # with NEXT_PUBLIC_AGENT_PY_URL=/ in apps/web/.env.local, open http://localhost:8080
 # The proxy sends /v1/*, /healthz and /readyz to agent-py and everything
 # else to the Next dev server (.docker/proxy/Caddyfile).
 #
 # Phase 0 ship: just the agent service. Phase 1+ may add the Supabase local
 # stack here too (Supabase CLI already supports compose); for now the
-# agent talks to whatever Supabase project the top-level `.env` points at.
+# agent talks to whatever Supabase project services/agent-py/.env points at.
 
 services:
   agent-py:
@@ -33,9 +33,10 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      # Reuses the same .env the Next.js side reads. SUPABASE_JWT_SECRET is
-      # the only required value; the rest are silently ignored.
-      - .env
+      # agent-py's own settings (services/agent-py/.env.example; the web app
+      # has apps/web/.env, wave 14). SUPABASE_JWT_SECRET is the only
+      # required value.
+      - services/agent-py/.env
     environment:
       # Client IP for the per-IP rate limits (rate_limit.py). Behind the
       # `proxy` service there is exactly one trusted hop: Caddy discards

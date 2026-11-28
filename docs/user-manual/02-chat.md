@@ -1,5 +1,5 @@
 <!-- pages-for: panel:chat, slash:new, slash:clear, slash:rename, slash:model, slash:help, slash:personas -->
-<!-- related: components/panels/chat.tsx, lib/shared/commands/registry.ts, lib/shared/skills/registry.ts -->
+<!-- related: apps/web/components/panels/chat.tsx, apps/web/lib/shared/commands/registry.ts, apps/web/lib/shared/skills/registry.ts -->
 
 # Chat
 
@@ -37,8 +37,8 @@ or click the **+** next to the **Chats** group to start a new one.
 - The reasoning panel (when present) is collapsible. Reasoning tokens
   are not shown by default on all models.
 - Some skills (web search, image generation) require their own API
-  keys in the deployment's `.env`. If a skill toggle is greyed out,
-  ask the self-hoster to enable the key.
+  keys in the agent service's env (`services/agent-py/.env`). If a
+  skill toggle is greyed out, ask the self-hoster to enable the key.
 - A persona that limits its MCP servers (`/personas`) limits them in
   its replies and tasks: only the
   servers it allows offer tools, and one that allows none uses no MCP

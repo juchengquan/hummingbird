@@ -13,7 +13,7 @@ deploy has no backend configured" screen (Q137).
 The contract is spec-first and lives in `packages/contract/`:
 
 - `openapi.yaml` — every endpoint, request and response (→ the TS types
-  in `lib/shared/contract/openapi.generated.ts` and agent-py's Pydantic
+  in `apps/web/lib/shared/contract/openapi.generated.ts` and agent-py's Pydantic
   models, `bun run contract:gen`; `bun run contract:check` fails on
   drift).
 - `RUN_EVENTS.md` — the runs API's event stream (AG-UI over SSE): how a
@@ -22,12 +22,12 @@ The contract is spec-first and lives in `packages/contract/`:
 - `conformance/` — the language-neutral suite any backend must pass
   (`CONTRACT_BASE_URL=… bun run contract:conformance`).
 
-Single client entry point: `lib/client/api-client.ts` (and the runs
-client under `lib/client/runs/`). Frontend code never `fetch`es a
+Single client entry point: `apps/web/lib/client/api-client.ts` (and the runs
+client under `apps/web/lib/client/runs/`). Frontend code never `fetch`es a
 backend path directly — everything goes through `apiClient.*` or
 `apiUrls.*` (the latter for Plate, which takes a URL string and handles
 the fetch itself). Response validation: the client parses JSON responses
-with the Zod schemas in `lib/shared/api-schemas.ts`, so a mismatched
+with the Zod schemas in `apps/web/lib/shared/api-schemas.ts`, so a mismatched
 backend fails loudly at the boundary instead of corrupting the UI.
 
 ### Auth — bearer, `auth_required`
@@ -54,7 +54,7 @@ anything else fails closed.
 
 `auth_required` is distinct from `auth` (a rejected token, or no
 provider key for the model): the client shows a "Sign in required"
-prompt with a Sign in action (`lib/client/auth/auth-required.ts`).
+prompt with a Sign in action (`apps/web/lib/client/auth/auth-required.ts`).
 
 ### Error envelope
 
@@ -115,7 +115,7 @@ description there is normative.
 **Runs** (`POST /v1/runs` interactive, `GET /v1/runs/{id}/events`):
 AG-UI events over SSE, each with a `<seq>` / `<seq>.<k>` cursor id for
 rejoining — `packages/contract/RUN_EVENTS.md` is the protocol. Chat
-consumes it through the runs client (`lib/client/runs/`); a task's
+consumes it through the runs client (`apps/web/lib/client/runs/`); a task's
 panel reads the same events. The AI SDK frame stream that `/api/chat`
 and agent-py's `/v1/chat` sent is gone (wave 13).
 
@@ -126,7 +126,7 @@ operations `editorAiCommand` / `editorAiComplete`): consumed by Plate
 for completion. Plate's `useChat` / `useCompletion` hooks parse them;
 the frontend doesn't touch the bytes. The browser renders the document
 first — the command body is `{ messages, document: EditorAiDocument,
-toolName?, model? }`, built by `components/editor/ai/agent-py-body.ts`;
+toolName?, model? }`, built by `apps/web/components/editor/ai/agent-py-body.ts`;
 agent-py never sees the Plate value. The editor's own-gateway-key
 setting was removed in wave 12 (Q124): agent-py never takes a user's
 key. The prompts live in agent-py (`editor_ai/`), pinned by its frozen
@@ -150,7 +150,7 @@ catalog order:
 
 Every catalog id is still valid on agent-py's other endpoints; one
 missing here answers 503 instead of running. The browser reads it once
-per page (`lib/client/api/served-models.ts` → `lib/shared/served-models.ts`)
+per page (`apps/web/lib/client/api/served-models.ts` → `apps/web/lib/shared/served-models.ts`)
 and the model picker, the task models and the editor's list follow it;
 until it arrives, or when it can't be read, they keep the built-in
 `anthropic/*` list. An answer that lists **nothing** is a deploy with no
@@ -189,8 +189,8 @@ The frontend talks directly to Supabase for:
 
 - Auth (password sign-in, session refresh; the session lives in
   `@supabase/ssr`'s cookie storage in the browser, Q144)
-- Sync queue + reconciliation (`lib/client/sync/`)
-- Storage uploads (`lib/client/files/`)
+- Sync queue + reconciliation (`apps/web/lib/client/sync/`)
+- Storage uploads (`apps/web/lib/client/files/`)
 
 These bypass the backend entirely. Share pages read through agent-py's
 `GET /v1/share/{token}` (Q127), never with a service-role key.
@@ -205,11 +205,11 @@ These bypass the backend entirely. Share pages read through agent-py's
    mounted in `main.py`), using the generated models
    (`agent_py/contract/models.py`); add its body cap to `body_limit.py`
    if the default (1 MiB) doesn't fit, and its tests.
-3. Regenerate `lib/shared/agent-py-types.generated.ts`
+3. Regenerate `apps/web/lib/shared/agent-py-types.generated.ts`
    (`bun run codegen:agent-types`).
-4. Add request and response Zod schemas to `lib/shared/api-schemas.ts`
+4. Add request and response Zod schemas to `apps/web/lib/shared/api-schemas.ts`
    where the client parses the response.
-5. Add a typed method to `apiClient.*` (`lib/client/api-client.ts`) that
+5. Add a typed method to `apiClient.*` (`apps/web/lib/client/api-client.ts`) that
    calls agent-py, parses the response with the schema, and returns the
    parsed value or a typed error result (or a URL builder to `apiUrls`
    for a library that takes a URL).

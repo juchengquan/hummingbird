@@ -7,6 +7,13 @@ the next.
 
 from __future__ import annotations
 
+import os
+
+# Read no `.env` (Q154): a developer's services/agent-py/.env holds real
+# keys and must not leak into the suite. Set before agent_py is imported —
+# the settings class reads it at import time.
+os.environ["AGENT_PY_ENV_FILE"] = ""
+
 from collections.abc import Iterator
 
 import pytest

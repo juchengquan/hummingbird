@@ -1,5 +1,5 @@
-[test]
-# Preload mocks for `server-only` / `client-only` / IDB-touching modules
-# so co-located *.test.ts files can import either side of the runtime
-# fence without crashing at module load. See `tests/setup.ts`.
-preload = ["./tests/setup.ts"]
+[install]
+# Keep the hoisted node_modules layout the repo had before it became a
+# workspace (Bun 1.3 defaults workspaces to isolated installs). Wave 14 is a
+# move, not a dependency-layout change (docs/PLAN-frontend-backend-split.md Q151).
+linker = "hoisted"

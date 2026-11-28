@@ -1,5 +1,5 @@
 <!-- pages-for: agent:token, agent:tool_input, agent:tool_output, agent:step_start, agent:step_end, agent:status, agent:plan, agent:step_error, agent:handoff, agent:approval, agent:compact, agent:artifact_ref, agent:result, panel:project-tasks-panel, sidebar:tasks -->
-<!-- related: components/panels/project-tasks-panel.tsx, lib/shared/agent/events.ts, components/sidebars/tasks.tsx -->
+<!-- related: apps/web/components/panels/project-tasks-panel.tsx, apps/web/lib/shared/agent/events.ts, apps/web/components/sidebars/tasks.tsx -->
 
 # Agent tasks
 

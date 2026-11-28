@@ -63,7 +63,7 @@ WEATHER = {
 
 def read_env() -> dict[str, str]:
     env: dict[str, str] = {}
-    path = ROOT / ".env"
+    path = ROOT / "services" / "agent-py" / ".env"  # agent-py's own (Q154)
     if not path.exists():
         return env
     for line in path.read_text().splitlines():

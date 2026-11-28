@@ -53,6 +53,9 @@ const NEXT_ENV: Record<string, string> = {
 }
 
 const AGENT_PY_ENV: Record<string, string> = {
+  // Read no env file: a developer's services/agent-py/.env must not reach
+  // the suite (Q154; process env would win, but not every key is pinned).
+  AGENT_PY_ENV_FILE: "",
   RUNS_STUB_HARNESS: "true",
   CORS_ALLOWED_ORIGINS: WEB_ORIGIN,
   // No Supabase: anonymous runs only, in memory; no poller work.
@@ -124,7 +127,7 @@ export default defineConfig({
     {
       name: "agent-py",
       command: `uv run --frozen uvicorn agent_py.main:app --host ${HOST} --port ${AGENT_PORT}`,
-      cwd: "./services/agent-py",
+      cwd: "../../services/agent-py",
       url: `${AGENT_PY_ORIGIN}/healthz`,
       env: AGENT_PY_ENV,
       reuseExistingServer: reuse,

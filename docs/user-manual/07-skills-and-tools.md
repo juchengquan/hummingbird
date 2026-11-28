@@ -1,5 +1,5 @@
 <!-- pages-for: skill:webFetch, skill:webSearch, skill:imageGen, skill:searchFiles, panel:skills-tab -->
-<!-- related: lib/shared/skills/registry.ts, lib/shared/skills/, components/panels/skills-tab.tsx -->
+<!-- related: apps/web/lib/shared/skills/registry.ts, apps/web/lib/shared/skills/, apps/web/components/panels/skills-tab.tsx -->
 
 # Skills & tools
 

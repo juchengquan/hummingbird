@@ -4,14 +4,14 @@ Operational notes for the browser-facing security headers. Code:
 
 | Piece | Where |
 |---|---|
-| Policy builder (pure, unit-tested) | `lib/server/security/csp.ts` |
-| Per-request nonce + CSP header | `proxy.ts` (Next 16's name for `middleware.ts`) |
-| Nonce on the inline theme script | `app/layout.tsx` (`x-nonce` request header) |
+| Policy builder (pure, unit-tested) | `apps/web/lib/server/security/csp.ts` |
+| Per-request nonce + CSP header | `apps/web/proxy.ts` (Next 16's name for `middleware.ts`) |
+| Nonce on the inline theme script | `apps/web/app/layout.tsx` (`x-nonce` request header) |
 | Report intake | agent-py's `/v1/csp-report` (`services/agent-py/src/agent_py/routers/csp_report.py` + `csp_report.py`) — the only one since wave 13 deleted Next's `/api/csp-report` (Q140) |
-| Artifact / MCP-app frame shell + its own CSP | `app/sandbox/frame/route.ts` → `lib/server/security/sandbox-frame.ts` |
-| Frame handshake (protocol, iframe) | `lib/shared/sandbox-frame.ts`, `components/live-artifact/sandboxed-frame.tsx` |
-| Static headers | `next.config.ts` → `headers()` |
-| Zod JIT opt-out (keeps eval out of reports) | `instrumentation-client.ts` |
+| Artifact / MCP-app frame shell + its own CSP | `apps/web/app/sandbox/frame/route.ts` → `apps/web/lib/server/security/sandbox-frame.ts` |
+| Frame handshake (protocol, iframe) | `apps/web/lib/shared/sandbox-frame.ts`, `apps/web/components/live-artifact/sandboxed-frame.tsx` |
+| Static headers | `apps/web/next.config.ts` → `headers()` |
+| Zod JIT opt-out (keeps eval out of reports) | `apps/web/instrumentation-client.ts` |
 
 ## Modes — `CSP_MODE`
 
@@ -21,7 +21,8 @@ Operational notes for the browser-facing security headers. Code:
 | `enforce` | `Content-Security-Policy` | Violations blocked and reported |
 | `off` | none | No CSP. Static headers below still apply |
 
-Switching mode is a config change plus restart, no rebuild. Pages render
+`CSP_MODE` is the web app's setting (`apps/web/.env`). Switching mode is
+a config change plus restart, no rebuild. Pages render
 dynamically either way: the root layout reads `headers()` for the nonce,
 and a prerendered page couldn't carry a per-request nonce.
 
@@ -86,7 +87,7 @@ Why each non-obvious source is there:
   script under `/_next/static/media/`.
 - **`frame-src`.** `'self'` for the sandbox frame shell (`/sandbox/frame`,
   next section), plus the media-embed players
-  (`components/ui/media-embed-node.tsx`).
+  (`apps/web/components/ui/media-embed-node.tsx`).
 - **`frame-ancestors 'none'`.** No page is meant to be embedded, share
   links included. Browsers ignore this directive in a Report-Only
   policy, so `X-Frame-Options: DENY` enforces it in every mode.
@@ -96,9 +97,9 @@ connects to means updating the builder and its test.
 
 ## Live-artifact and MCP-app frames: `/sandbox/frame`
 
-Live artifacts (`components/live-artifact/live-artifact-frame.tsx`) and
+Live artifacts (`apps/web/components/live-artifact/live-artifact-frame.tsx`) and
 MCP-app panels (`mcp-app-frame.tsx`) run untrusted HTML. Both render
-through `SandboxedFrame` (`components/live-artifact/sandboxed-frame.tsx`):
+through `SandboxedFrame` (`apps/web/components/live-artifact/sandboxed-frame.tsx`):
 
 ```html
 <iframe src="/sandbox/frame?n=<per-navigation nonce>" sandbox="allow-scripts" referrerpolicy="no-referrer">
@@ -113,7 +114,7 @@ makes browsers ignore it. The frames used to be the only blocker for
 `enforce`; they no longer are.
 
 **The shell.** `GET /sandbox/frame` returns a tiny static document whose
-response CSP (`lib/server/security/sandbox-frame.ts`) is written for
+response CSP (`apps/web/lib/server/security/sandbox-frame.ts`) is written for
 untrusted code and is **always enforced**, whatever `CSP_MODE` says — it
 is the frame's security boundary, as the `<meta>` CSP always was:
 
@@ -126,7 +127,7 @@ connect-src 'none'; base-uri 'none'; form-action 'none';
 frame-ancestors 'self'; sandbox allow-scripts
 ```
 
-- The CDN hosts are `CDN_HOSTS` in `lib/shared/live-artifact/cdn-urls.ts`,
+- The CDN hosts are `CDN_HOSTS` in `apps/web/lib/shared/live-artifact/cdn-urls.ts`,
   shared with the `<meta>` CSP that `iframe-shell.ts` still writes into
   each document (defense in depth; the two stack).
 - `img-src https:` is deliberate: generated pages routinely show remote
@@ -143,8 +144,8 @@ frame-ancestors 'self'; sandbox allow-scripts
   attribute. `frame-ancestors 'self'` stops other sites from framing it.
 - No `report-uri`: violations in here are untrusted code hitting the
   fence (blocked fetches), not app regressions.
-- `proxy.ts` excludes the route from its matcher and also skips it in
-  code, so the app policy never overwrites the shell's. `next.config.ts`
+- `apps/web/proxy.ts` excludes the route from its matcher and also skips it in
+  code, so the app policy never overwrites the shell's. `apps/web/next.config.ts`
   sends `X-Frame-Options: SAMEORIGIN` for it instead of `DENY`.
 - `Cache-Control: no-cache` + ETag: every load revalidates (304), so a
   deploy that changes the policy takes effect at once.
@@ -152,9 +153,9 @@ frame-ancestors 'self'; sandbox allow-scripts
 **Never add `allow-same-origin`** to these iframes. The shell is served
 from the app's origin, so with that flag the artifact would run
 same-origin with full access to cookies, storage and the API.
-`components/live-artifact/sandbox-guard.test.ts` pins the attribute.
+`apps/web/components/live-artifact/sandbox-guard.test.ts` pins the attribute.
 
-**Handshake** (`lib/shared/sandbox-frame.ts`). The frame is an opaque
+**Handshake** (`apps/web/lib/shared/sandbox-frame.ts`). The frame is an opaque
 origin, so both sides post with target `"*"` and check the sender
 instead:
 
@@ -188,7 +189,7 @@ speaks only the content's own protocols (`live-artifact` ready/error,
 `mcp-app` tool calls), whose parent listeners keep their `event.source`
 filters.
 
-## Other headers (`next.config.ts`, every response)
+## Other headers (`apps/web/next.config.ts`, every response)
 
 - `X-Content-Type-Options: nosniff`
 - `Referrer-Policy: strict-origin-when-cross-origin`
@@ -288,7 +289,7 @@ Triage:
 4. Confirm Chrome's Reporting-API delivery from the https deployment
    (see "Unverified" above), or drop `report-to`, so a quiet log really
    means no violations.
-5. Set `CSP_MODE=enforce` and restart. Keep watching the reports.
+5. Set `CSP_MODE=enforce` (`apps/web/.env`) and restart. Keep watching the reports.
    `CSP_MODE=report-only` is the one-line rollback.
 
 Found during that check and since fixed: TSX artifacts didn't render

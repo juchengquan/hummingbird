@@ -11,8 +11,11 @@
 # Dependencies — images install their own from the lockfiles.
 **/node_modules
 
+# The Next app (wave 14) — no image built from the root ships it.
+apps
+
 # Build output / caches.
-.next
+**/.next
 out
 build
 coverage

@@ -40,5 +40,6 @@ streamed text, no `tasks` row, and no tool run even when the prompt asks for
 one. Run it before deploying a change to how agent-py calls a model.
 
 `stack.sh` starts and removes only its own containers and processes and
-refuses to run where a `.env` is present, so a developer's real Supabase
-is never in play. Logs: `test-results/live/`.
+refuses to run where a `.env` is present (the root `.env` / `.env.local`,
+`apps/web/.env` / `.env.local` or `services/agent-py/.env`), so a
+developer's real Supabase is never in play. Logs: `test-results/live/`.

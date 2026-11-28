@@ -31,6 +31,8 @@ import {
 } from "./types"
 
 const ROOT = resolve(import.meta.dir, "..")
+/** The Next app (wave 14): features are read from its sources. */
+const WEB = join(ROOT, "apps/web")
 const OUTPUT_PATH = join(ROOT, "docs/user-manual/.feature-inventory.json")
 const CHECK_MODE = process.argv.includes("--check")
 
@@ -82,7 +84,7 @@ function titleFromSource(source: string, filename: string): string {
 
 // Panels
 export async function scanPanels(): Promise<PanelEntry[]> {
-  const dir = join(ROOT, "components/panels")
+  const dir = join(WEB, "components/panels")
   const files = await listFiles(dir, ".tsx")
   const entries: PanelEntry[] = []
   for (const abs of files) {
@@ -99,7 +101,7 @@ export async function scanPanels(): Promise<PanelEntry[]> {
 
 // Sidebars
 export async function scanSidebars(): Promise<SidebarEntry[]> {
-  const dir = join(ROOT, "components/sidebars")
+  const dir = join(WEB, "components/sidebars")
   const files = await listFiles(dir, ".tsx")
   const entries: SidebarEntry[] = []
   for (const abs of files) {
@@ -115,8 +117,17 @@ export async function scanSidebars(): Promise<SidebarEntry[]> {
 }
 
 // Env vars
+/** The two per-app examples (wave 14, Q154): the web app's, then agent-py's. */
+export const ENV_EXAMPLES = ["apps/web/.env.example", "services/agent-py/.env.example"] as const
+
 export async function scanEnvVars(): Promise<EnvVarEntry[]> {
-  const abs = join(ROOT, ".env.example")
+  const entries: EnvVarEntry[] = []
+  for (const rel of ENV_EXAMPLES) entries.push(...(await scanEnvExample(rel)))
+  return entries.sort((a, b) => a.id.localeCompare(b.id))
+}
+
+async function scanEnvExample(rel: string): Promise<EnvVarEntry[]> {
+  const abs = join(ROOT, rel)
   if (!(await pathExists(abs))) return []
   const text = await readText(abs)
   const lines = text.split(/\r?\n/)
@@ -147,17 +158,17 @@ export async function scanEnvVars(): Promise<EnvVarEntry[]> {
       id: key,
       description: pendingComment || "(no description)",
       required: !hasDefault,
-      sourceFile: ".env.example",
+      sourceFile: rel,
     })
     pendingComment = ""
   }
 
-  return entries.sort((a, b) => a.id.localeCompare(b.id))
+  return entries
 }
 
 // Slash commands
 export async function scanSlashCommands(): Promise<SlashCommandEntry[]> {
-  const abs = join(ROOT, "lib/shared/commands/registry.ts")
+  const abs = join(WEB, "lib/shared/commands/registry.ts")
   if (!(await pathExists(abs))) return []
   const text = await readText(abs)
 
@@ -276,7 +287,7 @@ function matchString(obj: string, key: string): string | null {
 
 // Skills
 export async function scanSkills(): Promise<SkillEntry[]> {
-  const abs = join(ROOT, "lib/shared/skills/registry.ts")
+  const abs = join(WEB, "lib/shared/skills/registry.ts")
   if (!(await pathExists(abs))) return []
   const text = await readText(abs)
   const start = text.indexOf("export const SKILLS")
@@ -384,7 +395,7 @@ export async function scanSkills(): Promise<SkillEntry[]> {
 // hint pattern that must appear in the source file. If a hint is
 // missing, the entry is dropped and a stderr warning is printed.
 export async function scanSettings(): Promise<SettingEntry[]> {
-  const abs = join(ROOT, "lib/client/hooks/store/slices/ui.ts")
+  const abs = join(WEB, "lib/client/hooks/store/slices/ui.ts")
   if (!(await pathExists(abs))) return []
   const text = await readText(abs)
   const rel = relative(ROOT, abs)
@@ -410,7 +421,7 @@ export async function scanSettings(): Promise<SettingEntry[]> {
 
 // Shortcuts - parsed from the SHORTCUTS array in help-popover.tsx
 export async function scanShortcuts(): Promise<ShortcutEntry[]> {
-  const abs = join(ROOT, "components/help-popover.tsx")
+  const abs = join(WEB, "components/help-popover.tsx")
   if (!(await pathExists(abs))) return []
   const text = await readText(abs)
   const rel = relative(ROOT, abs)
@@ -512,7 +523,7 @@ export async function scanShortcuts(): Promise<ShortcutEntry[]> {
 
 // Agent task kinds - extract string literals from the TaskEventKind union
 export async function scanAgentTaskKinds(): Promise<AgentTaskKindEntry[]> {
-  const abs = join(ROOT, "lib/shared/agent/events.ts")
+  const abs = join(WEB, "lib/shared/agent/events.ts")
   if (!(await pathExists(abs))) return []
   const text = await readText(abs)
   const m = text.match(/type\s+TaskEventKind\s*=\s*([\s\S]*?)(?:\n\nexport|\n\/\*\*|\n\*\s*Fields)/)

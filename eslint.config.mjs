@@ -2,7 +2,7 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
-// Folder-fence convention (see docs/PLAN-client-server-fences.md):
+// Folder-fence convention (see docs/PLAN-client-server-fences.md), under apps/web:
 //   lib/client/**  browser-only  — must not import @/server/*
 //   lib/server/**  node-only     — must not import @/client/*
 //   lib/shared/**  isomorphic    — must not import @/client/* or @/server/*
@@ -30,20 +30,23 @@ const restrictBothInShared = {
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  // The Next app lives in apps/web (wave 14); this one config also lints the
+  // root's scripts/, e2e-live/ and packages/.
+  { settings: { next: { rootDir: "apps/web/" } } },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:
-    ".next/**",
-    "out/**",
-    "build/**",
-    "next-env.d.ts",
+    "**/.next/**",
+    "**/out/**",
+    "**/build/**",
+    "**/next-env.d.ts",
     // Playwright e2e build (`NEXT_DIST_DIR`, playwright.config.ts) + outputs.
-    ".next-e2e/**",
-    ".next-e2e-wire/**",
-    "test-results/**",
+    "**/.next-e2e/**",
+    "**/.next-e2e-wire/**",
+    "**/test-results/**",
     // Agent worktrees (each has its own checkout, build and lint).
     ".claude/**",
-    "playwright-report/**",
+    "**/playwright-report/**",
   ]),
 
   // ---------------------------------------------------------------------
@@ -54,7 +57,7 @@ const eslintConfig = defineConfig([
   // for these paths only.
   // ---------------------------------------------------------------------
   {
-    files: ["components/ui/**/*.{ts,tsx}", "components/editor/**/*.{ts,tsx}"],
+    files: ["apps/web/components/ui/**/*.{ts,tsx}", "apps/web/components/editor/**/*.{ts,tsx}"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-empty-object-type": "off",
@@ -94,21 +97,21 @@ const eslintConfig = defineConfig([
       "react-hooks/set-state-in-effect": "off",
     },
   },
-  // Note: app/**/page.tsx and app/**/layout.tsx are intentionally excluded —
+  // Note: apps/web/app/**/page.tsx and app/**/layout.tsx are intentionally excluded —
   // they default to server components in Next.js App Router and are allowed
   // to import @/server/*. Mark a page "use client" only when needed.
   {
-    files: ["lib/client/**/*.{ts,tsx}", "components/**/*.{ts,tsx}"],
+    files: ["apps/web/lib/client/**/*.{ts,tsx}", "apps/web/components/**/*.{ts,tsx}"],
     rules: { "no-restricted-imports": ["error", restrictServerInClient] },
   },
   {
     // What is left of Next's server (wave 13): the CSP builders, the
     // proxy that applies them and the sandbox frame shell route.
-    files: ["lib/server/**/*.{ts,tsx}", "app/**/route.ts", "proxy.ts"],
+    files: ["apps/web/lib/server/**/*.{ts,tsx}", "apps/web/app/**/route.ts", "apps/web/proxy.ts"],
     rules: { "no-restricted-imports": ["error", restrictClientInServer] },
   },
   {
-    files: ["lib/shared/**/*.{ts,tsx}"],
+    files: ["apps/web/lib/shared/**/*.{ts,tsx}"],
     rules: { "no-restricted-imports": ["error", restrictBothInShared] },
   },
 ]);

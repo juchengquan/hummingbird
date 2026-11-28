@@ -1,5 +1,5 @@
 <!-- pages-for: panel:editor -->
-<!-- related: components/panels/editor.tsx, components/editor/, lib/shared/markdown-joiner-transform.ts -->
+<!-- related: apps/web/components/panels/editor.tsx, apps/web/components/editor/, services/agent-py/src/agent_py/editor_ai/markdown_joiner.py -->
 
 # Editor
 

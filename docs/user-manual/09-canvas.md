@@ -1,5 +1,5 @@
 <!-- pages-for: panel:canvas -->
-<!-- related: components/panels/canvas.tsx -->
+<!-- related: apps/web/components/panels/canvas.tsx -->
 
 # Canvas
 

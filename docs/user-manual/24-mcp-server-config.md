@@ -1,5 +1,5 @@
 <!-- pages-for: panel:mcp-tab -->
-<!-- related: services/agent-py/src/agent_py/routers/mcp.py, lib/client/hooks/store/slices/mcp.ts, components/panels/mcp-tab.tsx -->
+<!-- related: services/agent-py/src/agent_py/routers/mcp.py, apps/web/lib/client/hooks/store/slices/mcp.ts, apps/web/components/panels/mcp-tab.tsx -->
 
 # MCP server config
 

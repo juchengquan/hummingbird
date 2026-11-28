@@ -17,6 +17,14 @@ proxy - see [Environment variables](21-environment-variables.md) and
 `NEXT_PUBLIC_*` values are baked in at build time, so a restart alone
 isn't enough.
 
+## "… is no longer read: settings live in apps/web/.env and services/agent-py/.env"
+
+The frontend or the agent service found a `.env` or `.env.local` at
+the repo root, left from before the settings were split per app, and
+refuses to start. Run `bun run env:split` to write `apps/web/.env` and
+`services/agent-py/.env` from it, check both, then remove the root
+file - see [Installation](20-installation.md).
+
 ## "No model provider is configured on this deploy"
 
 The agent service has no model provider key at all, so nothing can

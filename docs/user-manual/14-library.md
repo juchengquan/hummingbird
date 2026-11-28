@@ -1,5 +1,5 @@
 <!-- pages-for: panel:library -->
-<!-- related: components/panels/library.tsx, lib/client/hooks/store/slices/artifacts.ts -->
+<!-- related: apps/web/components/panels/library.tsx, apps/web/lib/client/hooks/store/slices/artifacts.ts -->
 
 # Library
 

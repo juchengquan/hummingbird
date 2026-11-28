@@ -11,8 +11,8 @@ signed-out calls and everything account-bound.
 
 The Next.js app is the frontend only: no API routes, no server secrets
 (it reads `NODE_ENV`, `CSP_MODE` and `NEXT_PUBLIC_*`, Q143). It stays a
-server for the per-request CSP nonce (`proxy.ts`, Q128) and serves the
-static sandbox frame (`/sandbox/frame`); `lib/server` holds just the two
+server for the per-request CSP nonce (`apps/web/proxy.ts`, Q128) and serves the
+static sandbox frame (`/sandbox/frame`); `apps/web/lib/server` holds just the two
 modules behind them. A deploy without `NEXT_PUBLIC_AGENT_PY_URL` builds
 and shows a "This deploy has no backend configured" screen (Q137).
 
@@ -68,13 +68,13 @@ overrides, Q130); several replicas share it safely (a guarded
 (Paths under `services/agent-py/src/agent_py/`.) The wire shapes are the
 spec-first contract's (`packages/contract/openapi.yaml`, run events in
 `packages/contract/RUN_EVENTS.md`), with the browser's Zod schemas in
-`lib/shared/api-schemas.ts`.
+`apps/web/lib/shared/api-schemas.ts`.
 
 The share pages read every share from agent-py's public `GET
 /v1/share/{token}` in the browser (Q127). CSP reports go to agent-py's
-`/v1/csp-report`: `proxy.ts` points `report-uri` / `Reporting-Endpoints`
+`/v1/csp-report`: `apps/web/proxy.ts` points `report-uri` / `Reporting-Endpoints`
 there (`/` → same-origin `/v1/csp-report`; an absolute URL →
-`<base>/v1/csp-report`; `cspReportUri` in `lib/server/security/csp.ts`);
+`<base>/v1/csp-report`; `cspReportUri` in `apps/web/lib/server/security/csp.ts`);
 with no agent-py URL the policy carries no `report-uri` (Q140). A
 cross-origin agent-py needs the frontend's origin in
 `CORS_ALLOWED_ORIGINS` (Reporting-API deliveries are CORS requests with
