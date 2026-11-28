@@ -1,0 +1,28 @@
+{
+  // The root's own TypeScript: scripts/, e2e-live/ and packages/. The Next app
+  // has its own (apps/web/tsconfig.json); `bun run typecheck` runs both.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "types": ["bun", "node"],
+    // e2e-live reads the web app's store version (Q156); the files it pulls
+    // in use the app's aliases.
+    "paths": {
+      "@/client/*": ["./apps/web/lib/client/*"],
+      "@/server/*": ["./apps/web/lib/server/*"],
+      "@/shared/*": ["./apps/web/lib/shared/*"],
+      "@config/*": ["./config/*"]
+    }
+  },
+  "include": ["scripts/**/*.ts", "e2e-live/**/*.ts", "packages/**/*.ts"],
+  "exclude": ["node_modules", "apps", "services", ".claude"]
+}

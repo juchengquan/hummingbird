@@ -18,7 +18,7 @@ describe("scanPanels", () => {
     expect(panels.length).toBeGreaterThan(0)
     const chat = panels.find((p) => p.id === "chat")
     expect(chat).toBeTruthy()
-    expect(chat!.sourceFile).toBe("components/panels/chat.tsx")
+    expect(chat!.sourceFile).toBe("apps/web/components/panels/chat.tsx")
     expect(chat!.title).toBe("Chat Panel")
   })
 })
@@ -29,7 +29,7 @@ describe("scanSidebars", () => {
     expect(sidebars.length).toBeGreaterThan(0)
     const app = sidebars.find((s) => s.id === "application")
     expect(app).toBeTruthy()
-    expect(app!.sourceFile).toBe("components/sidebars/application.tsx")
+    expect(app!.sourceFile).toBe("apps/web/components/sidebars/application.tsx")
   })
 })
 
@@ -53,7 +53,7 @@ describe("scanSlashCommands", () => {
     expect(help).toBeTruthy()
     expect(help!.trigger).toBe("help")
     expect(help!.argKind).toBe("none")
-    expect(help!.sourceFile).toBe("lib/shared/commands/registry.ts")
+    expect(help!.sourceFile).toBe("apps/web/lib/shared/commands/registry.ts")
   })
 })
 
@@ -66,7 +66,7 @@ describe("scanSkills", () => {
     expect(search!.name).toBe("Web search")
     expect(search!.slashTriggers).toContain("search")
     expect(search!.requiresEnv).toBe(true)
-    expect(search!.sourceFile).toBe("lib/shared/skills/registry.ts")
+    expect(search!.sourceFile).toBe("apps/web/lib/shared/skills/registry.ts")
   })
 })
 

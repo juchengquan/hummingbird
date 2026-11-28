@@ -22,7 +22,8 @@
       "@/*": ["./*"],
       "@/client/*": ["./lib/client/*"],
       "@/server/*": ["./lib/server/*"],
-      "@/shared/*": ["./lib/shared/*"]
+      "@/shared/*": ["./lib/shared/*"],
+      "@config/*": ["../../config/*"]
     }
   },
   "include": [

@@ -10,7 +10,7 @@
  */
 import { expect, test, type Page } from "./guard"
 
-import { STORE_VERSION } from "../lib/client/hooks/store/migrate"
+import { STORE_VERSION } from "../apps/web/lib/client/hooks/store/migrate"
 
 const FAKE = "http://127.0.0.1:8172", AGENT = "http://127.0.0.1:8171"
 const LLAMA = "ollama/llama3.1:8b"

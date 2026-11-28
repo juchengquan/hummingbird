@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 
 import { neutralizeDocxSymbols } from "./sanitize-symbols"
 
@@ -53,8 +53,10 @@ describe("neutralizeDocxSymbols", () => {
 // changes any of these, re-review the symbol sink (and this file).
 // ---------------------------------------------------------------------------
 
+// Resolved through the package, not a cwd-relative node_modules path: the
+// workspace hoists dependencies to the repo root (wave 14).
 const DIST = readFileSync(
-  join(process.cwd(), "node_modules/docx-preview/dist/docx-preview.mjs"),
+  join(dirname(require.resolve("docx-preview/package.json")), "dist/docx-preview.mjs"),
   "utf8"
 )
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Contract codegen: packages/contract/openapi.yaml → generated code.
 #
-#   TypeScript  lib/shared/contract/openapi.generated.ts      (openapi-typescript)
+#   TypeScript  apps/web/lib/shared/contract/openapi.generated.ts (openapi-typescript)
 #   Python      services/agent-py/src/agent_py/contract/models.py
 #                                                             (datamodel-code-generator)
 #
@@ -23,7 +23,7 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "${ROOT}"
 
 SPEC="packages/contract/openapi.yaml"
-TS_OUT="lib/shared/contract/openapi.generated.ts"
+TS_OUT="apps/web/lib/shared/contract/openapi.generated.ts"
 PY_OUT="services/agent-py/src/agent_py/contract/models.py"
 OUTPUTS=("${TS_OUT}" "${PY_OUT}")
 

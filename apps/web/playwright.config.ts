@@ -124,7 +124,7 @@ export default defineConfig({
     {
       name: "agent-py",
       command: `uv run --frozen uvicorn agent_py.main:app --host ${HOST} --port ${AGENT_PORT}`,
-      cwd: "./services/agent-py",
+      cwd: "../../services/agent-py",
       url: `${AGENT_PY_ORIGIN}/healthz`,
       env: AGENT_PY_ENV,
       reuseExistingServer: reuse,

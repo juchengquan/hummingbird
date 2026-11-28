@@ -1,288 +1,288 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-27T17:08:05Z",
+  "generatedAt": "2026-11-28T07:41:52Z",
   "panels": [
     {
       "id": "agents-dialog",
       "title": "Agents Dialog",
-      "sourceFile": "components/panels/agents-dialog.tsx"
+      "sourceFile": "apps/web/components/panels/agents-dialog.tsx"
     },
     {
       "id": "artifact-diff-view",
       "title": "Artifact Diff View",
-      "sourceFile": "components/panels/artifact-diff-view.tsx"
+      "sourceFile": "apps/web/components/panels/artifact-diff-view.tsx"
     },
     {
       "id": "artifact-history-panel",
       "title": "Artifact History Panel",
-      "sourceFile": "components/panels/artifact-history-panel.tsx"
+      "sourceFile": "apps/web/components/panels/artifact-history-panel.tsx"
     },
     {
       "id": "artifacts-tab",
       "title": "Artifacts Tab",
-      "sourceFile": "components/panels/artifacts-tab.tsx"
+      "sourceFile": "apps/web/components/panels/artifacts-tab.tsx"
     },
     {
       "id": "canvas",
       "title": "Canvas Panel",
-      "sourceFile": "components/panels/canvas.tsx"
+      "sourceFile": "apps/web/components/panels/canvas.tsx"
     },
     {
       "id": "chat",
       "title": "Chat Panel",
-      "sourceFile": "components/panels/chat.tsx"
+      "sourceFile": "apps/web/components/panels/chat.tsx"
     },
     {
       "id": "chat-header",
       "title": "Chat Header",
-      "sourceFile": "components/panels/chat-header.tsx"
+      "sourceFile": "apps/web/components/panels/chat-header.tsx"
     },
     {
       "id": "chat-message",
       "title": "Chat Message",
-      "sourceFile": "components/panels/chat-message.tsx"
+      "sourceFile": "apps/web/components/panels/chat-message.tsx"
     },
     {
       "id": "chat-resources-panel",
       "title": "Chat Resources Panel",
-      "sourceFile": "components/panels/chat-resources-panel.tsx"
+      "sourceFile": "apps/web/components/panels/chat-resources-panel.tsx"
     },
     {
       "id": "citation-cell-editor",
       "title": "Citation Cell Editor",
-      "sourceFile": "components/panels/citation-cell-editor.tsx"
+      "sourceFile": "apps/web/components/panels/citation-cell-editor.tsx"
     },
     {
       "id": "citation-table",
       "title": "Citation Table View",
-      "sourceFile": "components/panels/citation-table.tsx"
+      "sourceFile": "apps/web/components/panels/citation-table.tsx"
     },
     {
       "id": "citation-table-header",
       "title": "Citation Table Header",
-      "sourceFile": "components/panels/citation-table-header.tsx"
+      "sourceFile": "apps/web/components/panels/citation-table-header.tsx"
     },
     {
       "id": "citation-table-row",
       "title": "Citation Table Row",
-      "sourceFile": "components/panels/citation-table-row.tsx"
+      "sourceFile": "apps/web/components/panels/citation-table-row.tsx"
     },
     {
       "id": "code-result",
       "title": "Code Result",
-      "sourceFile": "components/panels/code-result.tsx"
+      "sourceFile": "apps/web/components/panels/code-result.tsx"
     },
     {
       "id": "context-meter",
       "title": "Context Meter",
-      "sourceFile": "components/panels/context-meter.tsx"
+      "sourceFile": "apps/web/components/panels/context-meter.tsx"
     },
     {
       "id": "conversation-files-section",
       "title": "Conversation Files Section",
-      "sourceFile": "components/panels/conversation-files-section.tsx"
+      "sourceFile": "apps/web/components/panels/conversation-files-section.tsx"
     },
     {
       "id": "conversation-find-bar",
       "title": "Conversation Find Bar",
-      "sourceFile": "components/panels/conversation-find-bar.tsx"
+      "sourceFile": "apps/web/components/panels/conversation-find-bar.tsx"
     },
     {
       "id": "editor",
       "title": "Editor Panel",
-      "sourceFile": "components/panels/editor.tsx"
+      "sourceFile": "apps/web/components/panels/editor.tsx"
     },
     {
       "id": "empty-chat-welcome",
       "title": "Empty Chat Welcome",
-      "sourceFile": "components/panels/empty-chat-welcome.tsx"
+      "sourceFile": "apps/web/components/panels/empty-chat-welcome.tsx"
     },
     {
       "id": "error-bubble",
       "title": "Error Bubble",
-      "sourceFile": "components/panels/error-bubble.tsx"
+      "sourceFile": "apps/web/components/panels/error-bubble.tsx"
     },
     {
       "id": "extract-table-popover",
       "title": "Extract Table Popover",
-      "sourceFile": "components/panels/extract-table-popover.tsx"
+      "sourceFile": "apps/web/components/panels/extract-table-popover.tsx"
     },
     {
       "id": "extraction-status-badge",
       "title": "Extraction Status Badge",
-      "sourceFile": "components/panels/extraction-status-badge.tsx"
+      "sourceFile": "apps/web/components/panels/extraction-status-badge.tsx"
     },
     {
       "id": "file-availability-badge",
       "title": "File Availability Badge",
-      "sourceFile": "components/panels/file-availability-badge.tsx"
+      "sourceFile": "apps/web/components/panels/file-availability-badge.tsx"
     },
     {
       "id": "file-row-meta",
       "title": "File Row Meta",
-      "sourceFile": "components/panels/file-row-meta.tsx"
+      "sourceFile": "apps/web/components/panels/file-row-meta.tsx"
     },
     {
       "id": "files-tab-body",
       "title": "Files Tab Body",
-      "sourceFile": "components/panels/files-tab-body.tsx"
+      "sourceFile": "apps/web/components/panels/files-tab-body.tsx"
     },
     {
       "id": "library",
       "title": "Library Panel",
-      "sourceFile": "components/panels/library.tsx"
+      "sourceFile": "apps/web/components/panels/library.tsx"
     },
     {
       "id": "mcp-tab",
       "title": "Mcp Tab",
-      "sourceFile": "components/panels/mcp-tab.tsx"
+      "sourceFile": "apps/web/components/panels/mcp-tab.tsx"
     },
     {
       "id": "message-attachments",
       "title": "Message Attachments",
-      "sourceFile": "components/panels/message-attachments.tsx"
+      "sourceFile": "apps/web/components/panels/message-attachments.tsx"
     },
     {
       "id": "message-verification",
       "title": "Message Verification",
-      "sourceFile": "components/panels/message-verification.tsx"
+      "sourceFile": "apps/web/components/panels/message-verification.tsx"
     },
     {
       "id": "notes-tab",
       "title": "Notes Tab",
-      "sourceFile": "components/panels/notes-tab.tsx"
+      "sourceFile": "apps/web/components/panels/notes-tab.tsx"
     },
     {
       "id": "pins-tab",
       "title": "Pins Tab",
-      "sourceFile": "components/panels/pins-tab.tsx"
+      "sourceFile": "apps/web/components/panels/pins-tab.tsx"
     },
     {
       "id": "project-tasks-panel",
       "title": "Project Tasks Panel",
-      "sourceFile": "components/panels/project-tasks-panel.tsx"
+      "sourceFile": "apps/web/components/panels/project-tasks-panel.tsx"
     },
     {
       "id": "prompt-dialog",
       "title": "Prompt Dialog",
-      "sourceFile": "components/panels/prompt-dialog.tsx"
+      "sourceFile": "apps/web/components/panels/prompt-dialog.tsx"
     },
     {
       "id": "prompt-variable-fill",
       "title": "Prompt Variable Fill",
-      "sourceFile": "components/panels/prompt-variable-fill.tsx"
+      "sourceFile": "apps/web/components/panels/prompt-variable-fill.tsx"
     },
     {
       "id": "reasoning-block",
       "title": "Reasoning Block",
-      "sourceFile": "components/panels/reasoning-block.tsx"
+      "sourceFile": "apps/web/components/panels/reasoning-block.tsx"
     },
     {
       "id": "save-artifact-dialog",
       "title": "Save Artifact Dialog",
-      "sourceFile": "components/panels/save-artifact-dialog.tsx"
+      "sourceFile": "apps/web/components/panels/save-artifact-dialog.tsx"
     },
     {
       "id": "schedule-section",
       "title": "Schedule Section",
-      "sourceFile": "components/panels/schedule-section.tsx"
+      "sourceFile": "apps/web/components/panels/schedule-section.tsx"
     },
     {
       "id": "skills-dialog",
       "title": "Skills Dialog",
-      "sourceFile": "components/panels/skills-dialog.tsx"
+      "sourceFile": "apps/web/components/panels/skills-dialog.tsx"
     },
     {
       "id": "skills-tab",
       "title": "Skills Tab",
-      "sourceFile": "components/panels/skills-tab.tsx"
+      "sourceFile": "apps/web/components/panels/skills-tab.tsx"
     },
     {
       "id": "slash-autocomplete",
       "title": "Slash Autocomplete",
-      "sourceFile": "components/panels/slash-autocomplete.tsx"
+      "sourceFile": "apps/web/components/panels/slash-autocomplete.tsx"
     },
     {
       "id": "slash-help-dialog",
       "title": "Slash Help Dialog",
-      "sourceFile": "components/panels/slash-help-dialog.tsx"
+      "sourceFile": "apps/web/components/panels/slash-help-dialog.tsx"
     },
     {
       "id": "sources",
       "title": "Resource Panel",
-      "sourceFile": "components/panels/sources.tsx"
+      "sourceFile": "apps/web/components/panels/sources.tsx"
     },
     {
       "id": "sources-strip",
       "title": "Sources Strip",
-      "sourceFile": "components/panels/sources-strip.tsx"
+      "sourceFile": "apps/web/components/panels/sources-strip.tsx"
     },
     {
       "id": "tab-empty-state",
       "title": "Tab Empty State",
-      "sourceFile": "components/panels/tab-empty-state.tsx"
+      "sourceFile": "apps/web/components/panels/tab-empty-state.tsx"
     },
     {
       "id": "url-bookmarks-tab",
       "title": "Url Bookmarks Tab",
-      "sourceFile": "components/panels/url-bookmarks-tab.tsx"
+      "sourceFile": "apps/web/components/panels/url-bookmarks-tab.tsx"
     },
     {
       "id": "workspace-detail-sheet",
       "title": "Workspace Detail Sheet",
-      "sourceFile": "components/panels/workspace-detail-sheet.tsx"
+      "sourceFile": "apps/web/components/panels/workspace-detail-sheet.tsx"
     },
     {
       "id": "workspace-mcp-section",
       "title": "Workspace Mcp Section",
-      "sourceFile": "components/panels/workspace-mcp-section.tsx"
+      "sourceFile": "apps/web/components/panels/workspace-mcp-section.tsx"
     },
     {
       "id": "workspace-row",
       "title": "Workspace Row",
-      "sourceFile": "components/panels/workspace-row.tsx"
+      "sourceFile": "apps/web/components/panels/workspace-row.tsx"
     },
     {
       "id": "workspaces",
       "title": "Workspaces Panel",
-      "sourceFile": "components/panels/workspaces.tsx"
+      "sourceFile": "apps/web/components/panels/workspaces.tsx"
     }
   ],
   "sidebars": [
     {
       "id": "application",
       "title": "App Sidebar",
-      "sourceFile": "components/sidebars/application.tsx"
+      "sourceFile": "apps/web/components/sidebars/application.tsx"
     },
     {
       "id": "conversation-item",
       "title": "Conversation Item",
-      "sourceFile": "components/sidebars/conversation-item.tsx"
+      "sourceFile": "apps/web/components/sidebars/conversation-item.tsx"
     },
     {
       "id": "document-item",
       "title": "Document Item",
-      "sourceFile": "components/sidebars/document-item.tsx"
+      "sourceFile": "apps/web/components/sidebars/document-item.tsx"
     },
     {
       "id": "prompt-item",
       "title": "Prompt Item",
-      "sourceFile": "components/sidebars/prompt-item.tsx"
+      "sourceFile": "apps/web/components/sidebars/prompt-item.tsx"
     },
     {
       "id": "resources",
       "title": "Resources Sidebar",
-      "sourceFile": "components/sidebars/resources.tsx"
+      "sourceFile": "apps/web/components/sidebars/resources.tsx"
     },
     {
       "id": "resources-mobile-drawer",
       "title": "Resources Mobile Drawer",
-      "sourceFile": "components/sidebars/resources-mobile-drawer.tsx"
+      "sourceFile": "apps/web/components/sidebars/resources-mobile-drawer.tsx"
     },
     {
       "id": "tasks",
       "title": "Tasks Sidebar",
-      "sourceFile": "components/sidebars/tasks.tsx"
+      "sourceFile": "apps/web/components/sidebars/tasks.tsx"
     }
   ],
   "slashCommands": [
@@ -292,7 +292,7 @@
       "title": "Clear conversation",
       "description": "Remove every message in this chat",
       "argKind": "none",
-      "sourceFile": "lib/shared/commands/registry.ts"
+      "sourceFile": "apps/web/lib/shared/commands/registry.ts"
     },
     {
       "id": "help",
@@ -300,7 +300,7 @@
       "title": "Slash & mention help",
       "description": "List every / command and @ prompt trigger",
       "argKind": "none",
-      "sourceFile": "lib/shared/commands/registry.ts"
+      "sourceFile": "apps/web/lib/shared/commands/registry.ts"
     },
     {
       "id": "model",
@@ -308,7 +308,7 @@
       "title": "Switch model",
       "description": "Pick a model, or open the picker",
       "argKind": "optional",
-      "sourceFile": "lib/shared/commands/registry.ts",
+      "sourceFile": "apps/web/lib/shared/commands/registry.ts",
       "argHint": "<name?>"
     },
     {
@@ -317,7 +317,7 @@
       "title": "New conversation",
       "description": "Start a fresh chat in this workspace",
       "argKind": "none",
-      "sourceFile": "lib/shared/commands/registry.ts"
+      "sourceFile": "apps/web/lib/shared/commands/registry.ts"
     },
     {
       "id": "personas",
@@ -325,7 +325,7 @@
       "title": "Manage personas",
       "description": "Create, edit, and pin custom AI personas (`PLAN-custom-agents.md`)",
       "argKind": "none",
-      "sourceFile": "lib/shared/commands/registry.ts"
+      "sourceFile": "apps/web/lib/shared/commands/registry.ts"
     },
     {
       "id": "rename",
@@ -333,7 +333,7 @@
       "title": "Rename conversation",
       "description": "Set this chat's title",
       "argKind": "required",
-      "sourceFile": "lib/shared/commands/registry.ts",
+      "sourceFile": "apps/web/lib/shared/commands/registry.ts",
       "argHint": "<title>"
     },
     {
@@ -342,7 +342,7 @@
       "title": "Manage skills",
       "description": "Author, import, and toggle portable SKILL.md skills (`PLAN-portable-skills.md`)",
       "argKind": "none",
-      "sourceFile": "lib/shared/commands/registry.ts"
+      "sourceFile": "apps/web/lib/shared/commands/registry.ts"
     }
   ],
   "skills": [
@@ -355,7 +355,7 @@
         "run"
       ],
       "requiresEnv": true,
-      "sourceFile": "lib/shared/skills/registry.ts"
+      "sourceFile": "apps/web/lib/shared/skills/registry.ts"
     },
     {
       "id": "imageGen",
@@ -366,7 +366,7 @@
         "img"
       ],
       "requiresEnv": true,
-      "sourceFile": "lib/shared/skills/registry.ts"
+      "sourceFile": "apps/web/lib/shared/skills/registry.ts"
     },
     {
       "id": "searchFiles",
@@ -377,7 +377,7 @@
         "file"
       ],
       "requiresEnv": true,
-      "sourceFile": "lib/shared/skills/registry.ts"
+      "sourceFile": "apps/web/lib/shared/skills/registry.ts"
     },
     {
       "id": "webFetch",
@@ -388,7 +388,7 @@
         "f"
       ],
       "requiresEnv": false,
-      "sourceFile": "lib/shared/skills/registry.ts"
+      "sourceFile": "apps/web/lib/shared/skills/registry.ts"
     },
     {
       "id": "webSearch",
@@ -399,14 +399,14 @@
         "s"
       ],
       "requiresEnv": true,
-      "sourceFile": "lib/shared/skills/registry.ts"
+      "sourceFile": "apps/web/lib/shared/skills/registry.ts"
     }
   ],
   "settings": [
     {
       "id": "theme",
       "label": "Theme",
-      "sourceFile": "lib/client/hooks/store/slices/ui.ts",
+      "sourceFile": "apps/web/lib/client/hooks/store/slices/ui.ts",
       "values": [
         "system",
         "dark",
@@ -416,7 +416,7 @@
     {
       "id": "colorScheme",
       "label": "Color scheme",
-      "sourceFile": "lib/client/hooks/store/slices/ui.ts",
+      "sourceFile": "apps/web/lib/client/hooks/store/slices/ui.ts",
       "values": [
         "default",
         "anthropic"
@@ -425,17 +425,17 @@
     {
       "id": "localOnlyMode",
       "label": "Local-only mode",
-      "sourceFile": "lib/client/hooks/store/slices/ui.ts"
+      "sourceFile": "apps/web/lib/client/hooks/store/slices/ui.ts"
     },
     {
       "id": "localFilesOnly",
       "label": "Local files only",
-      "sourceFile": "lib/client/hooks/store/slices/ui.ts"
+      "sourceFile": "apps/web/lib/client/hooks/store/slices/ui.ts"
     },
     {
       "id": "editorPrefs.aiReviewChanges",
       "label": "AI review changes (editor)",
-      "sourceFile": "lib/client/hooks/store/slices/ui.ts"
+      "sourceFile": "apps/web/lib/client/hooks/store/slices/ui.ts"
     }
   ],
   "envVars": [
@@ -664,7 +664,7 @@
         "K"
       ],
       "label": "Command palette (or Ctrl+K)",
-      "sourceFile": "components/help-popover.tsx"
+      "sourceFile": "apps/web/components/help-popover.tsx"
     },
     {
       "id": "shortcut-2",
@@ -673,7 +673,7 @@
         "F"
       ],
       "label": "Find in conversation (or Ctrl+F)",
-      "sourceFile": "components/help-popover.tsx"
+      "sourceFile": "apps/web/components/help-popover.tsx"
     },
     {
       "id": "shortcut-3",
@@ -681,7 +681,7 @@
         "⏎"
       ],
       "label": "Send message",
-      "sourceFile": "components/help-popover.tsx"
+      "sourceFile": "apps/web/components/help-popover.tsx"
     },
     {
       "id": "shortcut-4",
@@ -690,7 +690,7 @@
         "⏎"
       ],
       "label": "New line in input",
-      "sourceFile": "components/help-popover.tsx"
+      "sourceFile": "apps/web/components/help-popover.tsx"
     },
     {
       "id": "shortcut-5",
@@ -698,7 +698,7 @@
         "Esc"
       ],
       "label": "Close dialogs / cancel editing",
-      "sourceFile": "components/help-popover.tsx"
+      "sourceFile": "apps/web/components/help-popover.tsx"
     }
   ],
   "mcpServers": {
@@ -707,55 +707,55 @@
   "agentTaskKinds": [
     {
       "id": "approval",
-      "sourceFile": "lib/shared/agent/events.ts"
+      "sourceFile": "apps/web/lib/shared/agent/events.ts"
     },
     {
       "id": "artifact_ref",
-      "sourceFile": "lib/shared/agent/events.ts"
+      "sourceFile": "apps/web/lib/shared/agent/events.ts"
     },
     {
       "id": "compact",
-      "sourceFile": "lib/shared/agent/events.ts"
+      "sourceFile": "apps/web/lib/shared/agent/events.ts"
     },
     {
       "id": "handoff",
-      "sourceFile": "lib/shared/agent/events.ts"
+      "sourceFile": "apps/web/lib/shared/agent/events.ts"
     },
     {
       "id": "plan",
-      "sourceFile": "lib/shared/agent/events.ts"
+      "sourceFile": "apps/web/lib/shared/agent/events.ts"
     },
     {
       "id": "result",
-      "sourceFile": "lib/shared/agent/events.ts"
+      "sourceFile": "apps/web/lib/shared/agent/events.ts"
     },
     {
       "id": "status",
-      "sourceFile": "lib/shared/agent/events.ts"
+      "sourceFile": "apps/web/lib/shared/agent/events.ts"
     },
     {
       "id": "step_end",
-      "sourceFile": "lib/shared/agent/events.ts"
+      "sourceFile": "apps/web/lib/shared/agent/events.ts"
     },
     {
       "id": "step_error",
-      "sourceFile": "lib/shared/agent/events.ts"
+      "sourceFile": "apps/web/lib/shared/agent/events.ts"
     },
     {
       "id": "step_start",
-      "sourceFile": "lib/shared/agent/events.ts"
+      "sourceFile": "apps/web/lib/shared/agent/events.ts"
     },
     {
       "id": "token",
-      "sourceFile": "lib/shared/agent/events.ts"
+      "sourceFile": "apps/web/lib/shared/agent/events.ts"
     },
     {
       "id": "tool_input",
-      "sourceFile": "lib/shared/agent/events.ts"
+      "sourceFile": "apps/web/lib/shared/agent/events.ts"
     },
     {
       "id": "tool_output",
-      "sourceFile": "lib/shared/agent/events.ts"
+      "sourceFile": "apps/web/lib/shared/agent/events.ts"
     }
   ]
 }

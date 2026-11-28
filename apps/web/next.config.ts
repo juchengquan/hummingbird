@@ -1,4 +1,10 @@
+import path from "node:path";
 import type { NextConfig } from "next";
+
+// The repo root: the app lives in apps/web but bundles `config/models.json`
+// from the root (`@config/*`, Q153), and Next only bundles files under its
+// project root. One bun.lock sits at the root too.
+const REPO_ROOT = path.join(__dirname, "..", "..");
 
 const SECURITY_HEADERS: { key: string; value: string }[] = [
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -41,7 +47,9 @@ const nextConfig: NextConfig = {
   // editor's chat hook) imports it at its top level, and it names the
   // gateway's key variable — which the bundle audit forbids (Q143). Browser
   // builds get a stub with the same exports (lib/client/stubs/ai-sdk-gateway.ts).
+  outputFileTracingRoot: REPO_ROOT,
   turbopack: {
+    root: REPO_ROOT,
     resolveAlias: {
       "@ai-sdk/gateway": { browser: "./lib/client/stubs/ai-sdk-gateway.ts" },
     },

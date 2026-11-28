@@ -44,7 +44,7 @@ def test_validity_matches_ts(case: dict[str, Any]) -> None:
 
 
 def test_kinds_match_the_ts_registry() -> None:
-    source = (_REPO / "lib/shared/generative-ui/schemas.ts").read_text(encoding="utf-8")
+    source = (_REPO / "apps/web/lib/shared/generative-ui/schemas.ts").read_text(encoding="utf-8")
     block = source.split("export const UI_KIND_VALUES = [", 1)[1].split("]", 1)[0]
     assert ui_kinds() == tuple(json.loads(f"[{block.strip().rstrip(',')}]"))
 

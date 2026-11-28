@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-import rawConfig from "@/config/models.json"
+import rawConfig from "@config/models.json"
 
 /**
  * Public model registry. Source of truth lives in `config/models.json`;

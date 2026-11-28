@@ -10,7 +10,7 @@
 import { expect, test, type Page } from "./guard"
 
 import catalog from "../config/models.json"
-import { STORE_VERSION } from "../lib/client/hooks/store/migrate"
+import { STORE_VERSION } from "../apps/web/lib/client/hooks/store/migrate"
 
 const SUPA = "http://127.0.0.1:54871", FAKE = "http://127.0.0.1:8172"
 const { LIVE_ANON: ANON } = process.env as Record<string, string>

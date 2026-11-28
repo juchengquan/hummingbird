@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Re-record the agent-py run streams the frontend runs client is tested on
-# (lib/client/runs/fixtures/agent-py/, read by lib/client/runs/*.test.ts).
+# (apps/web/lib/client/runs/fixtures/agent-py/, read by apps/web/lib/client/runs/*.test.ts).
 #
 #   bun run fixtures:runs                 # the interactive / stream sets
 #   bun run fixtures:runs --background    # the background set (needs Docker)
@@ -25,7 +25,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-OUT="$PWD/lib/client/runs/fixtures/agent-py"
+OUT="$PWD/apps/web/lib/client/runs/fixtures/agent-py"
 
 if [ "${1:-}" = "--background" ]; then
   rm -rf "$OUT/background"
