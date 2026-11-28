@@ -6,6 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Humm is a Next.js 16.4.6 chat assistant application with a multi-panel interface featuring chat, rich text editor (Plate.js), and file management capabilities. The Next app is the frontend only (no API routes, no server secrets); every API surface is served by the Python agent service, agent-py (`services/agent-py/`), which is required (wave 13 of `docs/PLAN-frontend-backend-split.md`, Q121).
 
+**Layout.** The repo is a Bun workspace. The Next app lives in `apps/web/`
+(its own `package.json`, `tsconfig.json`, `next.config.ts`); agent-py in
+`services/agent-py/`. What both halves share stays at the root:
+`packages/contract/`, `supabase/`, `config/` (the model catalog — the web
+app imports it as `@config/*`), `e2e-live/`, `scripts/`, `docs/`. **App
+paths in this file (`app/`, `components/`, `lib/`, `public/`, `e2e/`,
+`proxy.ts`, `next.config.ts`, `playwright.config.ts`) are under
+`apps/web/`.** Every command below runs from the repo root and delegates
+into `apps/web` where it's the app's; `cd apps/web && bun dev` works too.
+
 ## Commands
 
 ```bash
@@ -18,10 +28,10 @@ bun run start        # Start production server
 
 # Linting
 bun run lint         # Run ESLint
-bun run typecheck    # Run `tsc --noEmit`
+bun run typecheck    # `tsc --noEmit` for the root's own code (scripts/, e2e-live/, packages/), then apps/web
 bun run check        # typecheck + lint (fast — mirrors CI without build/audit)
 bun run check:ci     # typecheck + lint + build + audit:bundle (full CI gate locally)
-bun run test         # root unit tests (scripts/run-tests.sh): excludes services/ (own CI jobs); a coverage guard fails if a *.test.ts sits outside the configured roots
+bun run test         # unit tests (scripts/run-tests.sh → apps/web/scripts/run-tests.sh, then scripts/ + packages/): excludes services/ (own CI jobs); coverage guards fail if a *.test.ts sits outside the configured roots
 bun run test:e2e     # Playwright smoke: starts agent-py (stub harness) + a Next production build; see playwright.config.ts
 bun run test:e2e:wire  # the runs task UI with its real provider over a fake /v1/runs + Supabase (e2e/tasks-wire.config.ts)
 bun run test:e2e:live  # the real stack: Supabase containers, agent-py worker, Next build, scripted model; fails on any browser request to Next's /api/* (e2e-live/README.md)
@@ -65,14 +75,16 @@ cd services/agent-py && uv sync && uv run uvicorn agent_py.main:app --reload
 
 ### Key Directories
 
+Under `apps/web/`:
+
 | Directory | Purpose |
 |-----------|---------|
 | `app/` | Next.js App Router pages and layouts |
 | `components/ui/` | Base UI components (shadcn/radix) |
 | `components/panels/` | Main content panels (chat, editor, sources) |
 | `components/sidebars/` | Sliding sidebar components |
-| `lib/hooks/` | Zustand stores and custom hooks |
-| `lib/` | Utilities (cn() for Tailwind, file-utils) |
+| `lib/client/hooks/` | Zustand stores and custom hooks |
+| `lib/` | Runtime-fenced code (`client/`, `server/`, `shared/` — see "Frontend module conventions") |
 
 ### State Management
 
@@ -152,13 +164,24 @@ function MessageTime({ timestamp }) {
 
 ## Environment Variables
 
-See `.env.example` for the full list. Since wave 13 the Next app reads
-only `NODE_ENV`, `CSP_MODE` and `NEXT_PUBLIC_*` (a check fails the build
-on any other `process.env` read, and `bun run audit:bundle` greps the
-bundle for every server secret's name — Q143). Every server secret and
-setting is agent-py's: see `services/agent-py/README.md` § Configuration
-for the full table. One `.env` is still shared by both; splitting it
-waits for wave 14.
+Each app has its own env file (wave 14, Q154):
+
+- `apps/web/.env` (or `.env.local`; example `apps/web/.env.example`) —
+  only `NEXT_PUBLIC_*` and `CSP_MODE`. The Next app reads nothing else (a
+  check fails the build on any other `process.env` read, and `bun run
+  audit:bundle` greps the bundle for every server secret's name — Q143).
+- `services/agent-py/.env` (example `services/agent-py/.env.example`) —
+  every server secret and setting; full table in
+  `services/agent-py/README.md` § Configuration. agent-py finds it from
+  its own package, whatever the start directory; `AGENT_PY_ENV_FILE`
+  names another file, and empty reads none (agent-py's test suite and
+  both e2e stacks set it empty so a developer's keys never reach them).
+
+A value both halves need is set in each (`NEXT_PUBLIC_SUPABASE_URL` /
+`SUPABASE_URL`). A repo-root `.env` / `.env.local` is read by neither:
+both apps refuse to start while one exists (Q155), and `bun run
+env:split` writes the two files from it (refuses to overwrite, prints key
+names only) — then remove the root file.
 
 **The frontend (Next):**
 
@@ -348,7 +371,7 @@ Path aliases (`tsconfig.json`): `@/client/*`, `@/server/*`, `@/shared/*`.
 ESLint enforces the same convention via `no-restricted-imports` in
 `eslint.config.mjs`. After a production build, run `bun run audit:bundle`
 to confirm no server-only paths or secret env-var names leaked into
-`.next/static/chunks/*.js`.
+`apps/web/.next/static/chunks/*.js`.
 
 When adding a new file, classify by runtime first:
 - Touches `window`, `document`, `localStorage`, React hooks, or Zustand store → `lib/client/`
@@ -407,7 +430,7 @@ asyncpg · structlog · pytest · ruff · mypy.
 |---|---|
 | `services/agent-py/src/agent_py/main.py` | FastAPI app + endpoints. Lifespan owns the DB pool + the poller task. |
 | `services/agent-py/src/agent_py/auth.py` | Supabase JWT verification middleware (HS256 against `SUPABASE_JWT_SECRET`; ES256 / RS256 against the project's JWKS, `jwks.py`). |
-| `services/agent-py/src/agent_py/settings.py` | `pydantic-settings` config. Reads the repo-level `.env`. |
+| `services/agent-py/src/agent_py/settings.py` | `pydantic-settings` config. Reads `services/agent-py/.env` (`AGENT_PY_ENV_FILE` overrides; empty = none); refuses to boot while a repo-root `.env` exists. |
 | `services/agent-py/src/agent_py/model_allowlist.py` | Model allowlist — every `config/models.json` id, each with its target (provider + the id it knows the model by) and its catalog flags. Loaded + validated at `create_app`. |
 | `services/agent-py/src/agent_py/model_routes.py` | Which provider serves each model (wave 10): `config/providers.json` + the variables it names, all spoken to in the Anthropic Messages format; one SDK client per provider with explicit credentials. |
 | `services/agent-py/src/agent_py/db.py` | asyncpg pool lifecycle. Open on startup if `SUPABASE_DB_URL` is set; close on shutdown. |
@@ -422,7 +445,7 @@ asyncpg · structlog · pytest · ruff · mypy.
 | `services/agent-py/tests/` | 62 tests covering health + auth (Phase 0) + db / jobs / poller dry-run (Phase 1) + events / emitter / runner / feature_flag / executor / poller live-mode dispatch (Phase 2a). |
 | `services/agent-py/Dockerfile` | Multi-stage uv build, slim runtime, non-root user. Build context is the **repo root** (`docker build -f services/agent-py/Dockerfile .`) so the image ships `config/models.json`. |
 | `docker-compose.yml` (repo root) | Spins up the agent service alongside `bun dev`. |
-| `lib/shared/agent-py-types.generated.ts` | TS types generated from FastAPI's OpenAPI doc — the **source of truth** for the Python ⇄ TS contract. Regen with `bun run codegen:agent-types`. CI fails on drift via `codegen:agent-types:check`. |
+| `apps/web/lib/shared/agent-py-types.generated.ts` | TS types generated from FastAPI's OpenAPI doc — the **source of truth** for the Python ⇄ TS contract. Regen with `bun run codegen:agent-types`. CI fails on drift via `codegen:agent-types:check`. |
 
 **Configuration:** `SUPABASE_JWT_SECRET` (HS256 tokens) or a JWKS URL
 (`SUPABASE_JWKS_URL`, else derived from `SUPABASE_URL` — ES256 / RS256
@@ -451,8 +474,8 @@ task still `queued` and never started after
 available" — but only when no worker has executed anything in that
 window (`task_worker_active_within`, migration 0040), so a busy worker's
 backlog waits instead. Schedules are fired by agent-py's scheduler,
-which is on wherever its worker runs (Q130). The service reads the same
-top-level `.env` as Next.js (split in wave 14).
+which is on wherever its worker runs (Q130). These settings go in
+`services/agent-py/.env`.
 
 **Model allowlist:** agent-py (wave 10) accepts
 every `config/models.json` id and serves each on its provider
