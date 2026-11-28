@@ -5,16 +5,62 @@ stage are the Supabase JWT secret (needed to verify incoming tokens) and the
 Supabase URL (used by /readyz to confirm the data layer is reachable).
 Phase 1 will add the service-role key, polling interval, and runtime mode.
 
-Mirrors the env vars already documented in the repo's top-level `.env.example`
-so a single `.env` works for both the Next.js app and this service.
+The variables are documented in `services/agent-py/.env.example`. The file
+is `services/agent-py/.env`, found from this package rather than the start
+directory (wave 14, Q154); `AGENT_PY_ENV_FILE` names another, and an empty
+value reads none (the test suite and the e2e stacks, so a developer's file
+can't leak into them).
 """
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+SERVICE_DIR = Path(__file__).resolve().parents[2]
+"""`services/agent-py` in a checkout (`/app` in the image)."""
+
+
+def env_file_path() -> Path | None:
+    """The `.env` agent-py reads: `AGENT_PY_ENV_FILE` when set (empty → none),
+    else `services/agent-py/.env`."""
+    raw = os.environ.get("AGENT_PY_ENV_FILE")
+    if raw is None:
+        return SERVICE_DIR / ".env"
+    return Path(raw) if raw.strip() else None
+
+
+ROOT_ENV_NAMES = (".env", ".env.local")
+
+
+def stale_root_env() -> Path | None:
+    """A repo-root `.env` / `.env.local` left from before the split (Q155),
+    when this checkout would read its own `.env` — else None. Neither app
+    reads the root file any more, so one that exists is refused rather than
+    silently ignored. Outside a checkout (the image) there is no root."""
+    if env_file_path() is None or SERVICE_DIR.parent.name != "services":
+        return None
+    root = SERVICE_DIR.parent.parent
+    for name in ROOT_ENV_NAMES:
+        if (root / name).exists():
+            return root / name
+    return None
+
+
+def refuse_stale_root_env() -> None:
+    """Stop at boot while a root `.env` exists (Q155)."""
+    stale = stale_root_env()
+    if stale is not None:
+        raise RuntimeError(
+            f"{stale} is no longer read: settings live in services/agent-py/.env "
+            "and apps/web/.env (wave 14). Run `bun run env:split` to write both "
+            "from it, check them, then remove the root file."
+        )
+
 
 DEFAULT_AGENT_MODEL = "anthropic/claude-haiku-4.5"
 """Service default model (catalog id) when `AGENT_DEFAULT_MODEL` is unset."""
@@ -30,7 +76,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=env_file_path(),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",

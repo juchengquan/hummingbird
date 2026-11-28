@@ -1,10 +1,16 @@
 import path from "node:path";
 import type { NextConfig } from "next";
 
+import { refuseStaleRootEnv } from "./scripts/root-env";
+
 // The repo root: the app lives in apps/web but bundles `config/models.json`
 // from the root (`@config/*`, Q153), and Next only bundles files under its
 // project root. One bun.lock sits at the root too.
 const REPO_ROOT = path.join(__dirname, "..", "..");
+
+// Next reads only apps/web's env files; a root `.env` left from before the
+// split would be silently ignored, so dev / build / start stop instead (Q155).
+refuseStaleRootEnv(REPO_ROOT);
 
 const SECURITY_HEADERS: { key: string; value: string }[] = [
   { key: "X-Content-Type-Options", value: "nosniff" },

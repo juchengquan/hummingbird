@@ -34,14 +34,17 @@ describe("scanSidebars", () => {
 })
 
 describe("scanEnvVars", () => {
-  test("extracts KEY= entries from .env.example with comment descriptions", async () => {
+  test("extracts KEY= entries from both apps' .env.example with comment descriptions", async () => {
     const envVars = await scanEnvVars()
     expect(envVars.length).toBeGreaterThan(0)
     const gw = envVars.find((e) => e.id === "AI_GATEWAY_API_KEY")
     expect(gw).toBeTruthy()
     expect(gw!.required).toBe(true)
     expect(gw!.description).toMatch(/AI gateway/i)
-    expect(gw!.sourceFile).toBe(".env.example")
+    expect(gw!.sourceFile).toBe("services/agent-py/.env.example")
+    const csp = envVars.find((e) => e.id === "CSP_MODE")
+    expect(csp!.sourceFile).toBe("apps/web/.env.example")
+    expect(envVars.map((e) => e.id)).toEqual([...envVars.map((e) => e.id)].sort((a, b) => a.localeCompare(b)))
   })
 })
 

@@ -13,7 +13,11 @@
 set -uo pipefail
 L=$(cd "$(dirname "$0")" && pwd); ROOT=$(cd "$L/.." && pwd)
 LOG="$ROOT/test-results/live"; mkdir -p "$LOG"
-[ -e "$ROOT/.env" ] || [ -e "$ROOT/.env.local" ] && { echo "refusing: worktree has a .env"; exit 1; }
+# No developer env file may reach the stack (Q155): the root one from before
+# the split, and each app's own.
+for f in .env .env.local apps/web/.env apps/web/.env.local services/agent-py/.env; do
+  [ -e "$ROOT/$f" ] && { echo "refusing: worktree has $f"; exit 1; }
+done
 REG=public.ecr.aws/supabase
 PW=$(openssl rand -hex 16); SECRET=$(openssl rand -hex 32); MCPKEY=$(openssl rand -base64 32)
 PIDS=""; CS=""
@@ -57,7 +61,7 @@ DSN="postgresql://postgres:$PW@127.0.0.1:$(port 5432)/postgres"
 AUTH="http://127.0.0.1:$(port 9999)" REST="http://127.0.0.1:$(port 3000)" bun "$L/proxy.ts" > "$LOG/proxy.log" 2>&1 & PIDS="$PIDS $!"
 "$PY" -B "$L/fakes.py" > "$LOG/fakes.log" 2>&1 & PIDS="$PIDS $!"
 wait_http http://127.0.0.1:8172/state
-( cd "$ROOT/services/agent-py" && exec env SUPABASE_URL=http://127.0.0.1:54871 SUPABASE_JWT_SECRET="$SECRET" SUPABASE_DB_URL="$DSN" \
+( cd "$ROOT/services/agent-py" && exec env AGENT_PY_ENV_FILE= SUPABASE_URL=http://127.0.0.1:54871 SUPABASE_JWT_SECRET="$SECRET" SUPABASE_DB_URL="$DSN" \
  SUPABASE_SERVICE_ROLE_KEY="$SVC" ANTHROPIC_API_KEY="${LIVE_ANTHROPIC_KEY:-fake-key}" ANTHROPIC_BASE_URL="${LIVE_ANTHROPIC_URL-http://127.0.0.1:8172}" MINIMAX_CN_API_KEY="${LIVE_MINIMAX_KEY:-fake-minimax}" MINIMAX_CN_BASE_URL="${LIVE_MINIMAX_URL:-http://127.0.0.1:8172/v1}" OLLAMA_BASE_URL=http://127.0.0.1:8172/v1 WORKER_DRY_RUN=false \
  POLL_INTERVAL_SECONDS=0.2 SCHEDULER_INTERVAL_SECONDS=2 MCP_ENCRYPTION_KEY="$MCPKEY" \
  MCP_ALLOW_PRIVATE_HOSTS=true CORS_ALLOWED_ORIGINS=http://127.0.0.1:3171 TRUSTED_PROXY_HOPS=0 RUNS_RATE_PER_MINUTE=1000 \

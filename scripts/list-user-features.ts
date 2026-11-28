@@ -117,8 +117,17 @@ export async function scanSidebars(): Promise<SidebarEntry[]> {
 }
 
 // Env vars
+/** The two per-app examples (wave 14, Q154): the web app's, then agent-py's. */
+export const ENV_EXAMPLES = ["apps/web/.env.example", "services/agent-py/.env.example"] as const
+
 export async function scanEnvVars(): Promise<EnvVarEntry[]> {
-  const abs = join(ROOT, ".env.example")
+  const entries: EnvVarEntry[] = []
+  for (const rel of ENV_EXAMPLES) entries.push(...(await scanEnvExample(rel)))
+  return entries.sort((a, b) => a.id.localeCompare(b.id))
+}
+
+async function scanEnvExample(rel: string): Promise<EnvVarEntry[]> {
+  const abs = join(ROOT, rel)
   if (!(await pathExists(abs))) return []
   const text = await readText(abs)
   const lines = text.split(/\r?\n/)
@@ -149,12 +158,12 @@ export async function scanEnvVars(): Promise<EnvVarEntry[]> {
       id: key,
       description: pendingComment || "(no description)",
       required: !hasDefault,
-      sourceFile: ".env.example",
+      sourceFile: rel,
     })
     pendingComment = ""
   }
 
-  return entries.sort((a, b) => a.id.localeCompare(b.id))
+  return entries
 }
 
 // Slash commands

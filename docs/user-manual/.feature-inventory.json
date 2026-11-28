@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-28T07:41:52Z",
+  "generatedAt": "2026-11-28T07:55:57Z",
   "panels": [
     {
       "id": "agents-dialog",
@@ -443,217 +443,217 @@
       "id": "AGENT_DEFAULT_MODEL",
       "description": "The default model: used when a request names none (/v1/summarize), for the follow-up-suggestion chips and for forced tool calls on a model without structured output. Must be a `config/models.json` id or the service refuses to boot. Empty → the default below.",
       "required": false,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "AI_GATEWAY_API_KEY",
       "description": "AI Gateway (Vercel) — the catalog's `gateway` routes (OpenAI, Google, DeepSeek; `anthropic/*` too when ANTHROPIC_API_KEY is unset).",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "ANTHROPIC_API_KEY",
       "description": "Anthropic API key — `anthropic/*` models go to Anthropic directly with this key (each mapped to its `anthropicModelId`). Empty → those models go through the AI Gateway when it is configured, else a run on them fails with a message saying so (nothing falls back to canned output).",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "ANTHROPIC_BASE_URL",
       "description": "Optional Anthropic base-URL override for the direct Anthropic route. Empty → Anthropic's own API (https://api.anthropic.com, passed explicitly). Has no effect when ANTHROPIC_API_KEY is empty.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "CODE_SANDBOX_BASE_URL",
       "description": "(no description)",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "CODE_SANDBOX_ENABLED",
       "description": "Code interpreter sandbox (optional). Set CODE_SANDBOX_ENABLED=1 to register the `runCode` skill and execute model-written Python/JS in a local microsandbox microVM (libkrun; HVF on Apple Silicon). Network is OFF inside the sandbox; pandas/numpy/matplotlib available (see image note below). Absent → the skill is simply not registered (no mock). CODE_SANDBOX_BASE_URL also enables it and is reserved for a future remote backend (the local microVM runtime ignores the URL). Needs `uv sync --extra sandbox` (services/agent-py/README.md § Code interpreter); see also docs/PLAN-execution-sandbox.md + docs/PLAN-code-interpreter.md.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "CSP_MODE",
       "description": "Content-Security-Policy mode (optional). `proxy.ts` mints a per-request nonce and emits a strict nonce + 'strict-dynamic' policy (built by lib/server/security/csp.ts); violations are POSTed to agent-py's /v1/csp-report and logged there as `{\"evt\":\"csp_violation\",…}` lines. report-only (default) → Content-Security-Policy-Report-Only: nothing is blocked, violations are only reported enforce               → Content-Security-Policy: violations are blocked off                   → no CSP header at all (other security headers stay) Unset or unrecognised → report-only. Read docs/SECURITY.md before flipping to `enforce` (live-artifact / MCP-app frames inherit the policy).",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "apps/web/.env.example"
     },
     {
       "id": "EMBEDDINGS_API_KEY",
       "description": "(no description)",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "EMBEDDINGS_BASE_URL",
       "description": "Embeddings — optional. Enables the vector / hybrid-retrieval pipeline (chunk + embed file text → pgvector, served by /v1/embed). Without it, retrieval stays full-text only. Points at an OpenAI-compatible `/v1/embeddings` endpoint; Ollama works (set EMBEDDINGS_BASE_URL to the same `/v1` URL, or leave blank to reuse OLLAMA_BASE_URL above). EMBEDDINGS_MODEL defaults to `nomic-embed-text` (768-dim — must match the vector(768) column in migration 0023).",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "EMBEDDINGS_MODEL",
       "description": "(no description)",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "GOOGLE_API_KEY",
       "description": "Cross-family verifier key — used when VERIFY_PROVIDER=google. Either GOOGLE_API_KEY or GEMINI_API_KEY works (GOOGLE_API_KEY is checked first).",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "MCP_ALLOW_PRIVATE_HOSTS",
       "description": "MCP private-host opt-in — optional, default off. Every MCP server URL (local-mode proxy calls, cloud-mode rows, saves) is SSRF-checked and must resolve to a public address. Set to `true` to also allow loopback / RFC 1918 / `.local`-style hosts — e.g. an MCP server on `http://localhost:3001/mcp` during single-user local dev. Link-local and cloud-metadata addresses (169.254.169.254 etc.) stay blocked even then. Do NOT enable on a shared/hosted deployment: any user could then point the server at your internal network. Only `true` enables it; a value other than `true` / `false` / empty stops agent-py at boot.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "MCP_ENCRYPTION_KEY",
       "description": "MCP encryption — required when any user picks Cloud-mode credentials for an MCP server. Generate with `openssl rand -base64 32`. The key lives only in agent-py's env, never in Postgres; it's passed as an argument to the SECURITY DEFINER encrypt/decrypt RPCs at request time. Rotating invalidates existing cloud-mode creds — users have to re-add the server. Leaving unset disables cloud mode (Local mode still works).",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "MEMORY_EXTRACT_MODEL",
       "description": "Memory-extraction model — optional. Distils durable facts from a finished chat turn when the user has memory on (/v1/memory/extract). Used when it is a `supportsStructuredOutput` model a provider serves; otherwise (or empty) AGENT_DEFAULT_MODEL.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "MINIMAX_CN_API_KEY",
       "description": "(no description)",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "MINIMAX_CN_BASE_URL",
       "description": "Minimax-CN — optional. When BOTH vars are set, the `minimax/*` models are served through Minimax's Anthropic-compatible endpoint. IMPORTANT: include the `/v1` suffix in the base URL. The Anthropic SDK appends `/messages` only — it doesn't add `/v1`. Example: MINIMAX_CN_BASE_URL=https://api.minimax.chat/anthropic/v1 The same key enables the `generateImage` tool (Minimax T2I / I2I via `/v1/image_generation`, derived from MINIMAX_CN_BASE_URL's origin; unset → `https://api.minimaxi.com`). Empty MINIMAX_CN_API_KEY → the tool is omitted.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "MINIMAX_IMAGE_RATE_LIMIT_PER_MINUTE",
       "description": "Image generation rate limit. With MINIMAX_CN_API_KEY set, runs expose a `generateImage` tool (see Minimax-CN above). Each call costs ~1–3¢ depending on aspect ratio + count, so the per-IP limit defaults tight. Raise for trusted deployments behind auth; lower if you're seeing abuse. Not a positive number → 5, floored, capped at 60.",
       "required": false,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "MODELS_CONFIG_PATH",
       "description": "Path to config/models.json (the model allowlist; providers.json beside it). Empty → searched upward from the package (finds the repo root in a checkout); the Docker image sets /app/config/models.json.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "NEXT_PUBLIC_AGENT_PY_URL",
       "description": "Base URL of agent-py, the backend every surface talks to (chat on `/v1/runs`, tasks, schedules, files, MCP, the editor AI, …). Without it the app still builds, but shows a full-page \"This deploy has no backend configured\" screen pointing at the setup docs. Example: `http://localhost:8000` in dev — then also set CORS_ALLOWED_ORIGINS=http://localhost:3000 for agent-py (cross-origin). Same origin: set it to `/` when a reverse proxy serves agent-py on the frontend's own origin (PLAN-frontend-backend-split.md Q21) — requests go to `/v1/...` on the current origin and CSP needs no extra source. Local dev: `docker compose up proxy agent-py`, then open http://localhost:8080 (see README \"Same-origin backend\"). The CSP's report-uri / Reporting-Endpoints point at agent-py's `/v1/csp-report` (`/` → same-origin `/v1/csp-report`); unset → the policy has no report-uri.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "apps/web/.env.example"
     },
     {
       "id": "NEXT_PUBLIC_API_BASE_URL",
       "description": "Optional. An extra backend origin the browser may call, added to the CSP's `connect-src`. Leave empty unless you know you need it.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "apps/web/.env.example"
     },
     {
       "id": "NEXT_PUBLIC_SUPABASE_ANON_KEY",
       "description": "(no description)",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "apps/web/.env.example"
     },
     {
       "id": "NEXT_PUBLIC_SUPABASE_URL",
       "description": "Supabase — optional. When set, users can sign in (email + password) and sync workspaces, conversations, files, and conversation assets across devices. When unset, the app runs anonymously on localStorage only. These are the public URL and anon key; agent-py reads its own SUPABASE_URL / SUPABASE_JWT_SECRET / SUPABASE_DB_URL below.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "apps/web/.env.example"
     },
     {
       "id": "OLLAMA_API_KEY",
       "description": "(no description)",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "OLLAMA_BASE_URL",
       "description": "Ollama — optional. When OLLAMA_BASE_URL is set, the `ollama/*` models are served by that Ollama host (Ollama ≥ 0.14, its Anthropic-format endpoint), and it is the fallback embedder when EMBEDDINGS_BASE_URL is unset. Typical local value: `http://localhost:11434/v1`. OLLAMA_API_KEY is optional (Ollama doesn't enforce auth). The `ollama` provider is declared with `allowInsecureBaseUrl: true` in providers.json, which lets a loopback / `http://` URL through — only enable this for endpoints you fully control.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "OPENROUTER_API_KEY",
       "description": "OpenRouter — optional. When set, the `openrouter/*` models are served against `https://openrouter.ai/api/v1` (fixed in config/providers.json). Get a key from https://openrouter.ai/keys.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "REQUIRE_AUTH_FOR_AI",
       "description": "Require sign-in for AI — optional, default off. When `true` (or `1`) AND Supabase is configured, anonymous runs and the anonymous calls that spend model budget answer `401 { code: \"auth_required\" }`, and /v1/extract skips its vision pass for anonymous callers (plain text extraction still works). Off / unset / no Supabase → anonymous mode works as before. Accepted values: true, false, 1, 0 (case-insensitive). Anything else is a configuration error: anonymous calls fail with 500 until it's fixed (never silently open). The browser learns it from the 401, not from an env var.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "SUPABASE_DB_URL",
       "description": "Direct Postgres connection string. Required by the task worker, the scheduler, the reconciler and persisted runs, which need `FOR UPDATE SKIP LOCKED` semantics that the transaction pooler doesn't expose. Use the *direct* connection from Supabase's dashboard (the one ending in `db.<project>.supabase.co:5432`), NOT the pooler (`*.pooler.supabase.com:6543`). Empty in dev → the poller no-ops every tick (the service still serves /healthz + /readyz).",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "SUPABASE_JWT_SECRET",
       "description": "JWT secret — verifies HS256 access tokens. Find it under Project Settings → API → JWT Settings in the Supabase dashboard.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "SUPABASE_SERVICE_ROLE_KEY",
       "description": "Service role key — agent-py's Supabase Storage access (with SUPABASE_URL): generated images and tool-made files are saved under `user-files/<user_id>/generated/...` (the model then gets a long-lived signed URL instead of a short-lived one). Without it generated images fall back to inline Minimax URLs (work for hours, then expire). Share pages read through SUPABASE_DB_URL instead.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "SUPABASE_URL",
       "description": "Supabase project URL (the same value as NEXT_PUBLIC_SUPABASE_URL above). Reported by /readyz; the JWKS URL and Storage are derived from it.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "TASK_NO_WORKER_TIMEOUT_MINUTES",
       "description": "Background-task safety net (agent-py's no-worker reconciler). agent-py executes every user's tasks unless an admin opts the user out (`auth.users.raw_app_meta_data->>'agent_backend'` set to anything but 'python'; their tasks fail up front). A task still `queued` and never started after this many minutes while NO worker executed anything in that window — agent-py's worker down or in WORKER_DRY_RUN — is failed with \"No task worker available\". A busy worker's backlog waits. Empty → 10.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "TAVILY_API_KEY",
       "description": "Tavily — optional. Backs the `webSearch` tool. When unset the tool is omitted entirely, so the model never sees it.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "VERIFY_MODEL",
       "description": "Citation verifier model — optional. When set, a post-run citation pass runs on Deep Research reports: each cited claim is checked against its sources and the result shows a confidence chip + flagged claims (see docs/PLAN-citation-verifiability.md). Empty = OFF. Use a CHEAP model id (ideally cheaper/weaker than the answerer — cross-checking your own output is weaker). Uses the same ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL client, so it's a no-op without a key regardless.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "VERIFY_PROVIDER",
       "description": "Verifier provider family — optional. Default \"anthropic\" preserves the legacy same-family behaviour. Set to \"google\" to cross-check the answer with a different model family (a model is a weak judge of its own output). The Google path needs GOOGLE_API_KEY (or GEMINI_API_KEY) and the optional google-generativeai SDK; if either is missing it falls back to Anthropic with a one-shot log warning.",
       "required": false,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "VISION_MODEL",
       "description": "Vision document extraction (optional). Picks the vision-capable model /v1/extract uses to transcribe layout-rich / scanned PDFs (render pages → image → markdown tables/captions) on top of the text-only pass. Must name a model flagged `supportsVision` in config/models.json and served here. Unset → the first such model; if none, the vision pass is skipped (text-only extraction). See docs/PLAN-multimodal-docs.md. Example: `anthropic/claude-sonnet-4.6`.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     },
     {
       "id": "WORKER_STUB_MODEL",
       "description": "Tests only. `true` runs background tasks on a model-free stub that answers canned text; empty / `false` is off, any other value fails the service at boot. Never set it in a deployment.",
       "required": true,
-      "sourceFile": ".env.example"
+      "sourceFile": "services/agent-py/.env.example"
     }
   ],
   "shortcuts": [
