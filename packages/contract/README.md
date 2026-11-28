@@ -17,20 +17,18 @@ files here; nothing here is generated from code.
 | `conformance/` | The conformance suite: HTTP cases run against any backend URL, checked against `openapi.yaml` |
 | `tests/` | Offline tests: the spec compiles, fixtures are valid, the vendored AG-UI schema is unchanged |
 
-There is no `package.json`: the repo root does not use workspaces, and
-the tooling (`openapi-typescript`, `@redocly/openapi-core`, `ajv`) is
-in the root `devDependencies`. A package manifest arrives with the
-Phase 5 move to `apps/web` + workspaces, if it is needed then.
+There is no `package.json`: the package is files, not a workspace (the
+root's workspaces are `apps/*`), and the tooling (`openapi-typescript`,
+`@redocly/openapi-core`, `ajv`) is in the root `devDependencies` (Q151).
 
 ## Generated code
 
 Each consumer holds its own generated code; this package holds only the
-spec and the tooling. When the frontend moves to `apps/web`, its output
-path moves with it.
+spec and the tooling. The frontend's lives in the web app, `apps/web/`.
 
 | Output | Generator | Import as |
 |---|---|---|
-| `lib/shared/contract/openapi.generated.ts` | [`openapi-typescript`](https://openapi-ts.dev) 7 (`--root-types`) | `import type { CitationTable, paths } from "@/shared/contract/openapi.generated"` — types only, isomorphic, so it is legal from `lib/client`, `lib/server` and `lib/shared` alike |
+| `apps/web/lib/shared/contract/openapi.generated.ts` | [`openapi-typescript`](https://openapi-ts.dev) 7 (`--root-types`) | `import type { CitationTable, paths } from "@/shared/contract/openapi.generated"` — types only, isomorphic, so it is legal from `lib/client`, `lib/server` and `lib/shared` alike |
 | `services/agent-py/src/agent_py/contract/models.py` | [`datamodel-code-generator`](https://koxudaxi.github.io/datamodel-code-generator/) (Pydantic v2), normalised with agent-py's ruff config | `from agent_py.contract import models` |
 
 Both files start with a `DO NOT EDIT — generated from
@@ -94,7 +92,7 @@ ride on the root `tsc` / `eslint` in the `ci` job.
 ### Errors
 
 `ApiError` (`{ code, message }`, open set of codes — see
-`lib/shared/api-errors.ts`) is the envelope the frontend reads, and the
+`apps/web/lib/shared/api-errors.ts`) is the envelope the frontend reads, and the
 only error body the contract allows: `ErrorResponse` is `ApiError`, and
 validation failures (`components/responses/ValidationError`) answer
 `ValidationErrorResponse` — an `ApiError` (`code: invalid_request`) with
@@ -178,8 +176,8 @@ marker **and** the entry, add its conformance cases, and run the suite.
 
 ### The Zod schemas
 
-`lib/shared/api-schemas.ts` (Zod) still validates responses in
-`lib/client/api-client.ts` (the Next routes that validated requests with
+`apps/web/lib/shared/api-schemas.ts` (Zod) still validates responses in
+`apps/web/lib/client/api-client.ts` (the Next routes that validated requests with
 it were deleted in wave 13). Per Q19 they are retired as endpoints move
 to the backend: a schema only a deleted Next route used goes, and the
 client parses with
@@ -190,7 +188,7 @@ already has a Zod twin must update both — the conformance suite is what
 catches a backend that drifted from the spec.
 
 The old code-first pipeline (`bun run codegen:agent-types` → FastAPI's
-`/openapi.json` → `lib/shared/agent-py-types.generated.ts`) keeps
+`/openapi.json` → `apps/web/lib/shared/agent-py-types.generated.ts`) keeps
 running unchanged until a later wave retires it in favour of this one.
 
 ## Conformance suite
@@ -261,9 +259,10 @@ Cases today:
 ```bash
 # terminal 1 — any non-empty secret makes agent-py verify (and reject) tokens;
 # the stub harness answers runs without a model, and the raised limits keep
-# the suite's burst of runs from one IP under the per-IP caps
+# the suite's burst of runs from one IP under the per-IP caps; an empty
+# AGENT_PY_ENV_FILE keeps your services/agent-py/.env out of it
 cd services/agent-py
-SUPABASE_JWT_SECRET=conformance-local-secret-at-least-32-bytes \
+AGENT_PY_ENV_FILE= SUPABASE_JWT_SECRET=conformance-local-secret-at-least-32-bytes \
 RUNS_STUB_HARNESS=true RUNS_RATE_PER_MINUTE=1000 \
 RUNS_ANONYMOUS_RATE_PER_MINUTE=1000 RUNS_ANONYMOUS_MAX_CONCURRENT=50 \
   uv run uvicorn agent_py.main:app --port 8765

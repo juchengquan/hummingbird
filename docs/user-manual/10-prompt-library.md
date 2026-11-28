@@ -1,5 +1,5 @@
 <!-- pages-for: panel:prompt-dialog -->
-<!-- related: components/panels/prompt-dialog.tsx, components/sidebars/prompt-item.tsx, lib/client/hooks/store/slices/prompts.ts -->
+<!-- related: apps/web/components/panels/prompt-dialog.tsx, apps/web/components/sidebars/prompt-item.tsx, apps/web/lib/client/hooks/store/slices/prompts.ts -->
 
 # Prompt library
 

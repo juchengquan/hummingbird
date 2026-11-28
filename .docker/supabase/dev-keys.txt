@@ -6,7 +6,10 @@
 # Safe to commit: they're worthless against any real Supabase project.
 # Never use them in production.
 #
-# Copy these into .env.local when running the local stack:
+# When running the local stack, copy the NEXT_PUBLIC_* lines into
+# apps/web/.env and SUPABASE_SERVICE_ROLE_KEY into services/agent-py/.env,
+# with SUPABASE_URL=http://localhost:54321 and SUPABASE_JWT_SECRET set to
+# the dev secret above (docs/SUPABASE_LOCAL.md):
 
 NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlLWRlbW8iLCJpYXQiOjE2NDE3NjkyMDAsImV4cCI6MTc5OTUzNTYwMH0.dc_X5iR_VP_qT0zsiyj_I_OZ2T9FtRU2BBNWN8Bu4GE

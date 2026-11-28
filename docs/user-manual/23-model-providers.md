@@ -1,4 +1,4 @@
-<!-- related: config/providers.json, config/models.json, lib/server/model-provider.ts, lib/server/skills/minimax-image-client.ts -->
+<!-- related: config/providers.json, config/models.json, services/agent-py/src/agent_py/model_routes.py, services/agent-py/src/agent_py/tools/minimax_image_client.py -->
 
 # Model providers
 

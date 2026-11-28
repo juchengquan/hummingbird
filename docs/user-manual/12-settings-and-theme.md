@@ -1,5 +1,5 @@
 <!-- pages-for: setting:theme, setting:colorScheme, setting:localOnlyMode, setting:localFilesOnly, setting:editorPrefs.aiReviewChanges -->
-<!-- related: lib/client/hooks/store/slices/ui.ts, components/auth/account-menu.tsx -->
+<!-- related: apps/web/lib/client/hooks/store/slices/ui.ts, apps/web/components/auth/account-menu.tsx -->
 
 # Settings & theme
 

@@ -17,18 +17,26 @@ editor AI), so run both:
 
 ```bash
 bun install
-cp .env.example .env.local         # leave Supabase vars blank
-docker compose up proxy agent-py   # agent-py + a Caddy proxy on :8080 (reads .env)
-bun dev                            # Next on :3000
+cp apps/web/.env.example apps/web/.env                  # the web app's settings; leave Supabase vars blank
+cp services/agent-py/.env.example services/agent-py/.env  # agent-py's settings
+docker compose up proxy agent-py   # agent-py + a Caddy proxy on :8080 (reads services/agent-py/.env)
+bun dev                            # Next on :3000 (reads apps/web/.env)
 open http://localhost:8080         # use the app through the proxy
 ```
 
 Set **at minimum**:
 
 ```bash
-NEXT_PUBLIC_AGENT_PY_URL=/            # .env.local — the browser calls /v1/... on the proxy's origin
-ANTHROPIC_API_KEY=<your key>          # .env — or AI_GATEWAY_API_KEY / OPENROUTER_API_KEY / MINIMAX_CN_* / OLLAMA_BASE_URL
+NEXT_PUBLIC_AGENT_PY_URL=/            # apps/web/.env — the browser calls /v1/... on the proxy's origin
+ANTHROPIC_API_KEY=<your key>          # services/agent-py/.env — or AI_GATEWAY_API_KEY / OPENROUTER_API_KEY / MINIMAX_CN_* / OLLAMA_BASE_URL
 ```
+
+**Upgrading from one root `.env`?** Neither app reads it any more, and
+both refuse to start while a root `.env` or `.env.local` exists. Run
+`bun run env:split`: it writes `apps/web/.env` (the `NEXT_PUBLIC_*` and
+`CSP_MODE` keys) and `services/agent-py/.env` (everything else) from it,
+refuses to overwrite either, and prints only key names. Check both
+files, then remove the root one.
 
 Without a model provider the app still loads, but the model picker and
 the chat say plainly that no provider is configured, with a pointer to
@@ -45,13 +53,13 @@ credential lane. Two paths — both detailed in
 ```bash
 # Path A — Supabase CLI (recommended; needs `supabase` + Docker)
 bun run supabase:start
-cat .docker/supabase/dev-keys.txt        # paste into .env.local
+cat .docker/supabase/dev-keys.txt        # NEXT_PUBLIC_* → apps/web/.env, the rest → services/agent-py/.env
 bun dev
 
 # Path B — Docker only (no CLI; uses docker-compose.supabase.yml)
 bun run supabase:docker:up
 bun run supabase:docker:migrate
-cat .docker/supabase/dev-keys.txt        # paste into .env.local
+cat .docker/supabase/dev-keys.txt        # NEXT_PUBLIC_* → apps/web/.env, the rest → services/agent-py/.env
 bun dev
 ```
 
@@ -68,11 +76,11 @@ origin** as the frontend, the way a deployment serves them
 agent-py and everything else to the Next dev server:
 
 ```bash
-# .env.local
+# apps/web/.env
 NEXT_PUBLIC_AGENT_PY_URL=/        # "/" = call /v1/... on the page's own origin
 
 bun dev                            # Next on :3000 (restart after editing NEXT_PUBLIC_*)
-docker compose up proxy agent-py   # Caddy on :8080 + agent-py (reads .env)
+docker compose up proxy agent-py   # Caddy on :8080 + agent-py (reads services/agent-py/.env)
 open http://localhost:8080         # use the app through the proxy
 ```
 
@@ -81,28 +89,33 @@ Routing lives in [`.docker/proxy/Caddyfile`](.docker/proxy/Caddyfile)
 The browser sends the Supabase JWT as a bearer token when signed in,
 exactly as with a separate origin. Alternatively set
 `NEXT_PUBLIC_AGENT_PY_URL=http://localhost:8000` to call agent-py on its
-own port (then agent-py needs `CORS_ALLOWED_ORIGINS=http://localhost:3000`).
+own port (then agent-py needs `CORS_ALLOWED_ORIGINS=http://localhost:3000`
+in `services/agent-py/.env`).
 
 ## Environment variables
 
-See [`.env.example`](.env.example) for the canonical list with
-descriptions. Quick reference:
+Each app has its own file. The canonical lists with descriptions are
+[`apps/web/.env.example`](apps/web/.env.example) (copy to
+`apps/web/.env`) and
+[`services/agent-py/.env.example`](services/agent-py/.env.example) (copy
+to `services/agent-py/.env`). Quick reference:
 
-The frontend (Next) reads only `NEXT_PUBLIC_*` and `CSP_MODE`; every
-secret is agent-py's (`services/agent-py/README.md` § Configuration).
-One `.env` is still shared by both (split in wave 14).
+The frontend (Next) reads only `NEXT_PUBLIC_*` and `CSP_MODE`, from
+`apps/web/.env`; every secret is agent-py's, in `services/agent-py/.env`
+(`services/agent-py/README.md` § Configuration). A root `.env` is not
+read — `bun run env:split` moves one into the two files.
 
-| Variable | Read by | When | Why |
+| Variable | Read by (file) | When | Why |
 |---|---|---|---|
-| `NEXT_PUBLIC_AGENT_PY_URL` | Next | Always | agent-py base URL; `/` = same origin behind the proxy |
-| `NEXT_PUBLIC_SUPABASE_URL` | Next | Only with Supabase | Browser client target |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Next | Only with Supabase | Browser client auth |
-| `CSP_MODE` | Next | Optional | `report-only` (default) / `enforce` / `off` |
-| `ANTHROPIC_API_KEY`, `AI_GATEWAY_API_KEY`, `OPENROUTER_API_KEY`, `MINIMAX_CN_*`, `OLLAMA_BASE_URL` | agent-py | At least one, for real AI | Model providers |
-| `SUPABASE_JWT_SECRET` (or a JWKS URL), `SUPABASE_DB_URL` | agent-py | Only with Supabase | Verify sessions; tasks, runs, schedules |
-| `WORKER_DRY_RUN=false` | agent-py | To run background tasks | The task worker (and the scheduler that follows it) |
-| `TAVILY_API_KEY` | agent-py | Only for web search | Tavily-backed `webSearch` tool |
-| `MCP_ENCRYPTION_KEY` | agent-py | Only for cloud-mode MCP creds | pgcrypto symmetric key (32+ chars). Generate with `openssl rand -base64 32` |
+| `NEXT_PUBLIC_AGENT_PY_URL` | Next (`apps/web/.env`) | Always | agent-py base URL; `/` = same origin behind the proxy |
+| `NEXT_PUBLIC_SUPABASE_URL` | Next (`apps/web/.env`) | Only with Supabase | Browser client target |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Next (`apps/web/.env`) | Only with Supabase | Browser client auth |
+| `CSP_MODE` | Next (`apps/web/.env`) | Optional | `report-only` (default) / `enforce` / `off` |
+| `ANTHROPIC_API_KEY`, `AI_GATEWAY_API_KEY`, `OPENROUTER_API_KEY`, `MINIMAX_CN_*`, `OLLAMA_BASE_URL` | agent-py (`services/agent-py/.env`) | At least one, for real AI | Model providers |
+| `SUPABASE_JWT_SECRET` (or a JWKS URL), `SUPABASE_DB_URL` | agent-py (`services/agent-py/.env`) | Only with Supabase | Verify sessions; tasks, runs, schedules |
+| `WORKER_DRY_RUN=false` | agent-py (`services/agent-py/.env`) | To run background tasks | The task worker (and the scheduler that follows it) |
+| `TAVILY_API_KEY` | agent-py (`services/agent-py/.env`) | Only for web search | Tavily-backed `webSearch` tool |
+| `MCP_ENCRYPTION_KEY` | agent-py (`services/agent-py/.env`) | Only for cloud-mode MCP creds | pgcrypto symmetric key (32+ chars). Generate with `openssl rand -base64 32` |
 
 ## Common scripts
 
@@ -120,7 +133,7 @@ bun run supabase:start   # boot stack + apply migrations
 bun run supabase:stop    # stop containers
 bun run supabase:reset   # wipe + reapply all migrations (~3s)
 bun run supabase:status  # show ports + keys
-bun run supabase:types   # regenerate lib/shared/supabase/types.ts
+bun run supabase:types   # regenerate apps/web/lib/shared/supabase/types.ts
 
 # Supabase (docker-compose path)
 bun run supabase:docker:up
@@ -131,20 +144,25 @@ bun run supabase:docker:reset
 
 ## Architecture at a glance
 
-- **`app/`** — Next.js App Router pages (no API routes since wave 13).
+- **`apps/web/`** — the Next app, a Bun workspace (`bun dev`, `build`,
+  `check`, `test` and the e2e commands run from the root delegate into
+  it; `cd apps/web && bun dev` works too). Its folders:
+  - **`app/`** — Next.js App Router pages (no API routes since wave 13).
+  - **`components/panels/`** — Main content (chat, editor, resources).
+  - **`components/sidebars/`** — Sliding sidebars (workspaces, chat
+    list, resources rail).
+  - **`lib/client/`** — Browser-only (Zustand store, hooks, API client,
+    IndexedDB helpers). Fenced via `import "client-only"`.
+  - **`lib/server/`** — Node-only: just the CSP builder and the sandbox
+    frame's policy (no secrets). Fenced via `import "server-only"`.
+  - **`lib/shared/`** — Isomorphic (types, Zod schemas, pure utilities,
+    generated Supabase types). No I/O.
 - **`services/agent-py/`** — the backend: chat and tasks on `/v1/runs`,
   the task worker and scheduler, MCP, file extraction, share links,
   summarize, the editor AI. The wire contract is
   `packages/contract/` (OpenAPI + `RUN_EVENTS.md`).
-- **`components/panels/`** — Main content (chat, editor, resources).
-- **`components/sidebars/`** — Sliding sidebars (workspaces, chat
-  list, resources rail).
-- **`lib/client/`** — Browser-only (Zustand store, hooks, API client,
-  IndexedDB helpers). Fenced via `import "client-only"`.
-- **`lib/server/`** — Node-only: just the CSP builder and the sandbox
-  frame's policy (no secrets). Fenced via `import "server-only"`.
-- **`lib/shared/`** — Isomorphic (types, Zod schemas, pure utilities,
-  generated Supabase types). No I/O.
+- **`config/`** — the model catalog (`models.json`, `providers.json`),
+  read by both apps.
 - **`supabase/migrations/`** — Five SQL files run in order; see
   `docs/SUPABASE_SETUP.md`.
 

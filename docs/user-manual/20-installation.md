@@ -16,10 +16,12 @@ multi-device sync. Fastest path; full app minus auth + sync.
 
 ```bash
 bun install
-cp .env.example .env
+cp apps/web/.env.example apps/web/.env
+cp services/agent-py/.env.example services/agent-py/.env
 # Leave Supabase vars blank. Set at minimum:
-#   NEXT_PUBLIC_AGENT_PY_URL=/
-#   a model provider key for agent-py, e.g. ANTHROPIC_API_KEY or AI_GATEWAY_API_KEY
+#   NEXT_PUBLIC_AGENT_PY_URL=/   in apps/web/.env
+#   a model provider key, e.g. ANTHROPIC_API_KEY or AI_GATEWAY_API_KEY,
+#   in services/agent-py/.env
 bun dev                            # the frontend on :3000
 docker compose up proxy agent-py   # agent-py + a same-origin proxy on :8080
 ```
@@ -37,18 +39,19 @@ cloud-mode credential lane. Two sub-paths:
 ```bash
 # Sub-path B1 - Supabase CLI (recommended; needs `supabase` + Docker)
 bun run supabase:start
-cat .docker/supabase/dev-keys.txt        # paste into .env
+cat .docker/supabase/dev-keys.txt        # NEXT_PUBLIC_* -> apps/web/.env, the rest -> services/agent-py/.env
 bun dev
 
 # Sub-path B2 - Docker only (no CLI; uses docker-compose.supabase.yml)
 bun run supabase:docker:up
 bun run supabase:docker:migrate
-cat .docker/supabase/dev-keys.txt        # paste into .env
+cat .docker/supabase/dev-keys.txt        # NEXT_PUBLIC_* -> apps/web/.env, the rest -> services/agent-py/.env
 bun dev
 ```
 
 Run agent-py as in Path A (`docker compose up proxy agent-py`); with
-`SUPABASE_DB_URL` set and `WORKER_DRY_RUN=false` it also runs
+`SUPABASE_DB_URL` set and `WORKER_DRY_RUN=false` (in
+`services/agent-py/.env`) it also runs
 background and scheduled tasks.
 
 Verify: open Studio at <http://localhost:54323>; magic-link emails
@@ -64,9 +67,14 @@ the CLI, Inbucket with docker-compose).
 - **Disk** - the Supabase Docker images are ~5GB.
 
 ## Tips & gotchas
-- agent-py reads `.env` at the repo root, and so does Next.js
-  (`.env.local`, if present, overrides it for Next.js only). One shared
-  file is split per app in a later release.
+- Each app has its own file: the frontend reads `apps/web/.env`
+  (`apps/web/.env.local`, if present, overrides it), agent-py reads
+  `services/agent-py/.env`. A `.env` or `.env.local` at the repo root is
+  not read, and both refuse to start while one exists.
+- Upgrading from one root `.env`? Run `bun run env:split`. It writes
+  `apps/web/.env` and `services/agent-py/.env` from it, refuses to
+  overwrite either, and prints only key names. Check both files, then
+  remove the root one.
 - If you flip between Path A and Path B, `localStorage` and Supabase
   data are independent. They're not merged; you pick one.
 

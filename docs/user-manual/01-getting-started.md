@@ -1,5 +1,5 @@
 <!-- pages-for: panel:workspaces, sidebar:application, sidebar:resources -->
-<!-- related: components/panels/workspaces.tsx, components/sidebars/application.tsx -->
+<!-- related: apps/web/components/panels/workspaces.tsx, apps/web/components/sidebars/application.tsx -->
 
 # Getting started
 

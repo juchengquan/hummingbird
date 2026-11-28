@@ -1,5 +1,5 @@
 <!-- pages-for: slash:new, slash:clear, slash:rename, slash:model, slash:help, slash:personas, skill:webFetch, skill:webSearch, skill:imageGen, skill:searchFiles, panel:slash-autocomplete, panel:slash-help-dialog, panel:agents-dialog -->
-<!-- related: lib/shared/commands/registry.ts, lib/shared/skills/registry.ts, lib/shared/skills/slash-parser.ts -->
+<!-- related: apps/web/lib/shared/commands/registry.ts, apps/web/lib/shared/skills/registry.ts, apps/web/lib/shared/skills/slash-parser.ts -->
 
 # Slash commands
 

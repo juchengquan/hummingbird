@@ -26,7 +26,7 @@ full phased plan.
   codegen, asyncpg pool, `claim_next_job` with SKIP LOCKED, dry-run
   release).
 - **`events.py`** — TaskEvent IR (status / step_start / step_end /
-  token / result), shaped to match `lib/shared/agent/events.ts` so
+  token / result), shaped to match `apps/web/lib/shared/agent/events.ts` so
   rows from either producer flow through the same projection.
 - **`emitter.py`** — RunEmitter with monotonic `seq`, settle-once
   semantics. A late callback past the terminal event is silently
@@ -86,6 +86,7 @@ full phased plan.
 Requires Python 3.12+ and [uv](https://github.com/astral-sh/uv).
 
 ```bash
+cp services/agent-py/.env.example services/agent-py/.env   # agent-py's settings
 cd services/agent-py
 uv sync                     # resolve + install (creates .venv)
 uv run uvicorn agent_py.main:app --reload --port 8000
@@ -135,7 +136,8 @@ docker run -p 8000:8000 \
 ```
 
 Or use the repo-level `docker-compose.yml` to spin up alongside the
-Next.js dev server (see top-level `CLAUDE.md`). The app needs this
+Next.js dev server (see top-level `CLAUDE.md`); it reads
+`services/agent-py/.env` (`env_file`). The app needs this
 service: without `NEXT_PUBLIC_AGENT_PY_URL` it shows a "This deploy has
 no backend configured" screen (Q137).
 
@@ -145,7 +147,7 @@ no backend configured" screen (Q137).
 on <http://localhost:8080> (`.docker/proxy/Caddyfile`): `/v1/*`,
 `/healthz` and `/readyz` reach this service, everything else reaches
 the Next dev server on the host. Set `NEXT_PUBLIC_AGENT_PY_URL=/` so
-the browser calls `/v1/...` on that origin
+the browser calls `/v1/...` on that origin (in `apps/web/.env`)
 (`docs/PLAN-frontend-backend-split.md` Q21).
 
 ```bash
@@ -411,7 +413,7 @@ endpoints in the formats Plate reads: the AI SDK UI message stream (v1,
 - **The browser renders the document.** The body carries
   `document: EditorAiDocument` — the selection's markdown, the edit kind
   and context, the blocks with their ids — built by
-  `components/editor/ai/editor-ai-document.ts`; agent-py never sees a
+  `apps/web/components/editor/ai/editor-ai-document.ts`; agent-py never sees a
   Plate value.
 - **The prompts** are `editor_ai/prompts.py`, first a byte-for-byte
   port of the TypeScript prompts (including the npm `dedent` 1.0.0
@@ -508,7 +510,7 @@ model picker and the chat and refuses to send (wave 12, Q131) — set one of
 the variables above.
 
 `scripts/probe_providers.py` makes one real call per model with a key in
-the repo's `.env` (stream, a tool call, thinking where flagged, an image
+`services/agent-py/.env` (stream, a tool call, thinking where flagged, an image
 where flagged) — run it after adding a provider or a model.
 
 A provider whose URL is plain http, loopback or private is skipped with a
@@ -564,10 +566,15 @@ for the thinking in ghost text).
 | `MCP_ALLOW_PRIVATE_HOSTS` | No | Default off. `true` lets MCP traffic — the `/v1/mcp/*` proxy and save check, cloud and local MCP tools on runs — reach loopback / RFC 1918 / `.local`-style hosts (a dev MCP server on `localhost`), checked again at connect time. Link-local and cloud-metadata addresses (169.254.0.0/16, fe80::/10, `metadata.google.internal`, …) stay blocked; bookmarks and `webFetch` stay public-only. Next.js semantics: only the exact value `true` enables it; any value other than `true` / `false` / empty stops the service at boot. Never enable on a shared deployment. |
 | `MCP_ENCRYPTION_KEY` | For cloud-mode MCP | Encrypts / decrypts cloud-mode MCP credentials (`openssl rand -base64 32`); never persisted. Rotating it invalidates stored credentials. |
 
-A repo-level `.env` works — `pydantic-settings` looks for `.env` in the
-current working directory. The service still shares one `.env` with
-the Next.js app, which reads only `NODE_ENV`, `CSP_MODE` and
-`NEXT_PUBLIC_*` from it (Q143); splitting the file waits for wave 14.
+The settings live in `services/agent-py/.env` (copy
+`services/agent-py/.env.example`). agent-py finds that file from its own
+package, wherever it is started from; `AGENT_PY_ENV_FILE` names another
+file, and an empty value reads none. The web app has its own
+`apps/web/.env` with only `NEXT_PUBLIC_*` and `CSP_MODE` (Q143, Q154), so
+a value both need is kept by each (`SUPABASE_URL` here,
+`NEXT_PUBLIC_SUPABASE_URL` there). The repo-root `.env` / `.env.local` is
+no longer read, and the service refuses to start while one exists:
+`bun run env:split` moves it into the two files (Q155).
 
 ## Scheduled tasks
 

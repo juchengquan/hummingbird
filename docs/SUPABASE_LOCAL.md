@@ -24,7 +24,7 @@ bunx supabase --version                  # any platform via bunx
 
 # From repo root:
 bun run supabase:start                   # boots stack + applies migrations
-cat .docker/supabase/dev-keys.txt >> .env.local   # paste keys (edit dupes after)
+cat .docker/supabase/dev-keys.txt        # NEXT_PUBLIC_* → apps/web/.env, the service-role key → services/agent-py/.env (Step 3)
 bun dev                                  # → http://localhost:3000
 ```
 
@@ -34,7 +34,7 @@ bun dev                                  # → http://localhost:3000
 # From repo root:
 bun run supabase:docker:up               # boot containers
 bun run supabase:docker:migrate          # apply migrations (once after first up)
-cat .docker/supabase/dev-keys.txt >> .env.local   # paste keys (edit dupes after)
+cat .docker/supabase/dev-keys.txt        # NEXT_PUBLIC_* → apps/web/.env, the service-role key → services/agent-py/.env (Step 3)
 bun dev                                  # → http://localhost:3000
 ```
 
@@ -74,15 +74,16 @@ Detailed walkthrough below.
 | Running E2E tests in CI without a shared DB | Verifying production email deliverability |
 | Avoiding hosted free-tier rate limits | Preparing share links for an external reviewer |
 
-Many teams keep both `.env.local.cloud` and `.env.local.local` and
-symlink whichever they want — `.env.local` is gitignored, so you can
-switch profiles without touching the repo.
+Many teams keep a cloud and a local copy of each env file
+(`apps/web/.env`, `services/agent-py/.env`) and symlink whichever they
+want — the env files are gitignored, so you can switch profiles without
+touching the repo (see **Switching between local and cloud** below).
 
 ## What works locally
 
 Everything the app uses today. The codebase has zero hosted-only
 dependencies (no Realtime, no Edge Functions, no managed-only features),
-so every feature gated by `lib/shared/supabase/env.ts` lights up:
+so every feature gated by `apps/web/lib/shared/supabase/env.ts` lights up:
 
 - All migrations (`supabase/migrations/0001_schema.sql`,
   `0002_rls_policies.sql`, `0003_storage.sql`,
@@ -102,7 +103,7 @@ so every feature gated by `lib/shared/supabase/env.ts` lights up:
   `0038_mcp_pgcrypto_schema.sql` points the credential RPCs at
   whichever schema it is in.)
 - **MCP integration** — full tools + resources + cloud-mode
-  credentials. Set `MCP_ENCRYPTION_KEY` in `.env.local` to unlock
+  credentials. Set `MCP_ENCRYPTION_KEY` in `services/agent-py/.env` to unlock
   the Cloud radio in the Add Server dialog. See **Step 5** below.
 - Magic-link auth via the local email inbox (no real inbox needed —
   emails are captured at http://localhost:54324)
@@ -122,7 +123,7 @@ install the Supabase CLI:
 
 Both produce the same URLs (`:54321` API, `:54323` Studio, `:54324`
 email inbox, `:54322` Postgres) and the same deterministic dev keys, so
-`.env.local` is identical for either.
+the env files are identical for either.
 
 ## Prerequisites
 
@@ -167,7 +168,7 @@ boots take ~30 s. On success it prints something like:
 service_role key: eyJhbGc…(long string)
 ```
 
-Keep this output — you'll paste three of these into `.env.local` next.
+Keep this output — you'll paste three of these into the env files next.
 
 The migrations under `supabase/migrations/` apply automatically on
 `supabase start` (and on every `supabase db reset`). No manual SQL
@@ -175,26 +176,41 @@ Editor step.
 
 ### Step 3 — Env vars
 
-In repo root:
+Each app reads its own env file. In repo root:
 
 ```bash
-cp .env.example .env.local   # if you don't have one yet
+cp apps/web/.env.example apps/web/.env                    # if you don't have one yet
+cp services/agent-py/.env.example services/agent-py/.env  # likewise
 ```
 
-Set these three lines in `.env.local` (copy values from the `supabase
-start` output or from `.docker/supabase/dev-keys.txt` — they're identical):
+Coming from one root `.env` / `.env.local`? Neither app reads it any
+more, and both refuse to start while it exists. `bun run env:split`
+writes the two files from it (it refuses to overwrite either and prints
+only key names); check them, then remove the root file.
+
+Copy the values from the `supabase start` output or from
+`.docker/supabase/dev-keys.txt` — they're identical. In `apps/web/.env`:
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<see .docker/supabase/dev-keys.txt>
+```
+
+In `services/agent-py/.env` (agent-py has its own URL setting; the JWT
+secret is the dev secret named at the top of
+`.docker/supabase/dev-keys.txt`):
+
+```bash
+SUPABASE_URL=http://localhost:54321
 SUPABASE_SERVICE_ROLE_KEY=<see .docker/supabase/dev-keys.txt>
+SUPABASE_JWT_SECRET=<the dev JWT secret>
 ```
 
 Leave the other vars (`AI_GATEWAY_API_KEY`, `TAVILY_API_KEY`,
 `NEXT_PUBLIC_API_BASE_URL`) as they are — local Supabase doesn't affect
 them.
 
-Restart `bun dev` so Next.js picks the new env vars up.
+Restart `bun dev` and agent-py so both pick the new env vars up.
 
 > **Tip** — the local anon and service-role keys are *deterministic*
 > JWTs signed with the well-known dev secret. They never change across
@@ -228,7 +244,7 @@ bun run supabase:docker:reset
 ### Step 2 — Env vars
 
 ```bash
-cat .docker/supabase/dev-keys.txt    # copy these three lines into .env.local
+cat .docker/supabase/dev-keys.txt    # split these into the two env files as in Path A, Step 3
 ```
 
 Then `bun dev`.
@@ -314,7 +330,7 @@ scoped tooling. Two credential storage modes (see
 - **Cloud mode** — credential encrypted in Supabase via `pgcrypto`,
   decrypted only inside a SECURITY DEFINER RPC. Syncs across
   devices. Requires you to be signed in **and** to have set
-  `MCP_ENCRYPTION_KEY` in the Next.js server env.
+  `MCP_ENCRYPTION_KEY` in agent-py's env (`services/agent-py/.env`).
 
 ### Enable cloud-mode MCP credentials locally
 
@@ -322,12 +338,11 @@ scoped tooling. Two credential storage modes (see
 # Generate a key (32+ bytes random — pgcrypto uses it as a passphrase).
 openssl rand -base64 32
 
-# Add to .env.local
-echo "MCP_ENCRYPTION_KEY=<paste the output above>" >> .env.local
+# Add to agent-py's env
+echo "MCP_ENCRYPTION_KEY=<paste the output above>" >> services/agent-py/.env
 
-# Restart Next.js so the env var is picked up.
-# (kill `bun dev`, start it again — Next.js does not hot-reload env)
-bun dev
+# Restart agent-py so the env var is picked up.
+docker compose up agent-py          # or restart your `uv run uvicorn …`
 ```
 
 Without the key:
@@ -432,20 +447,20 @@ incremental), `db reset` is the more common path.
 ### Generate fresh TypeScript types
 
 ```bash
-supabase gen types typescript --local > lib/shared/supabase/types.ts
+supabase gen types typescript --local > apps/web/lib/shared/supabase/types.ts
 ```
 
 Equivalently: `bun run supabase:types`. The `--local` flag points the
 codegen at your local stack instead of a remote project.
 
-**Always regenerate after a migration change.** `lib/shared/supabase/types.ts`
+**Always regenerate after a migration change.** `apps/web/lib/shared/supabase/types.ts`
 is the contract between the typed Supabase client and the live schema —
 when it falls behind, columns and RPC signatures silently degrade to
 `any` and bugs that should be compile-time errors leak through.
 
 CI enforces this via a lightweight diff-pairing check: any PR that
 touches `supabase/migrations/` must also touch
-`lib/shared/supabase/types.ts`. See `scripts/verify-supabase-types.sh`.
+`apps/web/lib/shared/supabase/types.ts`. See `scripts/verify-supabase-types.sh`.
 The check is purely a forcing function — it doesn't validate that the
 regen produced the correct output, just that it happened. The
 discipline of `bun run supabase:reset && bun run supabase:types`
@@ -458,8 +473,8 @@ If you want belt-and-braces enforcement locally, add this to
 #!/bin/bash
 # Warn when migrations are staged without a types.ts update.
 if git diff --cached --name-only | grep -q '^supabase/migrations/'; then
-  if ! git diff --cached --name-only | grep -q '^lib/shared/supabase/types\.ts$'; then
-    echo "⚠️  Migrations staged but lib/shared/supabase/types.ts is not."
+  if ! git diff --cached --name-only | grep -q '^apps/web/lib/shared/supabase/types\.ts$'; then
+    echo "⚠️  Migrations staged but apps/web/lib/shared/supabase/types.ts is not."
     echo "   Run: bun run supabase:reset && bun run supabase:types"
     echo "   (Use --no-verify to commit anyway.)"
     exit 1
@@ -489,17 +504,17 @@ docker logs supabase_storage_humm      # Storage logs
 
 ## Switching between local and cloud
 
-The cleanest pattern is two env files plus a symlink:
+The cleanest pattern is two copies of each env file plus a symlink:
 
 ```bash
-# One-time setup:
-cp .env.local .env.local.cloud      # snapshot your existing cloud config
-# … edit .env.local with local URLs / keys per Step 3 …
-cp .env.local .env.local.local      # snapshot the local config
+# One-time setup (same for services/agent-py/.env):
+cp apps/web/.env apps/web/.env.cloud     # snapshot your existing cloud config
+# … edit apps/web/.env with local URLs / keys per Step 3 …
+cp apps/web/.env apps/web/.env.local-stack   # snapshot the local config
 
-# Switching (re-run after either, then restart `bun dev`):
-ln -sf .env.local.local .env.local   # → local stack
-ln -sf .env.local.cloud .env.local   # → hosted project
+# Switching (re-run after either, then restart `bun dev` and agent-py):
+ln -sf .env.local-stack apps/web/.env    # → local stack
+ln -sf .env.cloud apps/web/.env          # → hosted project
 ```
 
 Caveat: signing in to the local stack creates a user with a different
@@ -549,7 +564,7 @@ tweaks via Studio that you want to keep, dump them with
 | Use real email inbox for magic link | Local inbox at http://localhost:54324 |
 | Cloud Studio (per-project dashboard) | Local Studio at http://localhost:54323 |
 
-Everything in the app — `lib/client/supabase/client.ts`,
-`lib/server/supabase/{server,admin}.ts`, the sync layer, the share
-routes, the file upload hook — is unchanged. The only difference is
-which `NEXT_PUBLIC_SUPABASE_URL` resolves to.
+Everything in the app — `apps/web/lib/client/supabase/client.ts`, the
+sync layer, the share pages, the file upload hook — is unchanged. The
+only difference is which `NEXT_PUBLIC_SUPABASE_URL` (and agent-py's
+`SUPABASE_URL`) resolves to.

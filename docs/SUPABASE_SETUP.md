@@ -13,13 +13,13 @@ env vars:
 - **Cross-device sync** of workspaces, conversations, messages, files,
   resources, notes, artifacts, **per-workspace and per-conversation skill
   preferences**, and the per-conversation editor document
-- **Magic-link sign-in** (`components/auth/auth-dialog.tsx`) — currently
+- **Magic-link sign-in** (`apps/web/components/auth/auth-dialog.tsx`) — currently
   hidden when env vars are absent
 - **First-sign-in reconciliation** — uploads local state to cloud on
   empty accounts; prompts to merge or replace when there's already cloud
   data
-- **File uploads to Supabase Storage** (`hooks/use-upload-file.ts`,
-  `lib/files/persist.ts`) — replaces the old UploadThing path
+- **File uploads to Supabase Storage** (`apps/web/lib/client/hooks/use-upload-file.ts`,
+  `apps/web/lib/client/files/persist.ts`) — replaces the old UploadThing path
 - **Public share links** for conversations and per-conversation editor
   docs (`/share/conversation/[token]`, `/share/document/[token]`) via
   the service-role admin client
@@ -460,32 +460,36 @@ in the user's `localStorage`.
      shared SMTP by default — sufficient for dev but rate-limited; for
      real users wire up your own SMTP under **Settings** → **Auth**.
 
-## Step 4 — Set env vars in `.env.local`
+## Step 4 — Set env vars in `apps/web/.env` and `services/agent-py/.env`
+
+Each app reads its own file; a `.env` at the repo root is not read (run
+`bun run env:split` if you still have one).
 
 1. **Settings** → **API** in the dashboard.
-2. Copy these values:
+2. Create both files from their examples if they don't exist:
+   ```bash
+   cp apps/web/.env.example apps/web/.env
+   cp services/agent-py/.env.example services/agent-py/.env
+   ```
+3. The web app's values, in `apps/web/.env`:
    - **Project URL** → `NEXT_PUBLIC_SUPABASE_URL`
    - **anon public** key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+4. agent-py's values, in `services/agent-py/.env`:
+   - **Project URL** → `SUPABASE_URL` (the same value again)
+   - **JWT secret** (Project Settings → API → JWT Settings) →
+     `SUPABASE_JWT_SECRET` — or leave it empty on a project with
+     asymmetric signing keys (agent-py reads the JWKS from
+     `SUPABASE_URL`)
+   - the **direct** Postgres connection (`db.<project>.supabase.co:5432`,
+     not the pooler) → `SUPABASE_DB_URL`
    - **service_role** key → `SUPABASE_SERVICE_ROLE_KEY`
-     - ⚠️ Server-only. Never expose to the browser. Used by the share
-       link routes (`app/share/conversation/[token]/page.tsx`,
-       `app/share/document/[token]/page.tsx`) via
-       `lib/supabase/admin.ts` to resolve tokens with RLS bypassed.
-3. In the repo root, create `.env.local` if it doesn't exist:
-   ```bash
-   cp .env.example .env.local
-   ```
-4. Paste the three values into the relevant lines. The other env vars
-   in `.env.example`:
-   - `AI_GATEWAY_API_KEY` — required for real chat AI (Vercel AI
-     Gateway). Without it the chat panel falls back to a labeled mock
-     response.
-   - `TAVILY_API_KEY` — optional. Backs the **Web Search** skill at
-     https://tavily.com (free tier covers dev use). Without it the
-     Skills panel still surfaces Web Search but the chat route omits
-     the tool and tells the model so it falls back to its training
-     data instead of inventing a search call.
-5. Restart `bun dev` so Next.js picks up the new env vars.
+     - ⚠️ Server-only. Never expose to the browser. agent-py uses it for
+       Storage (generated images and tool-made files).
+   - The other variables are in `services/agent-py/.env.example`, e.g.
+     a model provider key (`ANTHROPIC_API_KEY`, `AI_GATEWAY_API_KEY`, …)
+     and `TAVILY_API_KEY` (optional; backs the **Web Search** skill at
+     https://tavily.com).
+5. Restart `bun dev` and agent-py so both pick up the new values.
 
 ## Step 5 — Verify
 
@@ -619,7 +623,7 @@ change.
 
 Trade-off: local is faster to iterate against but can't be used to
 test multi-device sync against an external reviewer. Many teams keep
-both `.env.local.cloud` and `.env.local.local` and symlink whichever
+two copies of each env file (cloud and local) and symlink whichever
 they want.
 
 ## Re-running against an existing project

@@ -1,10 +1,10 @@
-# `lib/client/runs/` — chat on agent-py's runs API
+# `apps/web/lib/client/runs/` — chat on agent-py's runs API
 
-Phase 3 of [`docs/PLAN-frontend-backend-split.md`](../../../docs/PLAN-frontend-backend-split.md)
+Phase 3 of [`docs/PLAN-frontend-backend-split.md`](../../../../../docs/PLAN-frontend-backend-split.md)
 (Q32–Q39): chat turns as AG-UI runs on agent-py's `/v1/runs` — the only
 chat path since wave 13 (Q121; the backend setting is gone, store v37).
 Wave 4a built this folder; wave 4b wired it in. Wire rules:
-[`packages/contract/RUN_EVENTS.md`](../../../packages/contract/RUN_EVENTS.md)
+[`packages/contract/RUN_EVENTS.md`](../../../../../packages/contract/RUN_EVENTS.md)
 and the `runs` operations of `packages/contract/openapi.yaml`.
 
 ```
@@ -385,7 +385,7 @@ run (a rejoin after a reload) restores the paused run's output first
 ## Fixtures
 
 `fixtures/agent-py/*.sse` are recorded from agent-py by
-`bun run fixtures:runs` (`scripts/record-runs-fixtures.sh`): `memory-*`
+`bun run fixtures:runs` (the repo root's `scripts/record-runs-fixtures.sh`): `memory-*`
 from `services/agent-py/tests/test_runs_e2e.py` (the real app over HTTP),
 `stream-*` from `tests/test_runs_client_fixtures.py` (the real encoder +
 stream over crafted logs: reasoning, every part, gap, purge, rewind,

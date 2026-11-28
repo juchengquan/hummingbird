@@ -1,4 +1,4 @@
-<!-- related: .env.example, lib/server/mcp/credentials.ts, supabase/migrations/0005_mcp.sql -->
+<!-- related: services/agent-py/.env.example, services/agent-py/src/agent_py/mcp_credentials.py, supabase/migrations/0005_mcp.sql -->
 
 # Encryption keys
 
@@ -19,7 +19,7 @@ openssl rand -base64 32
 ```
 
 The output is a 32+ character base64 string. Paste it into
-`.env.local` as `MCP_ENCRYPTION_KEY=<value>`.
+`services/agent-py/.env` as `MCP_ENCRYPTION_KEY=<value>`.
 
 ### Rotation
 
@@ -27,7 +27,7 @@ Rotating the key invalidates every existing cloud-mode credential -
 users have to re-add their servers. To rotate without downtime:
 
 1. Decrypt every `credentials_encrypted` row with the OLD key.
-2. Set the NEW key in `.env.local`.
+2. Set the NEW key in `services/agent-py/.env`.
 3. Re-encrypt with the new key.
 4. Roll the deploy.
 
@@ -37,9 +37,9 @@ old key live for the duration.
 
 ### Where the key is read
 
-- Next.js server env (the original reader).
-- Python agent service env (Phase 3f-1+ - reads the same var to
-  call the same `SECURITY DEFINER` decrypt RPC).
+- The Python agent service, from `services/agent-py/.env`. It passes
+  the key to the `SECURITY DEFINER` decrypt RPC. The frontend never
+  reads it.
 
 The key is **never** persisted to Postgres. It's passed as an
 argument to the RPC at request time.

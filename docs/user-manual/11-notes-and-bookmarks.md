@@ -1,5 +1,5 @@
 <!-- pages-for: panel:notes-tab, panel:pins-tab, panel:url-bookmarks-tab, panel:artifacts-tab -->
-<!-- related: components/panels/notes-tab.tsx, components/panels/pins-tab.tsx, components/panels/url-bookmarks-tab.tsx, components/panels/artifacts-tab.tsx -->
+<!-- related: apps/web/components/panels/notes-tab.tsx, apps/web/components/panels/pins-tab.tsx, apps/web/components/panels/url-bookmarks-tab.tsx, apps/web/components/panels/artifacts-tab.tsx -->
 
 # Notes, pins, bookmarks & artifacts
 

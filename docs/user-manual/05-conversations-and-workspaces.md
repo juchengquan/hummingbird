@@ -1,5 +1,5 @@
 <!-- pages-for: sidebar:conversation-item, sidebar:document-item, sidebar:prompt-item -->
-<!-- related: components/sidebars/conversation-item.tsx, components/sidebars/document-item.tsx, components/sidebars/prompt-item.tsx, lib/client/hooks/store/slices/conversations.ts, lib/client/hooks/store/slices/workspaces.ts -->
+<!-- related: apps/web/components/sidebars/conversation-item.tsx, apps/web/components/sidebars/document-item.tsx, apps/web/components/sidebars/prompt-item.tsx, apps/web/lib/client/hooks/store/slices/conversations.ts, apps/web/lib/client/hooks/store/slices/workspaces.ts -->
 
 # Conversations & workspaces
 
