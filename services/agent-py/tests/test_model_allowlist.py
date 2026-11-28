@@ -52,6 +52,18 @@ def test_repo_catalog_is_found() -> None:
     assert path.parts[-2:] == ("config", "models.json")
 
 
+def test_catalog_is_the_file_the_web_app_bundles() -> None:
+    """Q153: agent-py and the web app (`apps/web`, `@config/*` →
+    `../../config/*`) read one catalog, the repo root's."""
+    repo = Path(__file__).resolve().parents[3]
+    tsconfig = json.loads((repo / "apps" / "web" / "tsconfig.json").read_text())
+    (alias,) = tsconfig["compilerOptions"]["paths"]["@config/*"]
+    web_catalog = (repo / "apps" / "web" / alias.replace("*", "models.json")).resolve()
+    path = find_models_config()
+    assert path is not None
+    assert path.resolve() == web_catalog == repo / "config" / "models.json"
+
+
 def test_allowed_catalog_ids_map_to_api_ids() -> None:
     assert resolve_api_model_id("anthropic/claude-sonnet-4.6") == "claude-sonnet-4-6"
     assert resolve_api_model_id("anthropic/claude-haiku-4.5") == "claude-haiku-4-5"
